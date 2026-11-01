@@ -1,8 +1,10 @@
 // 21064 integer multiplier: opcode 13 (MULL, MULQ, UMULH, MULL/V, MULQ/V).
-// Multi-cycle like the real Ebox multiplier (which takes 19-23 cycles):
-// one 32x32 partial product per cycle into a 128-bit accumulator, so the
-// unit needs a single DSP-sized multiplier. start is taken when !busy; done
-// pulses for one cycle with res/ovf valid (they hold until the next start).
+// Multi-cycle like the real Ebox multiplier (19-23 cycles there, ~10 here),
+// pipelined for 100 MHz (docs/design/cpu-timing.md): each 32x32 partial
+// product goes operand flops -> DSP multiply -> product flop -> accumulate,
+// and the signed corrections get their own cycles. start is taken when
+// !busy; done pulses for one cycle with res/ovf valid (they hold until the
+// next start).
 //
 //   func 00 MULL    SEXT((a * b)<31:0>)
 //        20 MULQ    (a * b)<63:0>
@@ -30,51 +32,78 @@ module ev4_imul (
 
     reg  [63:0] ra, rb;
     reg   [6:0] fn;
+    reg         run;
+    reg   [2:0] iss;                   // partial products issued (0..4)
+    reg   [2:0] acn;                   // partial products accumulated (0..4)
+    reg   [1:0] fin;                   // 1: corrections, 2: result
+
+    // stage 1: operand halves; 0: lo x lo, 1: lo x hi, 2: hi x lo, 3: hi x hi
+    reg  [31:0] opa, opb;
+    reg   [1:0] osel;
+    reg         ov;
+    // stage 2: product
+    reg  [63:0] pp;
+    reg   [1:0] psel;
+    reg         pv;
+    // stage 3: accumulator
     reg [127:0] acc;
-    reg   [2:0] step;                  // 1..4 partial products, 5 finish
-    assign busy = step != 3'd0;
+    reg  [63:0] lprod;                 // lo x lo, for MULL/V
+    // corrections
+    reg  [63:0] shi, lsig;
 
-    // the partial product of this step: {a half} x {b half}
-    // step 1: a lo x b lo, 2: a lo x b hi, 3: a hi x b lo, 4: a hi x b hi
-    wire [31:0] pa = (step == 3'd3 || step == 3'd4) ? ra[63:32] : ra[31:0];
-    wire [31:0] pb = (step == 3'd2 || step == 3'd4) ? rb[63:32] : rb[31:0];
-    wire [63:0] pp = pa * pb;
-    // shifted into place: << 0, << 32, << 32, << 64
-    wire [127:0] pps = step == 3'd1 ? {64'd0, pp} :
-                       step == 3'd4 ? {pp, 64'd0} : {32'd0, pp, 32'd0};
-
-    // signed corrections of the unsigned product
-    wire [63:0] shi  = acc[127:64] - (ra[63] ? rb : 64'd0) - (rb[63] ? ra : 64'd0);
-    // the longword product: lo*lo (bits 63:0 of step 1's product), corrected
-    // for the longword signs
-    reg  [63:0] lprod;
-    wire [63:0] lsig = lprod - (ra[31] ? {rb[31:0], 32'd0} : 64'd0)
-                             - (rb[31] ? {ra[31:0], 32'd0} : 64'd0);
+    assign busy = run;
 
     always @(posedge clk) begin
         done <= 1'b0;
         if (rst) begin
-            step <= 3'd0;
-        end else if (step == 3'd0) begin
+            run <= 1'b0; ov <= 1'b0; pv <= 1'b0; fin <= 2'd0;
+        end else if (!run) begin
+            ov <= 1'b0; pv <= 1'b0;
             if (start && !illegal) begin
                 ra <= a; rb <= b; fn <= func;
                 acc <= 128'd0;
-                step <= 3'd1;
+                iss <= 3'd0; acn <= 3'd0; fin <= 2'd0;
+                run <= 1'b1;
             end
-        end else if (step != 3'd5) begin
-            acc <= acc + pps;
-            if (step == 3'd1) lprod <= pp;
-            step <= step + 3'd1;
         end else begin
-            step <= 3'd0;
-            done <= 1'b1;
-            case (fn)
-            7'h00, 7'h40: res <= {{32{acc[31]}}, acc[31:0]};
-            7'h30:        res <= acc[127:64];
-            default:      res <= acc[63:0];
-            endcase
-            ovf <= fn == 7'h40 ? !(&lsig[63:31] || ~|lsig[63:31]) :
-                   fn == 7'h60 ? (shi != {64{acc[63]}}) : 1'b0;
+            // issue
+            ov <= iss != 3'd4;
+            if (iss != 3'd4) begin
+                opa  <= iss[1] ? ra[63:32] : ra[31:0];
+                opb  <= iss[0] ? rb[63:32] : rb[31:0];
+                osel <= iss[1:0];
+                iss  <= iss + 3'd1;
+            end
+            // multiply
+            pp <= opa * opb; psel <= osel; pv <= ov;
+            // accumulate
+            if (pv) begin
+                case (psel)
+                2'd0: begin acc <= acc + {64'd0, pp}; lprod <= pp; end
+                2'd3: acc <= acc + {pp, 64'd0};
+                default: acc <= acc + {32'd0, pp, 32'd0};
+                endcase
+                acn <= acn + 3'd1;
+            end
+            // signed corrections, then the result
+            if (acn == 3'd4 && fin == 2'd0) begin
+                shi  <= acc[127:64] - (ra[63] ? rb : 64'd0) - (rb[63] ? ra : 64'd0);
+                lsig <= lprod - (ra[31] ? {rb[31:0], 32'd0} : 64'd0)
+                              - (rb[31] ? {ra[31:0], 32'd0} : 64'd0);
+                fin  <= 2'd1;
+            end
+            if (fin == 2'd1) begin
+                fin  <= 2'd2;
+                run  <= 1'b0;
+                done <= 1'b1;
+                case (fn)
+                7'h00, 7'h40: res <= {{32{acc[31]}}, acc[31:0]};
+                7'h30:        res <= acc[127:64];
+                default:      res <= acc[63:0];
+                endcase
+                ovf <= fn == 7'h40 ? !(&lsig[63:31] || ~|lsig[63:31]) :
+                       fn == 7'h60 ? (shi != {64{acc[63]}}) : 1'b0;
+            end
         end
     end
 endmodule
