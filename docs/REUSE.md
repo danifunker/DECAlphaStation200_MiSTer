@@ -43,6 +43,16 @@ behaviour and register usage, never copy them into the core. `sw/apisrm/ref/`: `
 the 53C810: the SCRIPTS it runs), `tga_driver*.c` + `tga_sfbp_485.h` (what SRM asks of the TGA and
 Bt485), `pal_ev4.mar` (EV4 PALcode), `srom_def.h`; `ebfw/`: the EB64+/AlphaPC64 APECS memory setup.
 
+## AXPbox (reference only, `scratch/axpbox`)
+
+The ES40 emulator (github.com/lenticularis39/axpbox, GPL-2; 21264 + Tsunami + ALi M1543C), so it
+cannot run the AS200's EV4 firmware. Its models are a behavioural reference where they overlap ours:
+`Sym53C810.cpp` + `SCSIBus.cpp`/`SCSIDevice.cpp`/`DiskDevice.cpp` (the 53C810 and targets as DEC's
+SRM and the OSes drive them), `AlphaCPU_ieeefloat.cpp` / `AlphaCPU_vaxfloat.cpp` (FPU behaviour,
+rounding and traps, VAX F/G/D), `AliM1543C.cpp` (8259, 8254, RTC, 8042), `FloppyController.cpp`,
+`DEC21143.cpp` (close to the AS200's 21040), `Flash.cpp`. Its S3/Cirrus VGA models are not used:
+the core's graphics is the TGA (ZLXp-E1, CORE_SPEC).
+
 ## Main_MiSTer
 
 Branch `dec-alphastation` (off `master`). Clone the family support code as
