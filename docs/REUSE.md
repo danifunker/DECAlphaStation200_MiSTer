@@ -53,6 +53,13 @@ rounding and traps, VAX F/G/D), `AliM1543C.cpp` (8259, 8254, RTC, 8042), `Floppy
 `DEC21143.cpp` (close to the AS200's 21040), `Flash.cpp`. Its S3/Cirrus VGA models are not used:
 the core's graphics is the TGA (ZLXp-E1, CORE_SPEC).
 
+## AAE (reference only, `scratch/aae`)
+
+AAE "Bronze Edition" 0.0.2 (2006, GPL-2): an unfinished C emulator for the EB66+. Useful as one more
+reading of EV4 details next to the HRM, QEMU and our `tools/alphaemu`: `src/emu/21064.h` (IPR
+layouts), `src/emu/21071.h` (21071-CA/DA CSR bitfields), `src/emu/execute.c` (CALL_PAL, HW_*
+instructions, TB handling). No floating point and no device models beyond headers.
+
 ## Main_MiSTer
 
 Branch `dec-alphastation` (off `master`). Clone the family support code as
