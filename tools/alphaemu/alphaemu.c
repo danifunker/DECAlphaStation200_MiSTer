@@ -82,7 +82,8 @@ int main(int argc, char **argv) {
         if (loads[i].a + n > memsize) die("load too big");
         if (fread(mem + loads[i].a, 1, n, fp) != n) die("read");
         fclose(fp);
-        if (loads[i].a < lo) lo = loads[i].a; if (loads[i].a + n > hi) hi = loads[i].a + n;
+        if (loads[i].a < lo) lo = loads[i].a;
+        if (loads[i].a + n > hi) hi = loads[i].a + n;
         fprintf(stderr, "loaded %s+%#" PRIx64 " -> %#" PRIx64 " (%#" PRIx64 " bytes)\n", loads[i].f, loads[i].off, loads[i].a, n);
     }
     if (!have_stop) { stop_lo = lo; stop_hi = hi; }
