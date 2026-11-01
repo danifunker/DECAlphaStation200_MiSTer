@@ -415,12 +415,16 @@ module ev4_core (
     end
     wire d_fcmov = d_op == 6'h17 && d_ir[15:5] >= 11'h02A && d_ir[15:5] <= 11'h02F;
     wire dc_uc = d_cmov || d_fcmov;
+    // integer compares (CMPEQ CMPLT CMPLE CMPULT CMPULE): results 0 or 1
+    wire d_iscmp = d_op == 6'h10 && (d_func == 7'h2D || d_func == 7'h4D || d_func == 7'h6D ||
+                                     d_func == 7'h1D || d_func == 7'h3D);
 
     // ================================================================ X stage registers
     reg         x_v;  reg [63:0] x_pc; reg [31:0] x_ir; reg [3:0] x_cls; reg [3:0] x_exc;
     reg  [63:0] x_a, x_b, x_c;
     reg   [5:0] x_dst; reg x_dst_v; reg x_fast; reg x_ldlat; reg x_ser;
     reg  [63:0] x_btarget;
+    reg         x_iscmp;                // the instruction in X is an integer compare
     reg  [63:0] x_link;                 // PC + 4, computed in D
     reg  [63:0] x_ipr;                  // HW_MFPR's IPR value, read in D (serialized)
     reg         x_sel_lda, x_sel_link;  // fast-result selects, decoded in D
@@ -503,7 +507,8 @@ module ev4_core (
         fwd(d_ra, dc_ua, rf_a, fwd_a, loop_a, sa);
         fwd(d_rb, dc_ub, rf_b, fwd_b, loop_b, sb);
         fwd(d_rc, dc_uc, rf_c, fwd_c, loop_c, sc);
-        haz = sa || sb || sc || loop_c;          // operand C has no loop path: wait a cycle
+        haz = sa || sb || sc || loop_c ||        // operand C has no loop path: wait a cycle
+              (dc_cls == C_CBR && loop_a && !x_iscmp);   // a branch loops only from a compare
     end
 
     // serialization
@@ -960,10 +965,13 @@ module ev4_core (
                     x_dst <= dc_dst; x_dst_v <= dc_dst_v; x_fast <= dc_fast; x_ldlat <= dc_ldlat;
                     x_ser <= dc_ser;
                     x_a <= loop_a ? fast_res : fwd_a;
-                    x_az   <= loop_a ? fast_res == 64'd0 : fwd_a == 64'd0;
-                    x_az63 <= loop_a ? fast_res[62:0] == 63'd0 : fwd_a[62:0] == 63'd0;
-                    x_as   <= loop_a ? fast_res[63] : fwd_a[63];
+                    // a branch takes the loop only from a compare (result 0 or 1), so
+                    // the flags come from bit 0 (no zero test after the ALU)
+                    x_az   <= loop_a ? !fast_res[0] : fwd_a == 64'd0;
+                    x_az63 <= loop_a ? !fast_res[0] : fwd_a[62:0] == 63'd0;
+                    x_as   <= loop_a ? 1'b0 : fwd_a[63];
                     x_al   <= loop_a ? fast_res[0] : fwd_a[0];
+                    x_iscmp <= d_iscmp;
                     x_b <= d_lit && d_op[5:2] == 4'b0100      // the literal form: integer operate (10-13) only
                            ? {56'd0, d_ir[20:13]} : (loop_b ? fast_res : fwd_b);
                     x_c <= fwd_c;                       // CMOV's Rc: never from the loop (stalls instead)
