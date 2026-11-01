@@ -1,4 +1,7 @@
-# Resume prompt (2026-11-01: moving from the Linux box to a Mac)
+# Resume prompt (2026-11-01)
+
+> Development stayed on the Linux box (m900) after all (user). The Mac setup below is ready for
+> later: dani-dev.local has the repo clone and `scratch/` but no Homebrew/Verilator yet.
 
 ## Setup on the Mac
 

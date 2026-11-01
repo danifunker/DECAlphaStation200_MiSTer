@@ -72,8 +72,9 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   CC/CC_CTL, SL_XMIT/SL_RCV, FLUSH_IC as a sweep (a deadlock with an in-flight fill fixed). The
   system sim has checkpoints (`--save-led 2E`, `--restore`). Last full fit: -1.244 ns at 100 MHz,
   22k ALMs (`docs/design/cpu-timing.md`).
-- **2026-11-01: development moves to a Mac** (`docs/RESUME_PROMPT.md`: setup, `scratch/` copy,
-  tools; Quartus fits stay on Linux).
+- **2026-11-01: development stays on the Linux box (m900)** (user). A clone with `scratch/` exists on
+  the Mac (`dani@dani-dev.local:~/repos/DECAlphaStation200_MiSTer`, M1, no Homebrew/Verilator yet);
+  `docs/RESUME_PROMPT.md` has the Mac setup if that changes.
 
 ## Next (in order)
 
