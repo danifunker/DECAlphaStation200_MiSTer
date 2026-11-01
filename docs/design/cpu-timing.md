@@ -16,6 +16,18 @@ virtual pins, `quartus_sh --flow compile`; the number is the slow 100C model.
 | 2026-11-01 | the same with its result forwarded into its own operand flops (3:1 mux: new operand, own result, older result) | **slack -0.770 ns (~93 MHz)** | 1058 | Full single-cycle forwarding for every integer op does not make 100 MHz |
 | 2026-11-01 | the forwarding loop with only opcodes 10 and 11 (adds, compares, CMPBGE, logic, CMOV) | **slack +1.338 ns (~115 MHz)** | 517 | **Decision: the 21064's own latencies.** Adds/logic/compares/CMOV 1 cycle with back-to-back forwarding; shifts and byte ops (opcode 12) 2 cycles; loads 3 |
 
+### The pipelined core alone (`rtl/cpu/ev4_core.v`, probe `core_top`: all ports virtual)
+
+| Fit | Slack at 10 ns | ALMs | Critical path, and the fix that followed |
+|---|---|---|---|
+| 1 | does not fit (4702 LABs) | -- | The byte-enabled D-cache RAM was built from 65k registers: Quartus infers no byte-enabled M10K from a Verilog-2001 loop over lanes. Fix: one 8-bit RAM per lane (`ev4_ram.v`) |
+| 2 | -4.764 (~68 MHz) | 4759 | Multiplier: 32x32 product and 128-bit accumulate in one cycle. Fix: pipelined multiplier (operand flops -> DSP -> product flop -> accumulate), 9 cycles |
+| 3 | -1.956 (~84 MHz) | 5075 | `x_a` -> branch condition -> next PC -> 256:1 I-cache valid lookup. Fix: the X redirect selects the next PC last |
+| 4 | -1.622 (~86 MHz) | 5106 | Still the valid lookup (and the stall paths into it). Fix: valid bits in the tag RAMs, flushes as 256-cycle sweeps |
+| 5 | -0.507 (~95 MHz) | 4428 | X result mux after the shifter; the IPR read. Fix: separate fast/slow result flops, IPR read in D, PC+4 and selects pre-decoded in D |
+| 6 | -0.469 (~95.5 MHz) | 4300 | D-cache tag compare in M2 -> stall -> every enable; D forwarding select. Fix: the hit compared in M1 and registered |
+| 7 | **+0.128 (~101 MHz)** | 4300 | **Meets 100 MHz** (2026-11-01). Thin margin: the whole-system fit will need more |
+
 ## Consequences for the pipeline (cpu.md 11)
 
 - **No bypass mux in front of the ALU in the execute stage.** Operands must arrive registered:
