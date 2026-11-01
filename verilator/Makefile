@@ -85,7 +85,7 @@ cputest: obj_cpu/Vev4_seq
 PIPE_RTL = $(RTL)/cpu/ev4_ram.v $(RTL)/cpu/ev4_ialu.v $(RTL)/cpu/ev4_imul.v $(RTL)/cpu/ev4_core.v
 
 obj_pipe/Vev4_core: $(PIPE_RTL) cputest/tb_cpu.cpp
-	$(TB_V) --Mdir obj_pipe --top-module ev4_core -Wno-BLKSEQ -CFLAGS -DCPU_TOP=Vev4_core $^
+	$(TB_V) --Mdir obj_pipe --top-module ev4_core -Wno-BLKSEQ -CFLAGS '-DCPU_TOP=Vev4_core -DCPU_PIPE' $^
 
 cputest-pipe: obj_pipe/Vev4_core
 	$(MAKE) -C ../tests/cpu pal-emu >/dev/null
@@ -96,4 +96,10 @@ cputest-pipe: obj_pipe/Vev4_core
 		echo "$$r $$s: $$(cat $(T0)/$$s.pipe.log | tr -d '\n'); $$t"; \
 	done; exit $$fails
 
-.PHONY: cputest cputest-pipe
+# the SROM bitstream (srom/build) loaded into the I-cache: the first
+# instructions retired must be the SROM image's (tests/srom/README.md)
+sromload: obj_pipe/Vev4_core
+	obj_pipe/Vev4_core --srom ../srom/build/avanti_srom.bitstream --iosink --max 300000 --trace sromload.trace > /dev/null || true
+	python3 -I ../tests/srom/check_sromload.py ../srom/build/avanti_srom.bin sromload.trace
+
+.PHONY: cputest cputest-pipe sromload

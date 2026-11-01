@@ -2,6 +2,12 @@
 // bare-metal image (tests/cpu, make pal) from PA 0.
 //
 //   Vev4_seq|Vev4_core IMAGE.bin [--trace FILE] [--max N] [--mem MB] [--tohost PA]
+//                       [--srom BITSTREAM] [--iosink]
+//
+// --srom (pipelined core only): icmode = 0, the I-cache is loaded from the
+// SROM bitstream through the core's srom port before it starts at PC 0.
+// --iosink: accesses outside the memory read all ones and drop writes
+// instead of stopping the run (for code that touches chipset CSRs).
 //
 // Stops when the CPU stores to TOHOST (default PA 0x800000): value 1 = pass
 // (exit 0), anything else is reported and exits 1. --trace writes the retire
@@ -22,7 +28,8 @@
 #include <string>
 
 int main(int argc, char **argv) {
-    const char *img = nullptr, *trace = nullptr;
+    const char *img = nullptr, *trace = nullptr, *sromf = nullptr;
+    bool iosink = false;
     uint64_t maxcyc = 200000000, tohost = 0x800000;
     size_t mb = 16;
     for (int i = 1; i < argc; i++) {
@@ -30,18 +37,36 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--max")) maxcyc = strtoull(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "--mem")) mb = strtoul(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "--tohost")) tohost = strtoull(argv[++i], 0, 0);
+        else if (!strcmp(argv[i], "--srom")) sromf = argv[++i];
+        else if (!strcmp(argv[i], "--iosink")) iosink = true;
         else img = argv[i];
     }
-    if (!img) { fprintf(stderr, "usage: %s IMAGE.bin [--trace FILE]\n", argv[0]); return 2; }
-    std::vector<uint8_t> mem(mb << 20);
-    FILE *f = fopen(img, "rb");
-    if (!f) { perror(img); return 2; }
-    size_t n = fread(mem.data(), 1, mem.size(), f);
-    fclose(f);
+    if (!img && !sromf) { fprintf(stderr, "usage: %s IMAGE.bin [--trace FILE]\n", argv[0]); return 2; }
+    std::vector<uint8_t> mem(mb << 20), srom(8192, 0);
+    size_t n = 0;
+    if (img) {
+        FILE *f = fopen(img, "rb");
+        if (!f) { perror(img); return 2; }
+        n = fread(mem.data(), 1, mem.size(), f);
+        fclose(f);
+    }
+    if (sromf) {
+        FILE *f = fopen(sromf, "rb");
+        if (!f) { perror(sromf); return 2; }
+        if (fread(srom.data(), 1, srom.size(), f) == 0) { fprintf(stderr, "empty SROM\n"); return 2; }
+        fclose(f);
+    }
     FILE *tf = trace ? fopen(trace, "w") : nullptr;
 
     CPU_TOP *c = new CPU_TOP;
+#ifdef CPU_PIPE
+    c->icmode = sromf ? 0 : 1;
+    uint8_t sromq = 0;
+    auto tick = [&]() { c->srom_data = sromq; c->clk = 0; c->eval(); c->clk = 1; c->eval();
+                        sromq = srom[c->srom_addr & 8191]; };
+#else
     auto tick = [&]() { c->clk = 0; c->eval(); c->clk = 1; c->eval(); };
+#endif
     c->rst = 1; tick(); tick(); c->rst = 0;
     uint64_t cyc = 0, retired = 0;
     int rc = 3;
@@ -53,8 +78,13 @@ int main(int argc, char **argv) {
         else if (c->mem_req && pend) {
             uint64_t a = (uint64_t)c->mem_addr << 3;
             if (a + 8 > mem.size()) {
-                fprintf(stderr, "bus access beyond memory: %#" PRIx64 " at cycle %" PRIu64 "\n", a, cyc);
-                rc = 1; break;
+                if (!iosink) {
+                    fprintf(stderr, "bus access beyond memory: %#" PRIx64 " at cycle %" PRIu64 "\n", a, cyc);
+                    rc = 1; break;
+                }
+                c->mem_rdata = ~0ull; c->mem_ack = 1; pend = false;
+                tick(); cyc++;
+                goto retired;
             }
             uint64_t q; memcpy(&q, &mem[a], 8);
             if (c->mem_we) {
@@ -76,6 +106,7 @@ int main(int argc, char **argv) {
         }
         tick();
         cyc++;
+    retired:
         if (c->dbg_retire) {
             retired++;
             // the TOHOST store retires before the write buffer reaches memory:

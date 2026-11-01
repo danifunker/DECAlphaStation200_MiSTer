@@ -57,3 +57,4 @@ tests/cpu/build/
 verilator/obj_tb_*/
 verilator/obj_cpu/
 verilator/obj_pipe/
+verilator/sromload.trace

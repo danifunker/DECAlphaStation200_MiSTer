@@ -16,11 +16,25 @@
 // (CALL_PAL, HW_*, RC/RS) run serialized: issued into an empty pipeline,
 // nothing younger issues until they retire.
 //
+// After reset the SROM bitstream is loaded into the I-cache the way the
+// 21064 does it (HRM SROM chapter; tools/srom/srom.py is the same format):
+// per 32-byte block, LSB first: LW0 LW2 LW4 LW6 TAG(21) ASN(6) ASM V LW1 LW3
+// LW5 LW7 BHT(8) = 293 bits, 256 blocks; bits past the 65,536 of an
+// XC1765D read as 0, so those blocks load invalid.
+//
 // Architectural coverage is ev4_seq's (its header lists it); ev4_seq is the
 // reference this core is checked against. Bus and debug ports are ev4_seq's.
 module ev4_core (
     input  wire        clk,
     input  wire        rst,
+
+    // SROM (cpu.md 1.4): icmode 0 = after reset, load the I-cache from the
+    // serial ROM bitstream (a byte ROM read at srom_addr, data one clock
+    // after the registered address), then start at PC 0; 1 = start with an
+    // empty I-cache (the T0 tests)
+    input  wire        icmode,
+    output reg  [12:0] srom_addr,
+    input  wire  [7:0] srom_data,
 
     output reg         mem_req,
     output reg         mem_we,
@@ -95,13 +109,27 @@ module ev4_core (
     reg         ifill_done;            // pulse: the fill's line is valid, restart the fetch
     reg         ifill_issued;          // the fill's bus transaction has been started
 
+    // SROM loader
+    reg         ld_active;             // loading the I-cache from the SROM
+    reg         ld_start;              // pulse: the last block landed, fetch from PC 0
+    reg         ld_fin;
+    reg [292:0] ld_sr;
+    reg   [8:0] ld_bcnt;               // bits of the current block
+    reg   [8:0] ld_blk;
+    reg   [2:0] ld_bitpos;
+    reg   [7:0] ld_byte;
+    reg         ld_byte_ok;
+    reg   [1:0] ld_fetch;              // byte fetch in progress: cycles waited
+    reg  [13:0] ld_baddr;              // next byte (8192 = past the end)
+    reg   [2:0] ld_wph;                // block write phase: 1-4 data, 5 tag
+
     // I-cache: 1024 x 64 data, 256 x 21 tags, 256 valid flops
     wire [63:0] ic_q;
     wire [20:0] ict_q;
     reg         icv_q;
     reg [255:0] icv;
     reg         ic_we;  reg [9:0] ic_wa; reg [63:0] ic_wd;
-    reg         ict_we; reg [7:0] ict_wa; reg [20:0] ict_wd;
+    reg         ict_we; reg [7:0] ict_wa; reg [20:0] ict_wd; reg ict_v;
 
     reg  [63:0] q2; reg [20:0] t2; reg v2;    // F2 copies of the RAM outputs
 
@@ -117,7 +145,11 @@ module ev4_core (
     reg         kill_f2;
     always @* begin
         npc = pc_f1; nv = v_f1; kill_f2 = 1'b0;
-        if (w_redir || x_redir) begin
+        if (ld_active) begin
+            npc = 64'd0; nv = 1'b0; kill_f2 = 1'b1;
+        end else if (ld_start) begin
+            npc = 64'd0; nv = 1'b1; kill_f2 = 1'b1;
+        end else if (w_redir || x_redir) begin
             kill_f2 = 1'b1;
             if (fstate == FS_FILL) nv = 1'b0;
             else begin npc = w_redir ? w_target : x_target_r; nv = 1'b1; end
@@ -496,8 +528,8 @@ module ev4_core (
         // a fill's tag write lands one cycle after its last beat (registered
         // write port): the line becomes valid with it, and the fetch restarts
         // the cycle after, so its read sees the new tag
-        ifill_done <= ict_we && !rst;
-        if (ict_we) icv[ict_wa] <= 1'b1;
+        ifill_done <= ict_we && !rst && !ld_active;
+        if (ict_we) icv[ict_wa] <= ict_v;
         if (dct_we) dcv[dct_wa] <= 1'b1;
         mul_go <= 1'b0;
         cc <= cc + 32'd1;
@@ -505,13 +537,53 @@ module ev4_core (
             pal <= 1'b1; iccsr_fpe <= 1'b0; iccsr_map <= 1'b0; iccsr_hwe <= 1'b0;
             pal_base <= 20'd0; abox_ctl <= 16'd0; ps_cm <= 2'd0; alt_cm <= 2'd0;
             mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0;
-            fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b1; v_f2 <= 1'b0;
+            fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= !icmode ? 1'b0 : 1'b1; v_f2 <= 1'b0;
+            ld_active <= !icmode; ld_start <= 1'b0; ld_fin <= 1'b0; ld_bcnt <= 9'd0; ld_blk <= 9'd0;
+            ld_byte_ok <= 1'b0; ld_fetch <= 2'd0; ld_baddr <= 14'd0; ld_wph <= 3'd0;
             icv <= 256'd0; dcv <= 256'd0;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
             wb_v <= 1'b0; bown <= B_NONE; mem_req <= 1'b0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
+            // ------------------------------------------------ SROM load
+            ld_start <= 1'b0;
+            if (ld_fin) begin ld_fin <= 1'b0; ld_start <= 1'b1; end
+            if (ld_active) begin
+                if (ld_wph != 3'd0) begin
+                    // write the assembled block: quadwords {LW1,LW0} .. {LW7,LW6}, then the tag
+                    ld_wph <= ld_wph == 3'd5 ? 3'd0 : ld_wph + 3'd1;
+                    if (ld_wph != 3'd5) begin
+                        ic_we <= 1'b1; ic_wa <= {ld_blk[7:0], ld_wph[1:0] - 2'd1};
+                        case (ld_wph)
+                        3'd1: ic_wd <= {ld_sr[188:157], ld_sr[31:0]};
+                        3'd2: ic_wd <= {ld_sr[220:189], ld_sr[63:32]};
+                        3'd3: ic_wd <= {ld_sr[252:221], ld_sr[95:64]};
+                        default: ic_wd <= {ld_sr[284:253], ld_sr[127:96]};
+                        endcase
+                    end else begin
+                        ict_we <= 1'b1; ict_wa <= ld_blk[7:0]; ict_wd <= ld_sr[148:128]; ict_v <= ld_sr[156];
+                        ld_blk <= ld_blk + 9'd1;
+                        if (ld_blk == 9'd255) begin ld_active <= 1'b0; ld_fin <= 1'b1; end
+                    end
+                end else if (!ld_byte_ok) begin
+                    // fetch the next byte: address out, the ROM registers it, data
+                    if (ld_fetch == 2'd0) begin srom_addr <= ld_baddr[12:0]; ld_fetch <= 2'd1; end
+                    else if (ld_fetch == 2'd1) ld_fetch <= 2'd2;
+                    else begin
+                        ld_byte <= ld_baddr[13] ? 8'd0 : srom_data;
+                        ld_byte_ok <= 1'b1; ld_bitpos <= 3'd0; ld_fetch <= 2'd0;
+                        if (!ld_baddr[13]) ld_baddr <= ld_baddr + 14'd1;
+                    end
+                end else begin
+                    ld_sr <= {ld_byte[ld_bitpos], ld_sr[292:1]};
+                    ld_bitpos <= ld_bitpos + 3'd1;
+                    if (ld_bitpos == 3'd7) ld_byte_ok <= 1'b0;
+                    if (ld_bcnt == 9'd292) begin ld_bcnt <= 9'd0; ld_wph <= 3'd1; end
+                    else ld_bcnt <= ld_bcnt + 9'd1;
+                end
+            end
+
             // ------------------------------------------------ fetch
             pc_f1 <= npc; v_f1 <= nv;
             if (fstate == FS_FETCH && !(w_redir || x_redir) && f2_miss) begin
@@ -688,7 +760,7 @@ module ev4_core (
                     ic_we <= 1'b1; ic_wa <= {ifill_line[12:5], bbeat}; ic_wd <= mem_rdata;
                     if (bbeat == 2'd3) begin
                         mem_req <= 1'b0; bown <= B_NONE;
-                        ict_we <= 1'b1; ict_wa <= ifill_line[12:5]; ict_wd <= ifill_line[33:13];
+                        ict_we <= 1'b1; ict_wa <= ifill_line[12:5]; ict_wd <= ifill_line[33:13]; ict_v <= 1'b1;
                     end else begin
                         bbeat <= bbeat + 2'd1; mem_addr <= {ifill_line, bbeat + 2'd1};
                     end
