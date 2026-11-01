@@ -68,7 +68,8 @@ module ev4_core (
     // ================================================================ classes
     localparam C_NOP = 4'd0, C_ALU = 4'd1, C_SHF = 4'd2, C_MUL = 4'd3, C_LDA = 4'd4,
                C_LD  = 4'd5, C_ST  = 4'd6, C_BR  = 4'd7, C_CBR = 4'd8, C_JMP = 4'd9,
-               C_MISC = 4'd10, C_MFPR = 4'd11, C_MTPR = 4'd12, C_REI = 4'd13, C_CPAL = 4'd14;
+               C_MISC = 4'd10, C_MFPR = 4'd11, C_MTPR = 4'd12, C_REI = 4'd13, C_CPAL = 4'd14,
+               C_CMOVX = 4'd15;                 // only as an x_slow selector
     // exception codes carried down the pipe
     localparam E_NONE = 4'd0, E_OPCDEC = 4'd1, E_FEN = 4'd2, E_ITBM = 4'd3,
                E_UNAL = 4'd4, E_DTBM = 4'd5, E_ARITH = 4'd6, E_DFAULT = 4'd7, E_ITBACV = 4'd8;
@@ -291,7 +292,8 @@ module ev4_core (
         6'h0F, 6'h2C, 6'h2D: begin dc_cls = C_ST; dc_ua = 1'b1; dc_ub = 1'b1; end
         6'h2E, 6'h2F: begin dc_cls = C_ST; dc_ua = 1'b1; dc_ub = 1'b1; dc_dst_v = 1'b1; dc_ldlat = 1'b1; end
         6'h10, 6'h11: begin
-            dc_cls = C_ALU; dc_dst = d_rc; dc_dst_v = 1'b1; dc_ua = 1'b1; dc_ub = !d_lit; dc_fast = 1'b1;
+            // CMOV is not in the 1-cycle loop (its old-Rc select would lengthen it): 2 cycles
+            dc_cls = C_ALU; dc_dst = d_rc; dc_dst_v = 1'b1; dc_ua = 1'b1; dc_ub = !d_lit; dc_fast = !d_cmov;
             if (alu_ill_d) dc_exc = E_OPCDEC;
         end
         6'h12: begin
@@ -338,6 +340,7 @@ module ev4_core (
     reg  [63:0] x_link;                 // PC + 4, computed in D
     reg  [63:0] x_ipr;                  // HW_MFPR's IPR value, read in D (serialized)
     reg         x_sel_lda, x_sel_link;  // fast-result selects, decoded in D
+    reg         x_cmov;
 
     // M1 / M2 registers (declared here for forwarding)
     reg         m1_v;  reg [63:0] m1_pc; reg [31:0] m1_ir; reg [3:0] m1_cls; reg [3:0] m1_exc;
@@ -368,8 +371,7 @@ module ev4_core (
     wire [63:0] x_va   = (x_ir[31:26] == 6'h0B || x_ir[31:26] == 6'h0F || (x_hwm && x_ir[12]))
                          ? {agen[63:3], 3'b000} : x_hwm ? {agen[63:2], 2'b00} : agen;
     // the fast result: what the X->X loop forwards
-    wire [63:0] fast_res = x_sel_lda ? agen : x_sel_link ? x_link :
-                           (fa_wr ? fa_res : x_c);            // a false CMOV keeps Rc
+    wire [63:0] fast_res = x_sel_lda ? agen : x_sel_link ? x_link : fa_res;
 
     // ---------------------------------------------------------------- hazards and forwarding (D)
     function hit_src;
@@ -406,7 +408,7 @@ module ev4_core (
         fwd(d_ra, dc_ua, rf_a, fwd_a, loop_a, sa);
         fwd(d_rb, dc_ub, rf_b, fwd_b, loop_b, sb);
         fwd(d_rc, dc_uc, rf_c, fwd_c, loop_c, sc);
-        haz = sa || sb || sc;
+        haz = sa || sb || sc || loop_c;          // operand C has no loop path: wait a cycle
     end
 
     // serialization
@@ -470,7 +472,8 @@ module ev4_core (
     // the slow X results (into M1's second result flop)
     reg [63:0] x_slow;
     always @* begin
-        case (x_cls)
+        case (x_cmov ? C_CMOVX : x_cls)
+        C_CMOVX: x_slow = fa_wr ? fa_res : x_c;                // a false CMOV keeps Rc
         C_SHF:  x_slow = sh_res;
         C_MUL:  x_slow = mul_res;
         C_MFPR: x_slow = x_ipr;
@@ -479,7 +482,7 @@ module ev4_core (
         default: x_slow = 64'd0;
         endcase
     end
-    wire x_isf = x_cls == C_ALU || x_cls == C_LDA || x_cls == C_BR || x_cls == C_JMP;
+    wire x_isf = (x_cls == C_ALU && !x_cmov) || x_cls == C_LDA || x_cls == C_BR || x_cls == C_JMP;
     wire x_ovf = (x_cls == C_ALU && fa_ovf) || (x_cls == C_MUL && mul_ovf);
 
     // ================================================================ M1
@@ -738,12 +741,13 @@ module ev4_core (
                     x_a <= loop_a ? fast_res : fwd_a;
                     x_b <= d_lit && (dc_cls == C_ALU || dc_cls == C_SHF || dc_cls == C_MUL)
                            ? {56'd0, d_ir[20:13]} : (loop_b ? fast_res : fwd_b);
-                    x_c <= loop_c ? fast_res : fwd_c;
+                    x_c <= fwd_c;                       // CMOV's Rc: never from the loop (stalls instead)
                     x_btarget <= d_pc + 64'd4 + {{41{d_ir[20]}}, d_ir[20:0], 2'b00};
                     x_link <= d_pc + 64'd4;
                     x_ipr <= ipr_rd;
                     x_sel_lda <= dc_cls == C_LDA;
                     x_sel_link <= dc_cls == C_BR || dc_cls == C_JMP;
+                    x_cmov <= d_cmov;
                     if (dc_ser) ser_pending <= 1'b1;
                 end
             end
