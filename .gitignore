@@ -58,3 +58,4 @@ verilator/obj_tb_*/
 verilator/obj_cpu/
 verilator/obj_pipe/
 verilator/sromload.trace
+verilator/obj_sys/

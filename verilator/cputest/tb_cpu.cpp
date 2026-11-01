@@ -61,6 +61,7 @@ int main(int argc, char **argv) {
     CPU_TOP *c = new CPU_TOP;
 #ifdef CPU_PIPE
     c->icmode = sromf ? 0 : 1;
+    c->sl_rcv = 1;
     uint8_t sromq = 0;
     auto tick = [&]() { c->srom_data = sromq; c->clk = 0; c->eval(); c->clk = 1; c->eval();
                         sromq = srom[c->srom_addr & 8191]; };

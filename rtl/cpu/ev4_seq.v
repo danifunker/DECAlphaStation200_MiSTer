@@ -162,7 +162,7 @@ module ev4_seq (
         begin
             if (!mm_lock) begin
                 va      <= v;
-                mm_csr  <= {op, ra, 3'b000, 1'b0, wr};
+                mm_csr  <= {op, ra, 3'b000, wr};       // opcode, Ra, FOW FOR ACV = 0, WR
                 mm_lock <= 1'b1;
             end
             enter_pal(off, pc | {63'd0, pal});

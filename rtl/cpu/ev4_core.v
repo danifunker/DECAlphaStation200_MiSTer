@@ -36,6 +36,11 @@ module ev4_core (
     output reg  [12:0] srom_addr,
     input  wire  [7:0] srom_data,
 
+    // the SROM port after the load: a bit-banged serial line (SL_XMIT[4]
+    // drives sRomClk_h, SL_RCV[3] reads sRomD_h); the DROM's console uses it
+    output reg         sl_xmit,
+    input  wire        sl_rcv,
+
     output reg         mem_req,
     output reg         mem_we,
     output reg         mem_istream,
@@ -75,7 +80,9 @@ module ev4_core (
     reg  [63:0] va_ipr;
     reg  [14:0] mm_csr;
     reg         mm_lock;
-    reg  [31:0] cc;
+    reg  [31:0] cc;                     // CC[31:0]: counts while cc_en (CC_CTL)
+    reg  [31:0] cc_hi;                  // CC[63:32]: written through CC, returned by RPCC
+    reg         cc_en;
     reg         intr_flag;
     reg         lock_flag;
     reg  [33:4] lock_addr;
@@ -131,6 +138,7 @@ module ev4_core (
     wire [20:0] ict_q = ict_qv[20:0];
     wire        icv_q = ict_qv[21];
     reg         isweep; reg [7:0] isw_idx;
+    reg  [63:0] restart_after;          // fetch restarts here after a sweep or the SROM load
     reg         ic_we;  reg [9:0] ic_wa; reg [63:0] ic_wd;
     reg         ict_we; reg [7:0] ict_wa; reg [20:0] ict_wd; reg ict_v;
 
@@ -159,7 +167,7 @@ module ev4_core (
         if (ld_active || isweep) begin
             npc_o = 64'd0; nv_o = 1'b0; kill_o = 1'b1;
         end else if (ld_start) begin
-            npc_o = 64'd0; nv_o = 1'b1; kill_o = 1'b1;
+            npc_o = restart_after; nv_o = 1'b1; kill_o = 1'b1;
         end else if (w_redir) begin
             kill_o = 1'b1;
             if (fstate == FS_FILL) nv_o = 1'b0;
@@ -378,6 +386,7 @@ module ev4_core (
         else if (d_ir[5]) case (d_ir[4:0])
             5'd2:  ipr_rd = {40'd0, iccsr_fpe, iccsr_map, iccsr_hwe, 21'd0};
             5'd4:  ipr_rd = exc_addr;
+            5'd5:  ipr_rd = {60'd0, sl_rcv, 3'b000};                       // SL_RCV
             5'd9:  ipr_rd = {29'd0, ps_cm[1], 32'd0, ps_cm[0], 1'b0};
             5'd11: ipr_rd = {30'd0, pal_base, 14'd0};
             default: ipr_rd = 64'd0;
@@ -411,7 +420,7 @@ module ev4_core (
         C_MUL:  x_slow = mul_res;
         C_MFPR: x_slow = x_ipr;
         C_MTPR: x_slow = x_b;
-        C_MISC: x_slow = x_ir[15:0] == 16'hC000 ? {32'd0, cc} : {63'd0, intr_flag};
+        C_MISC: x_slow = x_ir[15:0] == 16'hC000 ? {cc_hi, cc} : {63'd0, intr_flag};
         default: x_slow = 64'd0;
         endcase
     end
@@ -551,15 +560,16 @@ module ev4_core (
         // the cycle after, so its read sees the new tag
         ifill_done <= ict_we && ict_v && !rst && !ld_active && !isweep;
         mul_go <= 1'b0;
-        cc <= cc + 32'd1;
+        if (cc_en) cc <= cc + 32'd1;
         if (rst) begin
             pal <= 1'b1; iccsr_fpe <= 1'b0; iccsr_map <= 1'b0; iccsr_hwe <= 1'b0;
             pal_base <= 20'd0; abox_ctl <= 16'd0; ps_cm <= 2'd0; alt_cm <= 2'd0;
-            mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0;
+            mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0; cc_hi <= 32'd0; cc_en <= 1'b0;
             fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b0; v_f2 <= 1'b0;   // fetch starts after the sweep or the SROM load
             ld_active <= !icmode; ld_start <= 1'b0; ld_fin <= 1'b0; ld_bcnt <= 9'd0; ld_blk <= 9'd0;
             ld_byte_ok <= 1'b0; ld_fetch <= 2'd0; ld_baddr <= 14'd0; ld_wph <= 3'd0;
-            isweep <= icmode; isw_idx <= 8'd0; dsweep <= 1'b1; dsw_idx <= 8'd0;
+            isweep <= icmode; isw_idx <= 8'd0; dsweep <= 1'b1; dsw_idx <= 8'd0; restart_after <= 64'd0;
+            sl_xmit <= 1'b1;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
             wb_v <= 1'b0; bown <= B_NONE; mem_req <= 1'b0;
@@ -737,6 +747,11 @@ module ev4_core (
                                 if (w_res[10] != abox_ctl[10]) begin dsweep <= 1'b1; dsw_idx <= 8'd0; end   // D-cache on/off: start clean
                             end
                             5'd15: alt_cm <= w_res[4:3];
+                            5'd16: cc_hi <= w_res[63:32];             // CC
+                            5'd17: begin cc <= w_res[31:0]; cc_en <= w_res[32]; end   // CC_CTL
+                            5'd21, 5'd23: begin                       // FLUSH_IC, FLUSH_IC_ASM: sweep, then resume after this
+                                isweep <= 1'b1; isw_idx <= 8'd0; restart_after <= w_pc + 64'd4;
+                            end
                             default: ;
                             endcase
                         if (w_ir[5]) case (w_ir[4:0])
@@ -744,6 +759,7 @@ module ev4_core (
                             5'd4: exc_addr <= w_res;
                             5'd9: ps_cm <= w_res[4:3];
                             5'd11: pal_base <= w_res[33:14];
+                            5'd22: sl_xmit <= w_res[4];               // SL_XMIT
                             default: ;
                             endcase
                     end
@@ -755,7 +771,7 @@ module ev4_core (
                 if (w_exc == E_UNAL || w_exc == E_DTBM) begin
                     if (!mm_lock) begin
                         va_ipr <= w_va;
-                        mm_csr <= {w_ir[31:26], w_ir[25:21], 3'b000, 1'b0, w_cls == C_ST};
+                        mm_csr <= {w_ir[31:26], w_ir[25:21], 3'b000, w_cls == C_ST};   // opcode, Ra, FOW FOR ACV = 0, WR
                         mm_lock <= 1'b1;
                     end
                 end

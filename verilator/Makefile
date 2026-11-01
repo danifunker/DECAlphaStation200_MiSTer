@@ -29,7 +29,7 @@ smoke: $(EXE)
 		--screenshot smoke.png
 
 clean:
-	rm -rf obj_dir obj_tb_* obj_cpu obj_pipe smoke.png
+	rm -rf obj_dir obj_tb_* obj_cpu obj_pipe obj_sys smoke.png
 
 .PHONY: all smoke clean
 
@@ -103,3 +103,25 @@ sromload: obj_pipe/Vev4_core
 	python3 -I ../tests/srom/check_sromload.py ../srom/build/avanti_srom.bin sromload.trace
 
 .PHONY: cputest cputest-pipe sromload
+
+# ---------------------------------------------------------------- system simulation
+# rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the
+# flash and DROM images from scratch/ (not in git)
+SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(RTL)/sio/ns16550.v $(RTL)/as200_sys.v
+FLASH   ?= ../scratch/roms/archive_alpha-station-200-roms/flash_v7.0_arc4.58.bin
+DROM    ?= ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E47_DROM1.7.bin
+
+obj_sys/Vas200_sys: $(SYS_RTL) system/tb_sys.cpp
+	$(TB_V) --Mdir obj_sys --top-module as200_sys -Wno-BLKSEQ \
+		-GSROM_HEX='"../srom/build/avanti_srom.bitstream.hex"' $^
+
+$(FLASH):
+	cat ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E13_SRMV7.0-9.bin \
+	    ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E19_SRMV7.0-9.bin \
+	    ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E33_ARC4.58.bin \
+	    ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E46_ARC4.58.bin > $@
+
+system: obj_sys/Vas200_sys $(FLASH)
+	obj_sys/Vas200_sys --flash $(FLASH) --drom $(DROM) $(SYSARGS)
+
+.PHONY: system
