@@ -16,17 +16,25 @@ module ev4_ram #(
     input  wire  [DW-1:0]     wdata,
     input  wire  [(BE>1?BE:1)-1:0] wbe
 );
-    reg [DW-1:0] mem [0:(1<<AW)-1];
-
-    integer i;
-    always @(posedge clk) begin
-        rdata <= mem[raddr];
-        if (we) begin
-            if (BE > 1) begin
-                for (i = 0; i < BE; i = i + 1)
-                    if (wbe[i]) mem[waddr][8*i +: 8] <= wdata[8*i +: 8];
-            end else
-                mem[waddr] <= wdata;
+    // with byte enables: one 8-bit RAM per lane (Quartus does not infer a
+    // byte-enabled M10K from a Verilog-2001 loop over lanes; the 2026-11-01
+    // core fit built the D-cache from 65k registers)
+    genvar g;
+    generate
+        if (BE > 1) begin : lanes
+            for (g = 0; g < BE; g = g + 1) begin : lane
+                reg [7:0] mem [0:(1<<AW)-1];
+                always @(posedge clk) begin
+                    rdata[8*g +: 8] <= mem[raddr];
+                    if (we && wbe[g]) mem[waddr] <= wdata[8*g +: 8];
+                end
+            end
+        end else begin : word
+            reg [DW-1:0] mem [0:(1<<AW)-1];
+            always @(posedge clk) begin
+                rdata <= mem[raddr];
+                if (we) mem[waddr] <= wdata;
+            end
         end
-    end
+    endgenerate
 endmodule
