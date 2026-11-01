@@ -52,5 +52,15 @@ So FP results must be compared against EV4 rules, not raw IEEE: "trap expected" 
 6. **T5: real firmware bring-up.** SROM-replacement → DROM V1.2 (it already exercises PAL, machine checks, the IRQ4 timer and
    the I/O chips) → SRM `>>>` prompt over COM1 → NetBSD/Linux boot → Digital UNIX / NT.
 
+### Status (2026-10-31)
+- **T0 integer suites exist** (`tests/cpu/`, 3907 tests: operate instructions, LDA/LDAH, loads/stores,
+  branches/jumps) and pass on three references: `gen_int.py`'s model, `qemu-alpha -cpu ev4` and `tools/alphaemu`
+  (which now runs static ELFs and writes the lockstep trace, `-T`).
+- Toolchain facts: Ubuntu's `gcc-alpha-linux-gnu` 15.2 links a static glibc that **uses BWX** (`ldbu` in
+  `__tunables_init`), so libc-linked programs die with SIGILL under `-cpu ev4`. T4 (C programs) therefore needs a
+  small libc-free runtime, or a libc built with `-mcpu=ev4`. `as -m21064` assembles BWX/FIX/CIX/MVI without
+  complaint; `tests/cpu/check_ev4.py` rejects them. The assembler does accept the EV4 PAL instructions
+  (`hw_ldq/p`, `hw_stq/p`, `hw_mtpr`, `hw_mfpr`, `hw_rei`).
+
 Simulation first, FPGA second: build T0–T3 into a Verilator testbench so failures are reproducible and
 trace-diffable before anything goes on the DE10-Nano.
