@@ -140,7 +140,8 @@ module scsi_targets #(
     localparam [4:0] T_FREE = 5'd0, T_MOUT = 5'd1, T_MIN = 5'd2, T_CMD = 5'd3, T_EXEC = 5'd4,
                      T_DIN = 5'd5, T_DOUT = 5'd6, T_FETCH = 5'd7, T_STORE = 5'd8, T_STAT = 5'd9,
                      T_DONE = 5'd10, T_DISC = 5'd11, T_TOC = 5'd12, T_TOCW = 5'd13, T_TOCCP = 5'd14,
-                     T_TOCFK = 5'd15, T_TRK = 5'd16;
+                     T_TOCFK = 5'd15, T_TRK = 5'd16, T_PRE1 = 5'd17, T_PRE2 = 5'd18, T_DLEN = 5'd19,
+                     T_PLAY = 5'd20;
     reg  [4:0]  st;
     reg  [1:0]  dev;                     // 0, 1 disks, 2 CD-ROM
     reg  [2:0]  lun;
@@ -200,6 +201,21 @@ module scsi_targets #(
     reg  [7:0]  rs_status, rs_ctl, rs_track;      // READ SUB-CHANNEL, taken at the command
     reg  [23:0] rs_abs, rs_rel;
     reg  [2:0]  trk_s;
+    // the command, decoded over two registered steps before T_EXEC (the 10 ns fit):
+    // T_PRE1 the block address and count, capacities, command classes; T_PRE2 the
+    // end address and the READ TOC values (again after the track table is read)
+    reg  [31:0] lba_r, cnt_r, end_r, capcd;
+    reg         cdo_r, ntoc_r, ndisc_r;
+    reg  [7:0]  e0_r, tl_r;
+    reg         t0bad_r;
+    reg  [15:0] rlt2_r;
+    reg  [15:0] dal, drl;                // data in: the allocation length, the response's (T_DLEN)
+    // PLAY AUDIO's addresses (T_PLAY, a step a clock)
+    reg  [2:0]  pl_s;
+    reg  [23:0] pm0, pm1;
+    reg  [15:0] ps0, ps1;
+    reg  [31:0] pt0, pt1, pf0, pf1, p0r, p1r;
+    reg         pcur, pbad, pover;
 
     cd_audio #(.CLK_HZ(CLK_HZ)) u_cda (
         .clk(clk), .rst(rst),
@@ -213,11 +229,6 @@ module scsi_targets #(
         .sel_l(csel0), .sel_r(csel1), .vol_l(vol0), .vol_r(vol1),
         .out_l(cd_audio_l), .out_r(cd_audio_r), .out_stb(cd_audio_stb));
 
-    // M:S:F (absolute, +150) to LBA
-    function [23:0] msf_lba;
-        input [7:0] m, sec, f;
-        msf_lba = {16'd0, m} * 24'd4500 + {16'd0, sec} * 24'd75 + {16'd0, f} - 24'd150;
-    endfunction
     // a play address as a frame: past 2^19 - 1 (116:30, beyond any disc) it is the last
     function [18:0] frame19;
         input [31:0] x;
@@ -451,21 +462,20 @@ module scsi_targets #(
     task good;
         begin skey[dev] <= 4'd0; sasc[dev] <= 8'd0; go_status(8'h00); end
     endtask
-    // the synthesised IN data of rl bytes, cut to the allocation length
+    // the synthesised IN data of rl bytes, cut to the allocation length (in T_DLEN)
     task din_start;
         input [15:0] alloc;
         input [15:0] rl;
         begin
-            d_left <= (alloc < rl) ? alloc : rl; din_synth <= 1'b1;
-            if (((alloc < rl) ? alloc : rl) == 16'd0) go_status(8'h00);
-            else begin st <= T_DIN; req <= 1'b0; phase <= P_DIN; pend <= 2'd2; end
+            dal <= alloc; drl <= rl; din_synth <= 1'b1;
+            st <= T_DLEN; req <= 1'b0; phase <= P_DIN;
         end
     endtask
 
     integer d;
     always @(posedge clk) begin : eng
         reg [7:0]  m, op, t0, e0, nd, et;
-        reg [31:0] lba, cnt, n, p0, p1;
+        reg [31:0] lba, cnt, n;
         reg [15:0] alloc, rl;
         reg [9:0]  hl;
         reg        last_e, needs_disc, needs_toc, cd_only;
@@ -559,36 +569,54 @@ module scsi_targets #(
                     if (cdb_n == 5'd0) cdb_len <= cdb_length(idata);
                     cdb_n <= cdb_n + 5'd1;
                     req <= 1'b0;
-                    if (cdb_n != 5'd0 && cdb_n + 5'd1 == cdb_len) st <= T_EXEC;
+                    if (cdb_n != 5'd0 && cdb_n + 5'd1 == cdb_len) st <= T_PRE1;
                 end else if (!req) req <= 1'b1;
 
-                T_EXEC: begin
+                T_PRE1: begin
                     op = cdb[0];
                     // block address and count of the READ/WRITE forms
                     if (op[7:5] == 3'd0) begin
-                        lba = {11'd0, cdb[1][4:0], cdb[2], cdb[3]};
-                        cnt = {24'd0, cdb[4]};
-                        if (cnt == 0 && (op == 8'h08 || op == 8'h0A)) cnt = 32'd256;
+                        lba_r <= {11'd0, cdb[1][4:0], cdb[2], cdb[3]};
+                        cnt_r <= (cdb[4] == 8'd0 && (op == 8'h08 || op == 8'h0A)) ? 32'd256 : {24'd0, cdb[4]};
                     end else if (op == 8'hBE) begin                          // READ CD: 24-bit count
-                        lba = {cdb[2], cdb[3], cdb[4], cdb[5]};
-                        cnt = {8'd0, cdb[6], cdb[7], cdb[8]};
+                        lba_r <= {cdb[2], cdb[3], cdb[4], cdb[5]};
+                        cnt_r <= {8'd0, cdb[6], cdb[7], cdb[8]};
                     end else if (op[7:5] == 3'd5) begin
-                        lba = {cdb[2], cdb[3], cdb[4], cdb[5]};
-                        cnt = {cdb[6], cdb[7], cdb[8], cdb[9]};
+                        lba_r <= {cdb[2], cdb[3], cdb[4], cdb[5]};
+                        cnt_r <= {cdb[6], cdb[7], cdb[8], cdb[9]};
                     end else begin
-                        lba = {cdb[2], cdb[3], cdb[4], cdb[5]};
-                        cnt = {16'd0, cdb[7], cdb[8]};
+                        lba_r <= {cdb[2], cdb[3], cdb[4], cdb[5]};
+                        cnt_r <= {16'd0, cdb[7], cdb[8]};
                     end
-                    // the capacity in device blocks, for READ CAPACITY and the block descriptor
+                    // the capacity in device blocks, for READ CAPACITY, the block descriptor, range checks
                     cap_n <= blocks >> bshift; cap_last <= (blocks >> bshift) - 32'd1;
                     cap_bl <= (bshift == 4'd2) ? 8'h08 : 8'h02;
-                    d_idx <= 11'd0; ms_i <= 10'd0; ms_bdl <= 8'd0; ms_pg <= 6'h3F; ms_ps <= 10'd0;
+                    capcd <= blocks >> 2;
                     // the CD's command classes
-                    cd_only = op == 8'h43 || op == 8'h42 || op == 8'h45 || op == 8'h47 || op == 8'h48 ||
-                              op == 8'hA5 || op == 8'h4B || op == 8'h4E || op == 8'hBE;
-                    needs_toc = op == 8'h43 || op == 8'h42 || op == 8'h45 || op == 8'h47 || op == 8'h48 || op == 8'hA5;
-                    needs_disc = !(op == 8'h12 || op == 8'h03 || op == 8'h1A || op == 8'h5A || op == 8'h15 ||
-                                   op == 8'h55 || op == 8'h1B || op == 8'h1E || op == 8'h4E);
+                    cdo_r <= op == 8'h43 || op == 8'h42 || op == 8'h45 || op == 8'h47 || op == 8'h48 ||
+                             op == 8'hA5 || op == 8'h4B || op == 8'h4E || op == 8'hBE;
+                    ntoc_r <= op == 8'h43 || op == 8'h42 || op == 8'h45 || op == 8'h47 || op == 8'h48 || op == 8'hA5;
+                    ndisc_r <= !(op == 8'h12 || op == 8'h03 || op == 8'h1A || op == 8'h5A || op == 8'h15 ||
+                                 op == 8'h55 || op == 8'h1B || op == 8'h1E || op == 8'h4E);
+                    st <= T_PRE2;
+                end
+                T_PRE2: begin
+                    t0 = cdb[6];
+                    end_r <= lba_r + cnt_r;
+                    tl_r <= toc_first + toc_n - 8'd1;
+                    // READ TOC format 0: the first entry sent; a start track past the last
+                    e0_r <= (t0 == 8'h00 || t0 <= toc_first) ? 8'd0 : t0 == 8'hAA ? toc_n : t0 - toc_first;
+                    t0bad_r <= t0 != 8'hAA && t0 > toc_first + toc_n - 8'd1;
+                    // format 2's length: 4 + 11 (n + 3)
+                    rlt2_r <= 16'd37 + {5'd0, toc_n, 3'd0} + {7'd0, toc_n, 1'b0} + {8'd0, toc_n};
+                    st <= T_EXEC;
+                end
+
+                T_EXEC: begin
+                    op = cdb[0];
+                    lba = lba_r; cnt = cnt_r;
+                    d_idx <= 11'd0; ms_i <= 10'd0; ms_bdl <= 8'd0; ms_pg <= 6'h3F; ms_ps <= 10'd0;
+                    cd_only = cdo_r; needs_toc = ntoc_r; needs_disc = ndisc_r;
                     if (lun != 3'd0 && op != 8'h12 && op != 8'h03) begin
                         check(4'h5, 8'h25);
                     end else if (is_cd && cd_ua && op != 8'h12 && op != 8'h03) begin
@@ -606,7 +634,6 @@ module scsi_targets #(
                     end else case (op)
                         8'h43: begin                                       // READ TOC
                             alloc = {cdb[7], cdb[8]};
-                            t0 = cdb[6];
                             rt_msf <= cdb[1][1];
                             // the format: MMC's byte 2, or the SCSI-2 vendor bits of byte 9
                             if (cdb[2][3:0] == 4'd1 || cdb[9][7:6] == 2'd1) begin
@@ -618,19 +645,18 @@ module scsi_targets #(
                             end else if (cdb[2][3:0] == 4'd2 || cdb[9][7:6] == 2'd2) begin
                                 // the full TOC: A0, A1, A2, then the tracks
                                 rt_fmt <= 2'd2; rt_ne <= toc_n[6:0] + 7'd3;
-                                rl = 16'd4 + 16'd11 * ({8'd0, toc_n} + 16'd3);
-                                rt_len <= rl - 16'd2; rt_h2 <= 8'd1; rt_h3 <= 8'd1;
+                                rt_len <= rlt2_r - 16'd2; rt_h2 <= 8'd1; rt_h3 <= 8'd1;
                                 toc_a_r <= 7'd0;
-                                good; din_start(alloc, rl);
+                                good; din_start(alloc, rlt2_r);
                             end else if (cdb[2][3:0] != 4'd0 || cdb[9][7:6] == 2'd3) begin
                                 check(4'h5, 8'h24);
-                            end else if (t0 != 8'hAA && t0 > toc_first + toc_n - 8'd1) begin
+                            end else if (t0bad_r) begin
                                 check(4'h5, 8'h24);
                             end else begin
-                                e0 = (t0 == 8'h00 || t0 <= toc_first) ? 8'd0 : t0 == 8'hAA ? toc_n : t0 - toc_first;
+                                e0 = e0_r;
                                 nd = toc_n + 8'd1 - e0;
                                 rt_fmt <= 2'd0; rt_first <= e0[6:0]; rt_ne <= nd[6:0];
-                                rt_len <= 16'd2 + {5'd0, nd, 3'd0}; rt_h2 <= toc_first; rt_h3 <= toc_first + toc_n - 8'd1;
+                                rt_len <= 16'd2 + {5'd0, nd, 3'd0}; rt_h2 <= toc_first; rt_h3 <= tl_r;
                                 toc_a_r <= e0[6:0];
                                 good; din_start(alloc, 16'd4 + {5'd0, nd, 3'd0});
                             end
@@ -647,23 +673,9 @@ module scsi_targets #(
                                 din_start({cdb[7], cdb[8]}, !cdb[2][6] ? 16'd4 : cdb[3] == 8'd1 ? 16'd16 : 16'd24);
                             end
                         end
-                        8'h45, 8'hA5, 8'h47: begin                         // PLAY AUDIO (10), (12), MSF
-                            if (op == 8'h47) begin
-                                p0 = (cdb[3] == 8'hFF && cdb[4] == 8'hFF && cdb[5] == 8'hFF) ? {8'd0, q_abs_lba}
-                                     : {8'd0, msf_lba(cdb[3], cdb[4], cdb[5])};
-                                p1 = {8'd0, msf_lba(cdb[6], cdb[7], cdb[8])};
-                            end else begin
-                                p0 = (lba == 32'hFFFF_FFFF) ? {8'd0, q_abs_lba} : lba;
-                                p1 = p0 + ((op == 8'h45) ? {16'd0, cdb[7], cdb[8]} : {cdb[6], cdb[7], cdb[8], cdb[9]});
-                            end
-                            if (p0 > {8'd0, toc_lead} || (op == 8'h47 && p1 < p0)) check(4'h5, 8'h21);   // past the lead-out
-                            else begin
-                                a_start <= frame19(p0); a_end <= frame19(p1 > {8'd0, toc_lead} ? {8'd0, toc_lead} : p1);
-                                a_play <= 1'b1; good;
-                            end
-                        end
+                        8'h45, 8'hA5, 8'h47: begin pl_s <= 3'd0; st <= T_PLAY; end      // PLAY AUDIO (10), (12), MSF
                         8'h48: begin                                       // PLAY AUDIO TRACK/INDEX
-                            if (toc_n == 8'd0 || cdb[4] < toc_first || cdb[4] > toc_first + toc_n - 8'd1) check(4'h5, 8'h24);
+                            if (toc_n == 8'd0 || cdb[4] < toc_first || cdb[4] > tl_r) check(4'h5, 8'h24);
                             else begin
                                 // the start of the first track, the start of the one after the last
                                 toc_a_r <= cdb[4][6:0] - toc_first[6:0]; trk_s <= 3'd0; st <= T_TRK;
@@ -725,14 +737,14 @@ module scsi_targets #(
                                 if ((cdb[1][4:2] != 3'd0 && cdb[1][4:2] != 3'd2) ||
                                     (cdb[9] != 8'h10 && cdb[9] != 8'h00) || cdb[10][2:0] != 3'd0) check(4'h5, 8'h24);
                                 else if (cdb[9] == 8'h00 || cnt == 0) good;
-                                else if (((lba + cnt) << 2) > blocks) check(4'h5, 8'h21);
+                                else if (end_r > capcd) check(4'h5, 8'h21);
                                 else begin
                                     x_lba <= lba << 2; x_blocks <= cnt << 2; din_synth <= 1'b0;
                                     skey[dev] <= 4'd0; sasc[dev] <= 8'd0;
                                     st <= T_FETCH; phase <= P_DIN; req <= 1'b0;
                                 end
                             end
-                            else if (((lba + cnt) << bshift) > blocks) check(4'h5, 8'h21);
+                            else if (end_r > cap_n) check(4'h5, 8'h21);
                             else if (cnt == 0) good;
                             else begin
                                 x_lba <= lba << bshift; x_blocks <= cnt << bshift; din_synth <= 1'b0;
@@ -749,7 +761,7 @@ module scsi_targets #(
                                 if (((op == 8'h15) ? cdb[4] : cdb[8]) == 8'd0 && (op == 8'h15 || cdb[7] == 8'd0)) go_status(8'h00);
                                 else begin st <= T_DOUT; phase <= P_DOUT; req <= 1'b1; chunk <= 12'd0; end
                             end else if (is_cd) check(4'h7, 8'h27);       // write protected
-                            else if ((lba + cnt) > blocks) check(4'h5, 8'h21);
+                            else if (end_r > cap_n) check(4'h5, 8'h21);
                             else if (cnt == 0) go_status(8'h00);
                             else begin
                                 x_lba <= lba; x_blocks <= cnt; d_left <= 16'd0;
@@ -908,7 +920,7 @@ module scsi_targets #(
                         if (toc_n == 8'd0) begin
                             fk_x <= {1'b0, cd_secs} + 20'd150;            // the image in 2048-byte sectors, + 150
                             fk_m <= 8'd0; fk_s <= 8'd0; fk_s2 <= 2'd0; st <= T_TOCFK;
-                        end else begin toc_ok <= 1'b1; st <= T_EXEC; end
+                        end else begin toc_ok <= 1'b1; st <= T_PRE2; end
                     end
                 endcase
                 // the made-up table: track 1 at 00:02:00 (LBA 0), the lead-out at the image's end
@@ -924,9 +936,54 @@ module scsi_targets #(
                         n = {13'd0, cd_secs};
                         toc_wd <= {8'h14, 8'hAA, fk_m, fk_s, fk_x[7:0], n[23:0]}; toc_a_r <= 7'd1; toc_we <= 1'b1;
                         toc_first <= 8'd1; toc_n <= 8'd1; toc_lsf <= 8'd1; toc_nses <= 8'd1; toc_lead <= n[23:0];
-                        toc_ok <= 1'b1; st <= T_EXEC;
+                        toc_ok <= 1'b1; st <= T_PRE2;
                     end
                 endcase
+
+                // data in: the length, the allocation length or the response's, the shorter
+                T_DLEN: begin
+                    n = {16'd0, (dal < drl) ? dal : drl};
+                    d_left <= n[15:0];
+                    if (n[15:0] == 16'd0) go_status(8'h00);
+                    else begin st <= T_DIN; pend <= 2'd2; end
+                end
+
+                // PLAY AUDIO (10), (12), MSF: the start and end LBAs, a step a clock
+                // (M:S:F: M x 4500 + S x 75 + F - 150; FFFFFFFF / FF:FF:FF = the current position)
+                T_PLAY: begin
+                    pl_s <= pl_s + 3'd1;
+                    case (pl_s)
+                        3'd0: begin
+                            pm0 <= {16'd0, cdb[3]} * 24'd4500; ps0 <= {8'd0, cdb[4]} * 16'd75;
+                            pm1 <= {16'd0, cdb[6]} * 24'd4500; ps1 <= {8'd0, cdb[7]} * 16'd75;
+                            pf0 <= {24'd0, cdb[5]} - 32'd150; pf1 <= {24'd0, cdb[8]} - 32'd150;
+                            pcur <= (cdb[0] == 8'h47) ? (cdb[3] == 8'hFF && cdb[4] == 8'hFF && cdb[5] == 8'hFF)
+                                                      : lba_r == 32'hFFFF_FFFF;
+                        end
+                        3'd1: begin
+                            pt0 <= {8'd0, pm0} + {16'd0, ps0}; pt1 <= {8'd0, pm1} + {16'd0, ps1};
+                        end
+                        3'd2: begin
+                            if (cdb[0] == 8'h47) begin
+                                p0r <= pcur ? {8'd0, q_abs_lba} : pt0 + pf0; p1r <= pt1 + pf1;
+                            end else begin
+                                p0r <= pcur ? {8'd0, q_abs_lba} : lba_r;
+                                p1r <= pcur ? {8'd0, q_abs_lba} + cnt_r : end_r;
+                            end
+                        end
+                        3'd3: begin
+                            pbad <= p0r > {8'd0, toc_lead} || (cdb[0] == 8'h47 && p1r < p0r);     // past the lead-out
+                            pover <= p1r > {8'd0, toc_lead};
+                        end
+                        default: begin
+                            if (pbad) check(4'h5, 8'h21);
+                            else begin
+                                a_start <= frame19(p0r); a_end <= frame19(pover ? {8'd0, toc_lead} : p1r);
+                                a_play <= 1'b1; good;
+                            end
+                        end
+                    endcase
+                end
 
                 // PLAY AUDIO TRACK/INDEX: from the first track's start to the start
                 // of the track after the last (the lead-out for the last one)
@@ -934,7 +991,7 @@ module scsi_targets #(
                     trk_s <= trk_s + 3'd1;
                     if (trk_s == 3'd1) begin
                         a_start <= frame19({8'd0, toc_q[23:0]});
-                        et = (cdb[7] == 8'd0 || cdb[7] > toc_first + toc_n - 8'd1) ? toc_first + toc_n - 8'd1 :
+                        et = (cdb[7] == 8'd0 || cdb[7] > tl_r) ? tl_r :
                              cdb[7] < cdb[4] ? cdb[4] : cdb[7];
                         toc_a_r <= et[6:0] - toc_first[6:0] + 7'd1;
                     end

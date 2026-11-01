@@ -89,6 +89,26 @@ Inside either BAR, offsets 80-FF alias 00-7F.
 - the byte is registered (`syn_r`), and `tdata` takes `syn_r` or the buffer's registered output;
 - a data-in byte goes out three clocks after the previous one was taken (cursor, RAM / `syn_r`, send).
 
+**Targets, build 13 (2026-11-01)**: the fit failed `cdb -> a_end` by -2.708 ns (PLAY AUDIO's M:S:F
+multiplies, the length add and the lead-out compares in one clock). Now everything between flops
+is at most a short adder or compare:
+- **`T_PRE1`**: the CDB's block address and count, the capacities (`cap_n`, `cap_last`, `capcd`)
+  and the command classes, into registers.
+- **`T_PRE2`**: the end address (`end_r`, for the range checks against the capacity) and the READ
+  TOC values: the first entry, a start track past the last, the last track, format 2's length.
+  After a track-table read the command goes back to `T_PRE2`.
+- **`T_DLEN`**: the data-in length, min(allocation, response), from registers.
+- **`T_PLAY`**: PLAY AUDIO (10)/(12)/MSF, one step a clock:
+  1. M × 4500 and S × 75 (registered multiplies), F - 150;
+  2. the sums;
+  3. the start and end, or the current position;
+  4. the lead-out compares;
+  5. `a_start`/`a_end` and the play pulse.
+- **`cd_audio`**:
+  - the frame request is worked out over three registered stages, and a request waits five clocks
+    after any change so that a stale "needed" never fetches twice;
+  - the volume gain is registered before the multiply.
+
 **Controller:**
 
 The restructuring for the 10 ns fit (2026-11-01) removed the failing paths from `ins0`,

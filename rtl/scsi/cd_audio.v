@@ -144,15 +144,31 @@ module cd_audio #(
     reg   [7:0] ca_m, ca_s, cr_m, cr_s;
     reg         ca_go, cr_go;
 
-    // the next frame wanted: the one after cur in the other bank once cur is in its bank
+    // the next frame wanted: the one after cur in the other bank once cur is in its
+    // bank. Worked out over three registered stages (the 10 ns fit): cur in its bank
+    // and cur + 1; the frame and bank wanted; whether it is needed and its block
+    // (5f). A request waits until the stages have seen the state after the last
+    // change (f_hold), so a stale "needed" never fetches a frame twice
     wire [18:0] pb_f   = pbank ? bank_f1 : bank_f0;
     wire        cur_in = bank_v[pbank] && pb_f == cur;
-    wire [19:0] want_f = cur_in ? {1'b0, cur} + 20'd1 : {1'b0, cur};
-    wire        want_b = cur_in ? ~pbank : pbank;
-    wire [18:0] wb_f   = want_b ? bank_f1 : bank_f0;
-    wire        need   = pst == P_PLAY && !paused && want_f < {1'b0, last} &&
-                         !(bank_v[want_b] && wb_f == want_f[18:0]);
-    wire [21:0] want5  = {1'b0, want_f[18:0], 2'b00} + {3'd0, want_f[18:0]};   // 5 * want_f < 2^22
+    reg         cin_r;
+    reg  [19:0] cp1_r, wf_r;
+    reg         wb_r, need_r;
+    reg  [21:0] w5_r;
+    reg   [2:0] f_hold;
+    wire [18:0] wbf    = wb_r ? bank_f1 : bank_f0;
+    always @(posedge clk) begin
+        cin_r  <= cur_in;
+        cp1_r  <= {1'b0, cur} + 20'd1;
+        wf_r   <= cin_r ? cp1_r : {1'b0, cur};
+        wb_r   <= cin_r ? ~pbank : pbank;
+        need_r <= pst == P_PLAY && !paused && wf_r < {1'b0, last} && !(bank_v[wb_r] && wbf == wf_r[18:0]);
+        w5_r   <= {1'b0, wf_r[18:0], 2'b00} + {3'd0, wf_r[18:0]};                // 5 * frame < 2^22
+    end
+    // the frame and bank the request is for, as need_r saw them
+    reg  [18:0] nf_r;
+    reg         nb_r;
+    always @(posedge clk) begin nf_r <= wf_r[18:0]; nb_r <= wb_r; end
     assign q_abs_lba = {5'd0, cur};
     assign q_rel_lba = {5'd0, rel};
     assign playing   = pst != P_IDLE;
@@ -164,7 +180,7 @@ module cd_audio #(
             bank_v <= 2'b00; fr_req <= 1'b0; fetching <= 1'b0; acc <= 33'd0;
             s_l <= 16'sd0; s_r <= 16'sd0; q_track <= 8'd0; q_ctl <= 8'h10;
             cur <= 19'd0; last <= 19'd0; rel <= 19'd0; q_abs_msf <= 24'h000200; q_rel_msf <= 24'd0;
-            ca_go <= 1'b0; cr_go <= 1'b0; k <= 10'd0; pbank <= 1'b0; fill_bank <= 1'b0;
+            ca_go <= 1'b0; cr_go <= 1'b0; k <= 10'd0; pbank <= 1'b0; fill_bank <= 1'b0; f_hold <= 3'd0;
             fr_lba <= 32'd0; tb_a <= 7'd0; scan_i <= 8'd0; next_start <= 19'd0;
             bank_f0 <= 19'd0; bank_f1 <= 19'd0; rd_a <= 12'd0;
         end else begin
@@ -175,12 +191,13 @@ module cd_audio #(
             if (acc[32]) tick <= 1'b1;
 
             // frame transfers
+            if (f_hold != 3'd0) f_hold <= f_hold - 3'd1;
             if (fr_go) begin fr_req <= 1'b0; fetching <= 1'b1; end
-            if (fetching && fr_done) begin fetching <= 1'b0; bank_v[fill_bank] <= 1'b1; end
-            if (!fr_req && !fetching && need) begin
-                fr_req <= 1'b1; fr_lba <= {10'b10_0000_0000, want5};
-                fill_bank <= want_b; bank_v[want_b] <= 1'b0;
-                if (want_b) bank_f1 <= want_f[18:0]; else bank_f0 <= want_f[18:0];
+            if (fetching && fr_done) begin fetching <= 1'b0; bank_v[fill_bank] <= 1'b1; f_hold <= 3'd5; end
+            if (!fr_req && !fetching && need_r && f_hold == 3'd0) begin
+                fr_req <= 1'b1; fr_lba <= {10'b10_0000_0000, w5_r}; f_hold <= 3'd5;
+                fill_bank <= nb_r; bank_v[nb_r] <= 1'b0;
+                if (nb_r) bank_f1 <= nf_r; else bank_f0 <= nf_r;
             end
 
             // the conversions
@@ -222,7 +239,7 @@ module cd_audio #(
                     // the next sample: halfwords 2k (left) and 2k + 1 (right)
                     rd_a <= {pbank, k, 1'b0}; rd_l <= 1'b1;
                     if (k == 10'd587) begin
-                        k <= 10'd0; bank_v[pbank] <= 1'b0; pbank <= ~pbank;
+                        k <= 10'd0; bank_v[pbank] <= 1'b0; pbank <= ~pbank; f_hold <= 3'd5;
                         cur <= cur + 19'd1;                         // < last: no wrap
                         q_abs_msf <= msf_inc(q_abs_msf);
                         rel <= rel + 19'd1; q_rel_msf <= msf_inc(q_rel_msf);
@@ -241,7 +258,7 @@ module cd_audio #(
             if (pause && pst != P_IDLE) begin paused <= 1'b1; a_status <= 8'h12; end
             if (resume && pst != P_IDLE && paused) begin paused <= 1'b0; a_status <= 8'h11; end
             if (play) begin
-                cur <= p_start; last <= p_end; k <= 10'd0; pbank <= 1'b0; bank_v <= 2'b00;
+                cur <= p_start; last <= p_end; k <= 10'd0; pbank <= 1'b0; bank_v <= 2'b00; f_hold <= 3'd5;
                 s_l <= 16'sd0; s_r <= 16'sd0;
                 paused <= 1'b0;
                 a_status <= p_end > p_start ? 8'h11 : 8'h13;
@@ -274,9 +291,12 @@ module cd_audio #(
         c_l <= chsel(sel_l, s_l, s_r, mono);
         c_r <= chsel(sel_r, s_l, s_r, mono);
     end
-    // 0..256 (255 = unity)
-    wire signed [9:0]  g_l = {2'b00, vol_l} + {9'd0, vol_l[7]};
-    wire signed [9:0]  g_r = {2'b00, vol_r} + {9'd0, vol_r[7]};
+    // 0..256 (255 = unity), registered
+    reg  signed [9:0]  g_l, g_r;
+    always @(posedge clk) begin
+        g_l <= {2'b00, vol_l} + {9'd0, vol_l[7]};
+        g_r <= {2'b00, vol_r} + {9'd0, vol_r[7]};
+    end
     wire signed [25:0] m_l = c_l * g_l;
     wire signed [25:0] m_r = c_r * g_r;
     always @(posedge clk) begin

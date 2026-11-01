@@ -732,6 +732,21 @@ int main(int argc, char **argv) {
     CHECK(run(4, {0x4E, 0, 0, 0, 0, 0, 0, 0, 0, 0}, P_DIN, 0) == 0, "STOP PLAY");
     CHECK(run(4, {0x42, 0, 0x40, 1, 0, 0, 0, 0, 16, 0}, P_DIN, 16) == 0 && mem[DATA + 1] == 0x15, "stopped %02X", mem[DATA + 1]);
     CHECK(run(4, {0x45, 0, 0, 0, 0, 40, 0, 0, 1, 0}, P_DIN, 0) == 2 && sense(4) == 0x0521, "PLAY past the lead-out");
+    // PLAY AUDIO (10) and (12) by LBA: track 3 (12-15) then 2 frames of track 2 from 10, played to their end
+    cap.clear(); cap_on = true;
+    CHECK(run(4, {0x45, 0, 0, 0, 0, 12, 0, 0, 4, 0}, P_DIN, 0) == 0, "PLAY AUDIO(10)");
+    wait_cyc(3000);
+    CHECK(run(4, {0x42, 0, 0x40, 1, 0, 0, 0, 0, 16, 0}, P_DIN, 16) == 0 && mem[DATA + 1] == 0x11 && mem[DATA + 6] == 3 &&
+          get32(DATA + 8) == 0x0C000000, "PLAY(10) sub-channel %02X track %02X lba %08X", mem[DATA + 1], mem[DATA + 6], get32(DATA + 8));
+    wait_cyc(4 * 5880 + 4000);
+    cap_on = false;
+    check_play(AUD_T3, LEADOUT, 128, 255, 1, "PLAY(10)");
+    cap.clear(); cap_on = true;
+    CHECK(run(4, {0xA5, 0, 0, 0, 0, 10, 0, 0, 0, 2, 0, 0}, P_DIN, 0) == 0, "PLAY AUDIO(12)");
+    wait_cyc(2 * 5880 + 4000);
+    cap_on = false;
+    check_play(10, 12, 128, 255, 1, "PLAY(12)");
+    CHECK(run(4, {0x47, 0, 0, 0, 2, 20, 0, 2, 10, 0}, P_DIN, 0) == 2 && sense(4) == 0x0521, "PLAY MSF with the end before the start");
     printf("page 0E volume and channels, PLAY TRACK/INDEX, PAUSE/RESUME, STOP: %s\n", fails ? "see failures" : "ok");
 
     // ---- READ CD (user data), MODE SENSE all pages on the CD
