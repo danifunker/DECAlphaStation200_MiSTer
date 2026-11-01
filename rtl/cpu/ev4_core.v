@@ -652,7 +652,9 @@ module ev4_core (
         // a fill's tag write lands one cycle after its last beat (registered
         // write port): the line becomes valid with it, and the fetch restarts
         // the cycle after, so its read sees the new tag
-        ifill_done <= ict_we && ict_v && !rst && !ld_active && !isweep;
+        // (also during a sweep: a fill started before a FLUSH_IC must still finish
+        // its state machine, or the fetch never leaves FS_FILL; the sweep holds fetch)
+        ifill_done <= ict_we && ict_v && !rst && !ld_active;
         mul_go <= 1'b0;
         if (cc_en) cc <= cc + 32'd1;
         if (rst) begin
@@ -671,7 +673,8 @@ module ev4_core (
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
             // ------------------------------------------------ cache sweeps
-            if (isweep) begin
+            // (a fill's last tag write takes the port this cycle: wait one)
+            if (isweep && !(bown == B_IFILL && mem_ack && bbeat == 2'd3)) begin
                 ict_we <= 1'b1; ict_wa <= isw_idx; ict_v <= 1'b0; ict_wd <= 21'd0;
                 isw_idx <= isw_idx + 8'd1;
                 if (isw_idx == 8'd255) begin isweep <= 1'b0; ld_start <= 1'b1; end
