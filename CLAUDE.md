@@ -70,9 +70,13 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 
 1. The first whole-core timing fit of ev4_core at 10 ns (`scratch/cpu_fmax/core_top`), then fix
    its critical paths (`cpu-timing.md`).
-2. The DROM POST: the 53C810 (`rtl/scsi/`) and the 82378 SIO + ISA devices (`rtl/sio/`), ported
-   from the RS/6000 core (agents, 2026-11-01), into as200_sys; then the DROM loads SRM from flash;
-   SRM on COM1. The 28F020 flash command set (ID read, program/erase). Then TGA.
+2. **DONE 2026-11-01 (system sim): the whole DROM V1.7 POST passes** (NVRAM, 53C810, 82378, 3287,
+   8242, 87312, Interrupts) with the 53C810 (`rtl/scsi/`, `docs/design/scsi.md`) and the 82378 SIO +
+   ISA devices (`rtl/sio/`, `docs/design/sio.md`); the flash loader starts SRM (LED 2E, ~7 s of
+   machine time, ~19 min of simulation). **Next: the ITB/DTB** -- SRM's flash stub runs with
+   D-stream translation and fills the DTB from its DTB-miss handler (PA 0x4009E0); the core has
+   superpages only, so it loops there. Then SRM on COM1; interrupt delivery (HIER, PAL INTERRUPT);
+   the SCSI targets on hps_io; CMOS save (byte 3Fh picks SRM/ARC); the 28F020 command set; TGA.
 3. CPU completeness: T3 privileged tests, ITB/DTB, interrupts, the FPU (T2); branch
    prediction and block bus transfers for speed.
 
