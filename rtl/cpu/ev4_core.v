@@ -932,7 +932,9 @@ module ev4_core (
                             5'd1: begin                                                 // ITB_PTE
                                 if (tb_gh == 2'd3) begin
                                     itb_v[8 + itb_lp] <= 1'b1; itb_tag[8 + itb_lp] <= tb_tag;
-                                    itb_pfn[8 + itb_lp] <= w_res[52:32]; itb_re[8 + itb_lp] <= w_res[11:8];
+                                    // a large entry holds PFN[33:22] only (SRM's PALcode tells the
+                                    // 21064 apart by reading the low PFN bits back as 0)
+                                    itb_pfn[8 + itb_lp] <= {w_res[52:41], 9'd0}; itb_re[8 + itb_lp] <= w_res[11:8];
                                     itb_asm[8 + itb_lp] <= w_res[4]; itb_lp <= itb_lp + 2'd1;
                                 end else begin
                                     itb_v[itb_sp] <= 1'b1; itb_tag[itb_sp] <= tb_tag;
