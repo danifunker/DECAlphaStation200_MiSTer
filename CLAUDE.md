@@ -18,8 +18,8 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 | Simulator | Verilator, headless: `make -C verilator` / `make -C verilator smoke` (`verilator/sim_main.cpp` options in its header). |
 | Memory | SDRAM = system RAM (32/64/128 MB), DDR3 = TGA VRAM, flash/DROM images, BRAM = caches (user's standing preference). |
 | Clocks | **Target: the CPU at 100 MHz** (the 4/100's own speed; user, 2026-11-01): a fast pipelined CPU and FPU with caches. Today's PLL: 50 MHz system (`outclk_0`), 50 MHz shifted for SDRAM (`outclk_1`, unused yet), 65 MHz pixel (`outclk_2`, 1024x768@60); the system clock moves to 100 MHz with the CPU. |
-| Machine | **AlphaStation 200 4/100** (user, 2026-11-01; was the 4/166). DROM V1.2's speed table stops at 166 MHz, so the init code hands over PA 0x70 = 2, 0x10 = 10000 ps, 0x68 = 100 |
-| SROM | User wants **the original SROM** baked in (a file or the core's ROM). The part is a **Xilinx XC1765D** 64 Kbit serial PROM at E23 (archive.org board photo); no dump is public (searched 2026-11-01). Replacement init code in the same bitstream format until one is read. |
+| Machine | **AlphaStation 200 4/100** (user, 2026-11-01; was the 4/166). DROM V1.2's speed table stops at 166 MHz, so the SROM hands over PA 0x10 = 10000 ps, 0x68 = 100 and speed code 9 at 0x70 (DROM V1.7's own 100 MHz code), plus the memory size in MB at 0x38 |
+| SROM | User wants **the original SROM** baked in; the part is a **Xilinx XC1765D** 64 Kbit serial PROM at E23 and no dump is public (searched 2026-11-01). **Our replacement: `srom/avanti_srom.S`** (`docs/design/srom.md`; `tools/srom/srom.py` packs/decodes the 21064 bitstream, verified bit for bit against DEC's DEC 3000 SROM), built into `srom/build/avanti_srom.{bin,bitstream,hex}`; a real dump drops in as the same bitstream. |
 | ROMs | `games/DECAlphaStation200/boot0.rom` = the 1 MB flash image, default SRM v7.0-9 + ARC 4.58 (the real chips from archive.org `alpha-station-200-roms`; ioctl index 0; Load ROM replaces it for the session), `boot1.rom` = **DROM V1.7** (index 0x40; knows 100 MHz). NVRAM: slot SC4. |
 
 ## State

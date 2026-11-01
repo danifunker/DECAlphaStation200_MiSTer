@@ -9,7 +9,7 @@ This file is the authoritative feature set for the core. Change it deliberately 
 | Area | Locked choice | Notes |
 |---|---|---|
 | CPU | **DECchip 21064 (EV4)**, 8 KB I-cache + 8 KB D-cache, no BWX | The 4/100 part (100 MHz). The 21064A (4/233, 16 KB + 16 KB) is a possible later variant; the firmware supports both |
-| CPU clock | **100 MHz target** (the 4/100's own speed), pipelined CPU and FPU with caches (user, 2026-11-01) | The init code reports the real cycle time to the DROM (PA 0x70 = 2, PA 0x10 = 10000 ps, PA 0x68 = 100): DROM V1.2's speed table only knows 166-266 MHz (`docs/design/cpu.md` Q11) |
+| CPU clock | **100 MHz target** (the 4/100's own speed), pipelined CPU and FPU with caches (user, 2026-11-01) | The SROM reports the cycle time to the DROM (PA 0x10 = 10000 ps, 0x68 = 100, speed code 9 at 0x70; `docs/design/srom.md`); DROM V1.7 also calibrates 100 MHz itself |
 | Core logic | 21071-AA: 21071-CA cache/memory controller, 2× 21071-BA data path, 21071-DA PCI bridge (CSRs at `1.8000.0000` / `1.A000.0000`) | Includes the PCI scatter/gather TLB and sparse/dense spaces |
 | Bcache | Architecturally 512 KB, direct-mapped, 32-byte lines | Invisible to software except for diagnostics. The implementation may be smaller or omitted, as long as the 21071-CA and BIU_CTL behave consistently |
 | **Main memory** | **OSD option: 32 MB / 64 MB / 128 MB** (default 64 MB) | Bank layout below. 128 MB is the maximum this core supports (the real machine reaches 384 MB) |

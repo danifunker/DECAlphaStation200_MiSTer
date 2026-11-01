@@ -109,11 +109,11 @@ The AS200 SROM is not dumped (`docs/CORE_SPEC.md`). From TI ch. 8, EB64+ App. B 
   | 0x18 | a3 (r19) | signature [31:16] (0xDECA = V1, 0xDECB = V2) and system revision [15:0] |
   | 0x20 | a4 (r20) | active processor mask (1) |
   | 0x28 | a5 (r21) | system context; sp = a5 << 10 |
-  | 0x30-0x48 | t8-t11 | -- (0x38 holds a memory/bank value the DROM uses at 0x330c) |
+  | 0x30-0x48 | t8-t11 | -- ; **0x38 = memory size in MB**: the DROM's zeroing loop and memory test use it as top of memory (`docs/design/srom.md`) |
   | 0x50 | -- | the DROM writes "V1.2" |
   | 0x58, 0x60 | t12, at | -- |
   | 0x68 | -- | CPU MHz (166/200/233/266; used for SROM-port bit timing) |
-  | 0x70 | -- | 2 = speed already measured (DROM skips its RPCC calibration) |
+  | 0x70 | -- | **speed code**, not a flag: DROM V1.2 calibrates only when it is 2, V1.7 when it is 2 or 8; V1.7 stores its own code there (9 = 100 MHz). Our SROM writes 9, so neither DROM recalibrates (`docs/design/srom.md`, corrected 2026-11-01) |
   | 0x110 | -- | measured RPCC count |
 
   Also at console entry: v0 = 0, t0 = PAL_TEMP14 (ABOX_CTL), t1 = PAL_TEMP18 (BIU_CTL).
@@ -1166,7 +1166,7 @@ line, so DROM output on the SROM port shows up in simulation.
 | Q8 | Non-canonical I-stream VA | Not described | ITB_ACV |
 | Q9 | Superpage "kernel only" for HW_LD/ST with ALT: PS.CM or ALT_MODE? Non-kernel superpage access: ACV or normal DTB lookup? | Not described | ALT_MODE when ALT; non-kernel falls through to the DTB |
 | Q10 | I-cache ASN/ASM handling for PALmode fills/fetches | Not described | ASM = 1 on PALmode fills, ASN ignored in PALmode |
-| Q11 | Cycle-time reporting at 50 MHz: the DROM's table has no entry below 166 MHz, so calibration reports 6000 ps. Do SRM/ARC/OSes re-measure (TOY) or trust a2/0x10? | DROM listing; console behaviour unknown | Init code writes PA 0x70 = 2 and the real cycle time (20000 ps) to skip the table; check what SRM's `show config`/OS timekeeping use |
+| Q11 | (Resolved 2026-11-01: the target is the 4/100; DROM V1.7 knows 100 MHz, and the SROM writes speed code 9 at PA 0x70.) Cycle-time reporting at 50 MHz: DROM V1.2's table has no entry below 166 MHz, so calibration reports 6000 ps. Do SRM/ARC/OSes re-measure (TOY) or trust a2/0x10? | DROM listing; console behaviour unknown | Init code writes PA 0x70 = 2 and the real cycle time (20000 ps) to skip the table; check what SRM's `show config`/OS timekeeping use |
 | Q12 | State left by an arithmetic trap / MCHK in the destination register (e.g. a load hit by HARD_ERROR) | UNPREDICTABLE / not described | Arithmetic: result as section 8.4; MCHK load: destination unchanged |
 | Q13 | Does HW_REI or an exception clear intr_flag? | ARM: cleared by CALL_PAL REI (PALcode's job) | Only RS/RC change it |
 | Q14 | Is the VMS ICCSR probe (write bit 1, read bit 3) detecting a 21064 pass or the 21064A? | VMS code only | RAZ, which leads VMS down its PAL_TEMP2-bit-1-clear path |
