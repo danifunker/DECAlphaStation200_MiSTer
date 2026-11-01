@@ -88,26 +88,38 @@ reg         ack_cfg;                            // the access acked was a header
 wire        io_on  = pci_cmd[0];
 wire        mem_on = pci_cmd[1];
 
+// the claim: combinational from the request (docs/design/pci.md 2), a small BAR compare
 wire cfg_hit = pt_cmd == 2'd0 && pt_dev == DEVNUM[4:0] && pt_addr[10:8] == 3'd0;
 wire io_hit  = pt_cmd == 2'd1 && io_on  && pt_addr[31:8] == bar0;
 wire mem_hit = pt_cmd == 2'd2 && mem_on && pt_addr[31:8] == bar1;
 assign pt_claim = pt_req && (cfg_hit || io_hit || mem_hit);
 
-wire acc     = pt_req && pt_claim && !pt_ack;
-wire hdr_sel = acc && cfg_hit && !pt_addr[7];   // the header (00-7F)
-wire sel     = acc && !(cfg_hit && !pt_addr[7]);// the registers: BAR0, BAR1, config 80-FF
-wire we      = pt_we;
-wire [6:2] off = pt_addr[6:2];
-wire [3:0] be  = pt_be;
-wire [31:0] wdata = pt_wdata;
+// the request is registered when accepted (cycle 0); cycle 1 does the access from the
+// registered copy; pt_ack is out in cycle 2 with the data
+reg         h_pend, h_hdr, h_we;
+reg  [7:2]  h_reg;
+reg  [3:0]  h_be;
+reg  [31:0] h_wd;
+wire acc     = pt_req && pt_claim && !h_pend && !pt_ack;
+wire hdr_sel = h_pend && h_hdr;                 // the header (config 00-7F)
+wire sel     = h_pend && !h_hdr;                // the registers: BAR0, BAR1, config 80-FF
+wire we      = h_we;
+wire [6:2] off = h_reg[6:2];
+wire [3:0] be  = h_be;
+wire [31:0] wdata = h_wd;
 reg  [31:0] rdata;
 
 integer k;
 always @(posedge clk) begin
-    pt_ack <= acc;
-    if (acc) ack_cfg <= hdr_sel;
+    h_pend <= acc;
+    if (acc) begin
+        h_hdr <= cfg_hit && !pt_addr[7]; h_we <= pt_we; h_reg <= pt_addr[7:2];
+        h_be <= pt_be; h_wd <= pt_wdata;
+    end
+    pt_ack <= h_pend;
+    if (h_pend) ack_cfg <= h_hdr;
     if (hdr_sel && we)
-        case (pt_addr[7:2])
+        case (h_reg)
             6'h01: begin
                 if (be[0]) pci_cmd[7:0]  <= wdata[7:0] & 8'h47;
                 if (be[1]) pci_cmd[15:8] <= wdata[15:8] & 8'h01;
@@ -124,7 +136,7 @@ always @(posedge clk) begin
             default: ;
         endcase
     if (hdr_sel && !we)
-        case (pt_addr[7:2])
+        case (h_reg)
             6'h00:   cfg_q <= 32'h0001_1000;                                        // 53C810, NCR
             6'h01:   cfg_q <= {pci_sts_w1c, 2'b01, pci_sts_dpd, 8'h00, pci_cmd};    // medium DEVSEL
             6'h02:   cfg_q <= {24'h01_0000, REV};                                   // SCSI controller
@@ -136,7 +148,7 @@ always @(posedge clk) begin
         endcase
     if (set_ma) pci_sts_w1c[2] <= 1'b1;                                             // bit 13
     if (reset) begin
-        pt_ack <= 1'b0;
+        pt_ack <= 1'b0; h_pend <= 1'b0;
         pci_cmd <= 16'h0; pci_sts_w1c <= 5'd0; pci_sts_dpd <= 1'b0;
         pci_cls <= 8'h0; pci_lat <= 8'h0; pci_intl <= 8'h0;
         bar0 <= 24'h0; bar1 <= 24'h0;
@@ -180,7 +192,6 @@ wire  [7:0]  dfifo  = {1'b0, dbc[6:0]};
 
 wire irq = !dcntl[1] && ((dstat_st & dien[6:0] & 7'h7D) != 7'd0 || (sist0_st & sien0) != 8'd0 ||
                          (sist1_st & sien1) != 3'd0 || intf);
-assign inta_n = !irq;
 
 function [7:0] reg_rd;
     input [6:0] a;
@@ -223,12 +234,19 @@ function [7:0] reg_rd;
     endcase
 endfunction
 
+
 // ---- the SCRIPTS engine ---------------------------------------------------------------------
+// Timing (100 MHz): an instruction is fetched (E_FETCH), then E_PRE registers its address
+// arithmetic (DSA + offset, the jump target) and the comparisons decode needs; E_DECODE works
+// from those registers. Register instructions take three cycles (operand, ALU, write), transfer
+// control two (condition, action). The interrupt status bits an engine cycle raises (set_*)
+// are registered (q_*) before they are stacked into DSTAT/SIST0/SIST1.
 localparam [4:0] E_IDLE = 5'd0, E_FETCH = 5'd1, E_DECODE = 5'd2, E_IND = 5'd3,
                  E_BM_WAIT = 5'd4, E_BM_BYTE = 5'd5, E_BM_RD = 5'd6, E_BM_GIVE = 5'd7, E_BM_END = 5'd8,
                  E_SEL = 5'd9, E_SEL_WAIT = 5'd10, E_STO = 5'd11, E_WDISC = 5'd12, E_WRESEL = 5'd13,
                  E_TC_WAIT = 5'd14, E_TC_EVAL = 5'd15,
-                 E_MM_RD = 5'd16, E_MM_WR = 5'd17, E_FLUSH = 5'd18;
+                 E_MM_RD = 5'd16, E_MM_WR = 5'd17, E_FLUSH = 5'd18,
+                 E_PRE = 5'd19, E_REG_RD = 5'd20, E_REG_ALU = 5'd21, E_REG_WR = 5'd22, E_TC_DO = 5'd23;
 reg  [4:0]  est;
 
 reg  [2:0]  fcnt;                               // the fetch's word
@@ -237,7 +255,16 @@ reg         first_byte;
 reg         fl_next;                            // after E_FLUSH: the next instruction (else halt)
 reg         stepped;                            // an instruction ran since the start (single step)
 reg  [31:0] sto_cnt, sto_lim, gen_cnt, gen_lim;
-reg         gen_on;
+reg         sto_hit, gen_hit, gen_on;
+// E_PRE's results
+reg  [31:0] dsa_rel;                            // DSA + DSPS<23:0> (table indirect, LOAD/STORE)
+reg  [31:0] sel_rel;                            // DSA + DBC (SELECT table indirect)
+reg  [31:0] jmp_tgt;                            // the transfer target: relative or absolute
+reg         i_dbc0;                             // the count is 0
+reg         i_mm_sself, i_mm_dself, i_mm_iobad, i_mm_align;
+// the register instruction and transfer control stages
+reg  [7:0]  r_src, r_res;
+reg         tc_take;
 // the one-longword write buffer and read cache
 reg         wb_valid;
 reg  [31:2] wb_addr;
@@ -278,15 +305,22 @@ always @(posedge clk) begin
 end
 wire d_idle = !dmst && !d_go && !d_done;
 
-// the timers: 2^code units (code 0: none)
+// the timers: 2^code units (code 0: none); the compares registered
 always @(posedge clk) begin
     sto_lim <= stime0[3:0] == 4'd0 ? 32'hFFFF_FFFF : STO_UNIT << stime0[3:0];
     gen_lim <= STO_UNIT << stime1[3:0];
+    sto_hit <= sto_cnt == sto_lim;
+    gen_hit <= gen_cnt == gen_lim;
 end
 
-// set by the engine this cycle (blocking, inside the clocked block below)
-reg  [7:0] set_s0, set_ds;
-reg  [2:0] set_s1;
+// INTA, registered
+reg inta_q;
+always @(posedge clk) inta_q <= reset ? 1'b1 : !irq;
+assign inta_n = inta_q;
+
+// set by the engine this cycle (blocking, inside the clocked block below), then registered
+reg  [7:0] set_s0, set_ds, q_s0, q_ds;
+reg  [2:0] set_s1, q_s1;
 
 // a register written by the host or by SCRIPTS (not those with side effects)
 task reg_wr;
@@ -362,7 +396,7 @@ endtask
 integer i;
 always @(posedge clk) begin : engine
     reg [6:0]  a;
-    reg [7:0]  v, src, res, b;
+    reg [7:0]  v, res, b;
     reg [8:0]  sum;
     reg        c_out, s, pm, dm, cnd, take;
     reg [2:0]  ph;
@@ -376,6 +410,7 @@ always @(posedge clk) begin : engine
         scntl0 <= 8'hC0; scntl1 <= 8'd0; scntl2 <= 8'd0; scntl3 <= 8'd0; scid <= 8'd0; sxfer <= 8'd0;
         sdid <= 8'd0; gpreg <= 8'd0; sfbr <= 8'd0; socl <= 8'd0; ssid <= 8'd0;
         dstat_st <= 7'd0; dstat_pend <= 7'd0; sist0_st <= 8'd0; sist0_pend <= 8'd0; sist1_st <= 3'd0; sist1_pend <= 3'd0;
+        q_s0 <= 8'd0; q_s1 <= 3'd0; q_ds <= 8'd0;
         latched_phase <= 3'd0; dsa <= 32'd0; temp <= 32'd0; dnad <= 32'd0; dsp <= 32'd0; dsps <= 32'd0;
         scratcha <= 32'd0; scratchb <= 32'd0; adder <= 32'd0;
         ctest0 <= 8'd0; ctest3_w <= 8'd0; ctest4 <= 8'd0; ctest5 <= 8'd0; ctest6 <= 8'd0;
@@ -395,7 +430,7 @@ always @(posedge clk) begin : engine
         if (sel && we && off == 5'h05 && be[0] && !wdata[6]) srst <= 1'b0;
         if (sel && !we) rdata <= {reg_rd({off, 2'd3}), reg_rd({off, 2'd2}), reg_rd({off, 2'd1}), reg_rd({off, 2'd0})};
     end else begin
-        // ------------------------------------------------ the host's register access
+        // ------------------------------------------------ the host's register access (registered request)
         if (sel) begin
             if (!we) begin
                 rdata <= {reg_rd({off, 2'd3}), reg_rd({off, 2'd2}), reg_rd({off, 2'd1}), reg_rd({off, 2'd0})};
@@ -442,10 +477,10 @@ always @(posedge clk) begin : engine
         if (sb_req) latched_phase <= sb_phase;
         bsy_q <= sb_bsy;
         if (bsy_q && !sb_bsy && est == E_IDLE) con <= 1'b0;
-        // the general-purpose timer, one shot from the write of STIME1
+        // the general-purpose timer, one shot from the write of STIME1 (gen_hit: the compare, registered)
         if (gen_on) begin
             gen_cnt <= gen_cnt + 32'd1;
-            if (gen_cnt == gen_lim) begin gen_on <= 1'b0; set_s1[1] = 1'b1; end
+            if (gen_hit && gen_cnt != 32'd0) begin gen_on <= 1'b0; set_s1[1] = 1'b1; end
         end
 
         // ------------------------------------------------ the engine
@@ -469,8 +504,22 @@ always @(posedge clk) begin : engine
                     endcase
                     dsp <= dsp + 32'd4;
                     fcnt <= fcnt + 3'd1;
-                    if ((fcnt == 3'd1 && ins0[31:29] != 3'b110) || fcnt == 3'd2) est <= E_DECODE;
+                    if ((fcnt == 3'd1 && ins0[31:29] != 3'b110) || fcnt == 3'd2) est <= E_PRE;
                 end
+            end
+
+            // the decode's arithmetic and comparisons, registered
+            E_PRE: begin
+                dsa_rel <= dsa + sext24(dsps[23:0]);
+                sel_rel <= dsa + sext24(ins0[23:0]);
+                // relative: bit 23 for transfer control, bit 26 for the I/O instructions
+                jmp_tgt <= ((ins0[31:30] == 2'b10) ? ins0[23] : ins0[26]) ? dsp + sext24(dsps[23:0]) : dsps;
+                i_dbc0 <= ins0[23:0] == 24'd0;
+                i_mm_sself <= self_hit(dmode[5], dsps);
+                i_mm_dself <= self_hit(dmode[4], mm_dst);
+                i_mm_iobad <= (dmode[5] && !self_hit(1'b1, dsps)) || (dmode[4] && !self_hit(1'b1, mm_dst));
+                i_mm_align <= dsps[1:0] == mm_dst[1:0];
+                est <= E_DECODE;
             end
 
             E_DECODE: begin
@@ -482,38 +531,20 @@ always @(posedge clk) begin : engine
                         if (target_mode || !ins0[27]) begin set_ds[0] = 1'b1; est <= E_IDLE; end    // target mode / CHMOV
                         else if (ins0[28] || ins0[29]) begin
                             // table indirect (DSA + offset) or indirect: the count and address
-                            dma_rd(ins0[28] ? dsa + sext24(dsps[23:0]) : dsps);
-                            if (ins0[28]) adder <= dsa + sext24(dsps[23:0]);
+                            dma_rd(ins0[28] ? dsa_rel : dsps);
+                            if (ins0[28]) adder <= dsa_rel;
                             est <= E_IND;
-                        end else if (dbc == 24'd0) begin set_ds[0] = 1'b1; est <= E_IDLE; end
+                        end else if (i_dbc0) begin set_ds[0] = 1'b1; est <= E_IDLE; end
                         else est <= E_BM_WAIT;
                     end
                     2'b01: begin
-                        if (ins0[29:27] >= 3'b101) begin
-                            // register read / write: 101 SFBR op data to the register, 110 the
-                            // register op data to SFBR, 111 read-modify-write
-                            src = ins0[29:27] == 3'b101 ? sfbr : reg_rd(reg_adr);
-                            sum = {1'b0, src} + {1'b0, reg_imm} + {8'd0, ins0[26:24] == 3'b111 && carry};
-                            c_out = carry;
-                            case (ins0[26:24])
-                                3'b000: res = reg_imm;
-                                3'b001: begin res = {src[6:0], carry}; c_out = src[7]; end      // SHL
-                                3'b010: res = src | reg_imm;
-                                3'b011: res = src ^ reg_imm;
-                                3'b100: res = src & reg_imm;
-                                3'b101: begin res = {carry, src[7:1]}; c_out = src[0]; end      // SHR
-                                default: begin res = sum[7:0]; c_out = sum[8]; end              // ADD, ADC
-                            endcase
-                            carry <= c_out;
-                            if (ins0[29:27] == 3'b110) sfbr <= res;
-                            else reg_wr_eng(reg_adr, res);
-                            est <= E_FETCH;
-                        end else case (ins0[29:27])
+                        if (ins0[29:27] >= 3'b101) est <= E_REG_RD;      // register read / write
+                        else case (ins0[29:27])
                             3'b000: begin                                   // SELECT
                                 if (ins0[25]) begin
                                     // table indirect: SCNTL3, the ID and SXFER from DSA + offset
-                                    dma_rd(dsa + sext24(ins0[23:0]));
-                                    adder <= dsa + sext24(ins0[23:0]);
+                                    dma_rd(sel_rel);
+                                    adder <= sel_rel;
                                     est <= E_IND;
                                 end else begin
                                     sdid <= {4'd0, ins0[19:16]}; est <= E_SEL;
@@ -541,7 +572,7 @@ always @(posedge clk) begin : engine
                         if (ins0[29]) begin
                             // LOAD (bit 24) / STORE: 1-4 bytes between a register and memory
                             // (absolute, or DSA + offset with bit 28)
-                            ma = ins0[28] ? dsa + sext24(dsps[23:0]) : dsps;
+                            ma = ins0[28] ? dsa_rel : dsps;
                             if (ins0[2:0] == 3'd0 || ins0[2:0] > 3'd4 || ins0[27:26] != 2'd0) begin
                                 set_ds[0] = 1'b1; est <= E_IDLE;
                             end else begin
@@ -553,19 +584,47 @@ always @(posedge clk) begin : engine
                                 end
                                 est <= E_MM_RD;
                             end
-                        end else if (ins0[28:25] != 4'd0 || dsps[1:0] != mm_dst[1:0]) begin
+                        end else if (ins0[28:25] != 4'd0 || !i_mm_align) begin
                             set_ds[0] = 1'b1; est <= E_IDLE;              // memory move: same alignment
-                        end else if (dbc == 24'd0) est <= E_FETCH;
-                        else if ((dmode[5] && !self_hit(1'b1, dsps)) || (dmode[4] && !self_hit(1'b1, mm_dst))) begin
+                        end else if (i_dbc0) est <= E_FETCH;
+                        else if (i_mm_iobad) begin
                             set_ds[5] = 1'b1; est <= E_IDLE;              // other PCI I/O space: a bus fault
                         end else begin
                             dnad <= dsps;
-                            mm_sreg <= self_hit(dmode[5], dsps);
-                            mm_dreg <= self_hit(dmode[4], mm_dst);
+                            mm_sreg <= i_mm_sself;
+                            mm_dreg <= i_mm_dself;
                             est <= E_MM_RD;
                         end
                     end
                 endcase
+            end
+
+            // ---- register instructions: 101 SFBR op data to the register, 110 the register op
+            // data to SFBR, 111 read-modify-write; operand, ALU, write in three cycles
+            E_REG_RD: begin
+                r_src <= ins0[29:27] == 3'b101 ? sfbr : reg_rd(reg_adr);
+                est <= E_REG_ALU;
+            end
+            E_REG_ALU: begin
+                sum = {1'b0, r_src} + {1'b0, reg_imm} + {8'd0, ins0[26:24] == 3'b111 && carry};
+                c_out = carry;
+                case (ins0[26:24])
+                    3'b000: res = reg_imm;
+                    3'b001: begin res = {r_src[6:0], carry}; c_out = r_src[7]; end      // SHL
+                    3'b010: res = r_src | reg_imm;
+                    3'b011: res = r_src ^ reg_imm;
+                    3'b100: res = r_src & reg_imm;
+                    3'b101: begin res = {carry, r_src[7:1]}; c_out = r_src[0]; end      // SHR
+                    default: begin res = sum[7:0]; c_out = sum[8]; end                  // ADD, ADC
+                endcase
+                carry <= c_out;
+                r_res <= res;
+                est <= E_REG_WR;
+            end
+            E_REG_WR: begin
+                if (ins0[29:27] == 3'b110) sfbr <= r_res;
+                else reg_wr_eng(reg_adr, r_res);
+                est <= E_FETCH;
             end
 
             // the indirect fetches: block move {count, address}, select {SCNTL3, ID, SXFER}
@@ -655,17 +714,18 @@ always @(posedge clk) begin : engine
                 end else if (sb_sel_fail) est <= E_STO;
             end
             E_STO: begin
+                // sto_hit: the compare of the cycle before (sto_cnt is 0 through E_SEL_WAIT)
                 sto_cnt <= sto_cnt + 32'd1;
-                if (sto_cnt == sto_lim) begin set_s1[2] = 1'b1; est <= E_IDLE; end
+                if (sto_hit) begin set_s1[2] = 1'b1; est <= E_IDLE; end
             end
             E_WDISC: if (!sb_bsy) begin con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FETCH; end
             E_WRESEL: if (sigp) begin
                 // SIGP: the alternate address (nothing reselects)
-                dsp <= ins0[26] ? dsp + sext24(dsps[23:0]) : dsps;
+                dsp <= jmp_tgt;
                 est <= E_FETCH;
             end
 
-            // ---- transfer control
+            // ---- transfer control: the condition, then the action
             E_TC_WAIT: begin
                 if (!sb_bsy) begin set_s0[2] = 1'b1; con <= 1'b0; est <= E_IDLE; end
                 else if (sb_req && !sb_ackhold) est <= E_TC_EVAL;
@@ -681,9 +741,13 @@ always @(posedge clk) begin : engine
                 else cnd = 1'b1;
                 take = ins0[19] ? cnd : !cnd;
                 if (!ins0[17] && !ins0[18] && !ins0[21]) take = ins0[19];     // no test: bit 19 (the assemblers' "always" sets it)
-                if (take) case (ins0[29:27])
-                    3'b000: begin dsp <= ins0[23] ? dsp + sext24(dsps[23:0]) : dsps; est <= E_FETCH; end
-                    3'b001: begin temp <= dsp; dsp <= ins0[23] ? dsp + sext24(dsps[23:0]) : dsps; est <= E_FETCH; end
+                tc_take <= take;
+                est <= E_TC_DO;
+            end
+            E_TC_DO: begin
+                if (tc_take) case (ins0[29:27])
+                    3'b000: begin dsp <= jmp_tgt; est <= E_FETCH; end
+                    3'b001: begin temp <= dsp; dsp <= jmp_tgt; est <= E_FETCH; end
                     3'b010: begin dsp <= temp; est <= E_FETCH; end
                     default:
                         if (ins0[20]) begin intf <= 1'b1; est <= E_FETCH; end                 // INTFLY
@@ -731,20 +795,21 @@ always @(posedge clk) begin : engine
             default: est <= E_IDLE;
         endcase
 
-        // ---------------------------------------- the interrupt status, stacked
-        if (set_s0 != 8'd0 || set_s1 != 3'd0 || set_ds != 8'd0) begin
+        // ---------------------------------------- the interrupt status: registered, then stacked
+        q_s0 <= set_s0; q_s1 <= set_s1; q_ds <= set_ds;
+        if (q_s0 != 8'd0 || q_s1 != 3'd0 || q_ds != 8'd0) begin
             if (sip || dip) begin
-                sist0_pend <= sist0_pend | set_s0; sist1_pend <= sist1_pend | set_s1; dstat_pend <= dstat_pend | set_ds[6:0];
+                sist0_pend <= sist0_pend | q_s0; sist1_pend <= sist1_pend | q_s1; dstat_pend <= dstat_pend | q_ds[6:0];
             end else begin
-                sist0_st <= sist0_st | set_s0; sist1_st <= sist1_st | set_s1; dstat_st <= dstat_st | set_ds[6:0];
+                sist0_st <= sist0_st | q_s0; sist1_st <= sist1_st | q_s1; dstat_st <= dstat_st | q_ds[6:0];
             end
         end
 `ifdef NCR_TRACE
         // the bench's trace of the SCRIPTS processor
         if (est == E_DECODE)
             $display("ncr %08X: %08X %08X", dsp - (ins0[31:29] == 3'b110 ? 32'd12 : 32'd8), ins0, dsps);
-        if (set_s0 != 8'd0 || set_s1 != 3'd0 || set_ds != 8'd0)
-            $display("ncr set dstat %02X sist0 %02X sist1 %01X  (irq %0d istat %02X)", set_ds, set_s0, set_s1, irq, istat);
+        if (q_s0 != 8'd0 || q_s1 != 3'd0 || q_ds != 8'd0)
+            $display("ncr set dstat %02X sist0 %02X sist1 %01X  (irq %0d istat %02X)", q_ds, q_s0, q_s1, irq, istat);
 `endif
     end
 end

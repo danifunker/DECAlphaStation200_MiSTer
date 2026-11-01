@@ -268,6 +268,7 @@ int main(int argc, char **argv) {
         wait_int();
         CHECK(t->inta_n == 0, "INTA not asserted on SIR");
         rb(DSTAT);
+        tick();                                                  // INTA is registered: one clock after the read
         CHECK(t->inta_n == 1, "INTA not released");
         CHECK(rl(DSPS) == 0x1111, "INT DSPS");
     }

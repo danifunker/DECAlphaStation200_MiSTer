@@ -22,8 +22,10 @@ HP 9000/715 core's `ncr53c710.sv` and `scsi_targets.sv`.
     - a configuration access with `pt_dev == DEVNUM` and function 0;
     - an I/O access inside BAR0 while command bit 0 is set;
     - a memory access inside BAR1 while command bit 1 is set.
-  - `pt_ack` is a registered one-cycle pulse, one cycle after the request is accepted. The device
-    never re-accepts while `pt_ack` is high.
+  - The accepted request (`pt_addr`, `pt_be`, `pt_we`, `pt_wdata`) is registered. The register
+    access runs from that copy in the next cycle, and `pt_ack`, a one-cycle pulse, follows in the
+    cycle after: two cycles after the request is accepted. The device accepts nothing while a
+    request is pending or `pt_ack` is high.
   - `pt_rdata` is valid with `pt_ack` and **0 otherwise**, so several devices' read data can be
     ORed together.
   - A read always returns all 32 bits, whatever the byte enables. The DROM depends on this: it reads
@@ -34,7 +36,8 @@ HP 9000/715 core's `ncr53c710.sv` and `scsi_targets.sv`.
   - SCRIPTS words are little-endian. Data bytes keep their addresses, with byte k in lane k.
   - `pci.md` has no error return, so a master abort reads all ones (apecs's behaviour) and
     DSTAT.BF is never raised by DMA.
-- `inta_n` is active low and level-sensitive.
+- `inta_n` is active low and level-sensitive. It is registered, so it follows the status one
+  clock late.
 - **SCSI bus** to `scsi_targets`: `sb_sel/sb_sel_id/sb_sel_atn`, `sb_sel_done/sb_sel_fail`,
   `sb_bsy`, `sb_req`, `sb_phase`, `sb_tdata`, `sb_ack`, `sb_idata`, `sb_ackhold`, `sb_atn`, `sb_rst`.
   This is the RS6K core's byte-level bus. The protocol is described in the header of
@@ -72,6 +75,28 @@ Inside either BAR, offsets 80-FF alias 00-7F.
   - The track table is at block `C000_0000` (`support/*_cdrom.cpp` of the HP/RS6K families, still
     to be cloned into `support/decalpha`).
 
+### Timing structure (100 MHz)
+
+The restructuring for the 10 ns fit (2026-11-01) removed the failing paths from `ins0`,
+SCRATCHA/ADDER and `pt_addr` into DSP, DSTAT/SIST, TEMP, DNAD and the other registers, without
+changing behaviour beyond a few cycles of latency.
+
+- **Host side**: the register select is decoded from the registered request, not from `pt_addr`.
+  `pt_claim` stays a combinational BAR compare, as `pci.md` requires.
+- **`E_PRE`**: one state between the fetch and `E_DECODE`. It registers:
+  - DSA + DSPS<23:0>, for table-indirect moves and DSA-relative LOAD/STORE;
+  - DSA + DBC, for a table-indirect SELECT;
+  - the transfer or WAIT RESELECT target (DSP + DSPS<23:0> when relative, else DSPS);
+  - the count == 0 test;
+  - the memory move's own-register, I/O-fault and alignment comparisons.
+- **Register instructions** take three states: `E_REG_RD` (operand: SFBR or the register),
+  `E_REG_ALU` (result and carry registered), `E_REG_WR` (the write with its side effects).
+- **Transfer control** takes two states: `E_TC_EVAL` (the condition, registered) and `E_TC_DO`
+  (DSP, TEMP, INTF or the SIR halt).
+- **Interrupt status**: the bits an engine cycle raises are registered once (`q_*`) before they
+  are stacked into DSTAT, SIST0 and SIST1.
+- **Timers**: the STO and GEN timer compares are registered.
+
 ## 2. What DEC's firmware does to the chip
 
 ### DROM V1.7 power-up: "53C810 Test"
@@ -105,7 +130,8 @@ Everything else is untouched:
 
 The DROM accesses device 6 nowhere else and has no generic PCI bus sizing.
 
-**The model passes this test.** Configuration 0x80-0xFF goes to the register file. The bench runs
+**The model passes this test**, in the bench and, since its integration into `as200_sys.v`, in the
+full system simulation (`make -C verilator system`). Configuration 0x80-0xFF goes to the register file. The bench runs
 the exact access sequence (byte enables per lane, data in its lane) and then checks that SCRATCHB
 reads 0x55555555 through BAR1. The bench also checks that a byte-length read of register 0 returns
 the full ID.
@@ -272,6 +298,6 @@ The CD's block size returns to 2048 on a bus reset or a remount.
   absent IDs costs about 0.5 s each, as on the real machine.
 - **No CD audio**: PLAY and the rest are accepted and do nothing. `hp9000-715/rtl/scsi/cd_audio.sv`
   can be brought back later.
-- **Not yet in the machine**: `rtl/as200_sys.v` does not instantiate the controller yet (other work
-  is in progress there), and neither the MiSTer top's hps_io slots nor Main's `support/decalpha`
-  write buffer and CD layer are wired.
+- **Not yet wired**: `rtl/as200_sys.v` has the controller (device 6) but no targets on its SCSI
+  bus yet. Neither the MiSTer top's hps_io slots nor Main's `support/decalpha` write buffer and CD
+  layer are wired.
