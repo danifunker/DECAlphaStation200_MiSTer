@@ -84,6 +84,9 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 3. SCSI targets on hps_io (`rtl/scsi/scsi_targets.v`), CMOS save (TOY 3Fh: SRM/ARC), the 28F020
    command set, the FPU (T2), branch prediction and block bus transfers, TGA.
 
+**`docs/gaps.md` is the list of missing hardware and features (user, 2026-11-01): keep it current
+when a gap is found or closed.**
+
 ## Rules carried over from the user's other cores
 
 - Commit often in small steps (local commits; never push without asking).
