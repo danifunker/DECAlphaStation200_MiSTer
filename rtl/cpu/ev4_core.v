@@ -451,6 +451,10 @@ module ev4_core (
         .we(dct_we), .waddr(dct_wa), .wdata({dct_v, dct_wd}), .wbe(1'b1));
 
     reg  [63:0] m2_dq; reg [20:0] m2_dt; reg m2_dv;     // registered D-cache outputs
+    reg         m2_hitq;                                 // the hit, compared in M1 (timing)
+    // M1 compares the tag it just read (M1 re-reads while stalled, so this
+    // stays current through fills)
+    wire        m1_hit = !m1_pa[33] && dc_ena && !dsweep && dcv_q && dct_q == m1_pa[33:13];
 
     // ================================================================ M2
     wire        m2_hw    = m2_ir[31:26] == 6'h1B || m2_ir[31:26] == 6'h1F;
@@ -462,7 +466,7 @@ module ev4_core (
     wire        m2_stc   = m2_ir[31:26] == 6'h2E || m2_ir[31:26] == 6'h2F;
     wire        m2_lock  = m2_ir[31:26] == 6'h2A || m2_ir[31:26] == 6'h2B;
     wire        m2_cachable = !m2_pa[33] && dc_ena && !dsweep;
-    wire        m2_hit   = m2_cachable && m2_dv && m2_dt == m2_pa[33:13];
+    wire        m2_hit   = m2_hitq && !dsweep;
     wire  [7:0] m2_be    = m2_quad ? 8'hFF : (m2_pa[2] ? 8'hF0 : 8'h0F);
     wire [63:0] m2_wq    = m2_quad ? m2_sd : {m2_sd[31:0], m2_sd[31:0]};
     wire        m2_stc_ok = lock_flag && lock_addr == m2_pa[33:4];
@@ -493,7 +497,7 @@ module ev4_core (
 
     wire m2_live    = m2_v && m2_exc == E_NONE && !w_redir;
     wire m2_need_bus = m2_live && m2_load && !m2_hit && mstate != MS_DONE;
-    wire m2_need_wb  = m2_live && m2_store && !(m2_stc && !m2_stc_ok) && wb_v;   // buffer full
+    wire m2_need_wb  = m2_live && m2_store && wb_v;     // buffer full (a failing STx_C waits too: timing)
     assign stall_m2 = m2_need_bus || m2_need_wb;
     assign stall_m1 = stall_m2;
 
@@ -680,7 +684,7 @@ module ev4_core (
                 m2_dst <= m1_dst; m2_dst_v <= m1_dst_v; m2_ldlat <= m1_ldlat;
                 m2_exc <= (m1_exc != E_NONE || !m1_mem) ? m1_exc :
                           m1_unal ? E_UNAL : !m1_xok ? E_DTBM : E_NONE;
-                m2_dq <= dc_q; m2_dt <= dct_q; m2_dv <= dcv_q;
+                m2_dq <= dc_q; m2_dt <= dct_q; m2_dv <= dcv_q; m2_hitq <= m1_hit;
                 mstate <= MS_IDLE;
             end
 
