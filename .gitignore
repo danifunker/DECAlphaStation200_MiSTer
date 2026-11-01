@@ -53,3 +53,4 @@ c5_pin_model_dump.txt
 verilator/obj_dir/
 verilator/*.png
 fit.log
+tests/cpu/build/
