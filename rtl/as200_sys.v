@@ -81,11 +81,13 @@ module as200_sys #(
     );
 
     // ------------------------------------------------------------ 21071
-    wire        i_req, i_we;
-    wire [15:0] i_addr;
-    wire  [7:0] i_wdata;
-    reg         i_ack;
-    reg   [7:0] i_rdata;
+    wire        pt_req, pt_we;
+    wire  [1:0] pt_cmd;
+    wire  [4:0] pt_dev;
+    wire [31:0] pt_addr, pt_wdata;
+    wire  [3:0] pt_be;
+    wire        pt_claim, pt_ack;
+    wire [31:0] pt_rdata;
 
     apecs core_logic (
         .clk(clk), .rst(rst), .cfg_mem(cfg_mem), .jumpers(jumpers), .leds(leds),
@@ -95,11 +97,20 @@ module as200_sys #(
         .d_ack(d_ack), .d_rdata(d_rdata),
         .f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata),
         .f_ack(f_ack), .f_rdata(f_rdata),
-        .i_req(i_req), .i_we(i_we), .i_addr(i_addr), .i_wdata(i_wdata),
-        .i_ack(i_ack), .i_rdata(i_rdata)
+        .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
+        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(pt_claim), .pt_ack(pt_ack), .pt_rdata(pt_rdata),
+        .dm_req(1'b0), .dm_we(1'b0), .dm_addr(32'd0), .dm_be(4'd0), .dm_wdata(32'd0),
+        .dm_ack(), .dm_rdata()
     );
 
-    // ------------------------------------------------------------ ISA
+    // ------------------------------------------------------------ PCI devices
+    // (pci.md 2) claim/ack/rdata of every device ORed; I/O that no device
+    // claims is the ISA side's (subtractive)
+    wire        other_claim = 1'b0;               // the 53C810, the SIO's own registers: to come
+    wire        isa_claim   = pt_req && pt_cmd == 2'd1 && !other_claim;
+    assign pt_claim = other_claim || isa_claim;
+
+    // ------------------------------------------------------------ ISA (stand-in until rtl/sio/sio82378.v)
     // 1.8432 MHz for the UARTs, from the system clock (an accumulator)
     localparam [31:0] SYS_HZ = 32'd100000000;
     reg [31:0] baud_acc;
@@ -112,15 +123,21 @@ module as200_sys #(
         end
     end
 
-    wire       com1_sel = i_addr[15:3] == 13'h007F;          // 3F8-3FF
-    reg        i_busy;
-    wire       io_strobe = i_req && !i_busy && !i_ack;
-    wire [7:0] com1_dout;
+    // the ISA byte: the lowest enabled lane
+    wire  [1:0] isa_lane = pt_be[0] ? 2'd0 : pt_be[1] ? 2'd1 : pt_be[2] ? 2'd2 : 2'd3;
+    wire [15:0] isa_port = {pt_addr[15:2], isa_lane};
+    wire  [7:0] isa_wd   = pt_wdata[8*isa_lane +: 8];
+    wire        com1_sel = isa_port[15:3] == 13'h007F;          // 3F8-3FF
+    reg         isa_busy;
+    wire        io_strobe = isa_claim && !isa_busy;
+    wire  [7:0] com1_dout;
+    reg         isa_ack;
+    reg  [31:0] isa_rd;
 
     ns16550 com1 (
         .clk(clk), .rst(rst), .ce_1m8(ce_1m8),
-        .io_addr(i_addr[2:0]), .io_rd(io_strobe && !i_we && com1_sel), .io_wr(io_strobe && i_we && com1_sel),
-        .io_din(i_wdata), .io_dout(com1_dout), .irq(),
+        .io_addr(isa_port[2:0]), .io_rd(io_strobe && !pt_we && com1_sel), .io_wr(io_strobe && pt_we && com1_sel),
+        .io_din(isa_wd), .io_dout(com1_dout), .irq(),
         .txd(com1_txd), .rxd(com1_rxd), .rts_n(), .dtr_n(), .out1_n(), .out2_n(),
         .cts_n(1'b0), .dsr_n(1'b0), .ri_n(1'b1), .dcd_n(1'b0),
         .tx_stb(com1_tx_stb), .tx_byte(com1_tx_byte),
@@ -128,12 +145,14 @@ module as200_sys #(
     );
 
     always @(posedge clk) begin
-        i_ack <= 1'b0;
-        if (rst) i_busy <= 1'b0;
+        isa_ack <= 1'b0;
+        if (rst) isa_busy <= 1'b0;
         else if (io_strobe) begin
-            i_rdata <= com1_sel ? com1_dout : 8'hFF;     // nothing else on ISA yet
-            i_ack   <= 1'b1;
-            i_busy  <= 1'b1;
-        end else if (!i_req) i_busy <= 1'b0;
+            isa_rd  <= {4{com1_sel ? com1_dout : 8'hFF}};    // nothing else on ISA yet
+            isa_ack <= 1'b1;
+            isa_busy <= 1'b1;
+        end else if (!pt_req) isa_busy <= 1'b0;
     end
+    assign pt_ack   = isa_ack;
+    assign pt_rdata = isa_rd;
 endmodule

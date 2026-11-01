@@ -15,12 +15,17 @@
 //   1.0010.0000                flashbus data register (TI Table 4-2)
 //   1.8000.0000 - 1.8000.0FFF  21071-CA CSRs (one longword every 0x20)
 //   1.A000.0000 - 1.A000.0FFF  21071-DA CSRs
-//   1.C000.0000 - 1.DFFF.FFFF  PCI sparse I/O: ISA port = PA<28:5>, size
-//                              = PA<4:3> (0 byte; the others are passed as
-//                              a byte access of the low lane for now); data
-//                              in byte lane port<1:0> of the longword
-//   everything else            reads all ones, writes dropped (STUB: PCI
-//                              memory/config spaces, IACK; the 21071-DA)
+//   1.C000.0000 - 1.DFFF.FFFF  PCI sparse I/O     } on the internal PCI
+//   1.E000.0000 - 1.FFFF.FFFF  PCI configuration } target bus
+//   2.0000.0000 - 2.FFFF.FFFF  PCI sparse memory } (docs/design/pci.md):
+//   3.0000.0000 - 3.FFFF.FFFF  PCI dense memory  } no claim = master abort
+//                              (all ones), except I/O, which goes to the
+//                              SIO's ISA side (pt_sub, subtractive decode)
+//   everything else            reads all ones, writes dropped
+//
+// DMA (pci.md 3): PCI masters' accesses go through windows 1 and 2
+// (PBR/PMR/TBR, direct-mapped; scatter/gather is a STUB) onto the DRAM, and
+// have priority over the CPU between transactions.
 //
 // Flashbus devices (TI Table 4-3): flash 00.0000-0F.FFFF and the DROM
 // 18.0000-18.FFFF on the f_* byte port (stored outside: DDR3 on the board,
@@ -63,13 +68,26 @@ module apecs (
     input  wire        f_ack,
     input  wire  [7:0] f_rdata,
 
-    // ISA I/O (through the 82378, later): byte accesses
-    output reg         i_req,
-    output reg         i_we,
-    output reg  [15:0] i_addr,
-    output reg   [7:0] i_wdata,
-    input  wire        i_ack,
-    input  wire  [7:0] i_rdata
+    // PCI target bus (pci.md 2): claim/ack/rdata are the OR of the devices'
+    output reg         pt_req,
+    output reg   [1:0] pt_cmd,          // 0 config, 1 I/O, 2 memory, 3 IACK
+    output reg   [4:0] pt_dev,
+    output reg  [31:0] pt_addr,
+    output reg   [3:0] pt_be,
+    output reg         pt_we,
+    output reg  [31:0] pt_wdata,
+    input  wire        pt_claim,
+    input  wire        pt_ack,
+    input  wire [31:0] pt_rdata,
+
+    // DMA (pci.md 3), from the PCI masters' arbiter
+    input  wire        dm_req,
+    input  wire        dm_we,
+    input  wire [31:0] dm_addr,
+    input  wire  [3:0] dm_be,
+    input  wire [31:0] dm_wdata,
+    output reg         dm_ack,
+    output reg  [31:0] dm_rdata
 );
     wire [33:0] pa = {c_addr, 3'b000} | (c_be[3:0] == 4'd0 ? 34'd4 : 34'd0);   // the longword addressed
 
@@ -122,8 +140,38 @@ module apecs (
     end
 
     // ------------------------------------------------------------ sequencer
-    localparam S_IDLE = 3'd0, S_DRAM = 3'd1, S_FB = 3'd2, S_ISA = 3'd3, S_LR1 = 3'd4, S_LR2 = 3'd5;
-    reg [2:0] st;
+    localparam S_IDLE = 4'd0, S_DRAM = 4'd1, S_FB = 4'd2, S_PCI = 4'd3, S_LR1 = 4'd4, S_LR2 = 4'd5,
+               S_PCIW = 4'd6, S_DMA = 4'd7, S_PCI2 = 4'd8;
+    reg [3:0] st;
+    reg       pci_hi;                   // dense quadword: the second longword is pending
+    reg [31:0] pci_lo;                  // dense quadword read: the first longword
+
+    // window registers (21071-DA; shadows of the DA CSRs at 0xC0..0x1C0)
+    reg [31:0] tbr1, tbr2, pbr1, pbr2, pmr1, pmr2, haxr1, haxr2;
+    // DMA translation
+    function [34:0] dma_xlate;          // {hit, PA[33:0]}
+        input [31:0] a;
+        reg   [31:0] m1, m2;
+        begin
+            m1 = {pmr1[31:20], 20'hFFFFF};
+            m2 = {pmr2[31:20], 20'hFFFFF};
+            if (pbr1[19] && (a & ~m1) == ({pbr1[31:20], 20'd0} & ~m1))
+                dma_xlate = {1'b1, (({tbr1[31:9], 11'd0} & {2'b11, ~m1}) | {2'b00, a & m1})};
+            else if (pbr2[19] && (a & ~m2) == ({pbr2[31:20], 20'd0} & ~m2))
+                dma_xlate = {1'b1, (({tbr2[31:9], 11'd0} & {2'b11, ~m2}) | {2'b00, a & m2})};
+            else
+                dma_xlate = {1'b0, 34'd0};
+        end
+    endfunction
+    wire [34:0] dmx = dma_xlate(dm_addr);
+    reg         dma_lane;               // the longword lane of the DMA access in the DRAM quadword
+
+    // PCI byte enables from a sparse access: length PA<4:3>, lane PCIaddr<1:0>
+    function [3:0] sp_be;
+        input [1:0] len; input [1:0] lane;
+        sp_be = len == 2'd0 ? (4'b0001 << lane) : len == 2'd1 ? (4'b0011 << lane) :
+                len == 2'd2 ? (4'b0111 << lane) : 4'b1111;
+    endfunction
     reg [7:0] nvram [0:8191];
     reg [7:0] nv_q;
     always @(posedge clk) begin
@@ -154,12 +202,26 @@ module apecs (
 
     always @(posedge clk) begin
         c_ack <= 1'b0;
+        dm_ack <= 1'b0;
         ca_we <= 1'b0; da_we <= 1'b0; nv_we <= 1'b0;
         if (rst) begin
-            st <= S_IDLE; d_req <= 1'b0; f_req <= 1'b0; i_req <= 1'b0; leds <= 8'hFF;
+            st <= S_IDLE; d_req <= 1'b0; f_req <= 1'b0; pt_req <= 1'b0; dm_ack <= 1'b0; leds <= 8'hFF;
+            tbr1 <= 32'd0; tbr2 <= 32'd0; pbr1 <= 32'd0; pbr2 <= 32'd0; pmr1 <= 32'd0; pmr2 <= 32'd0;
+            haxr1 <= 32'd0; haxr2 <= 32'd0;
             for (k = 0; k < 3; k = k + 1) begin bcnfg[k] <= 9'd0; bbase[k] <= 16'd0; end
         end else case (st)
-        S_IDLE: if (c_req && !c_ack) begin
+        S_IDLE: if (dm_req && !dm_ack) begin
+            // ---------------------------------------- DMA first
+            if (dmx[34]) begin
+                d_req <= 1'b1; d_we <= dm_we; d_addr <= dmx[26:3];
+                d_be <= dmx[2] ? {dm_be, 4'd0} : {4'd0, dm_be};
+                d_wdata <= {dm_wdata, dm_wdata};
+                dma_lane <= dmx[2];
+                st <= S_DMA;
+            end else begin
+                dm_rdata <= 32'hFFFFFFFF; dm_ack <= 1'b1;      // no window: master abort (STUB: error bits)
+            end
+        end else if (c_req && !c_ack) begin
             if (pa[33:32] == 2'd0) begin
                 // ---------------------------------------- memory
                 if (bank_hit && isz != 28'd0) begin
@@ -206,14 +268,42 @@ module apecs (
                 lsel <= 2'd0; st <= S_LR1;
             end else if (pa[33:12] == 22'h1A0000) begin
                 // ---------------------------------------- 21071-DA CSRs
+                if (c_we) case (pa[11:5])
+                    7'h06: tbr1 <= wlw;  7'h07: tbr2 <= wlw;
+                    7'h08: pbr1 <= wlw;  7'h09: pbr2 <= wlw;
+                    7'h0A: pmr1 <= wlw;  7'h0B: pmr2 <= wlw;
+                    7'h0D: haxr1 <= wlw; 7'h0E: haxr2 <= wlw;
+                    default: ;
+                endcase
                 da_a <= pa[11:5]; da_we <= c_we;
                 da_wd <= pa[11:5] == 7'h00 ? (wlw & 32'hFFFF00FF & ~32'h00000060) : wlw;   // DCSR: error bits RW1C
                 lsel <= 2'd1; st <= S_LR1;
             end else if (pa[33:29] == 5'b01110) begin
-                // ---------------------------------------- PCI sparse I/O -> ISA
-                i_req <= 1'b1; i_we <= c_we; i_addr <= pa[20:5];
-                i_wdata <= wlw[8*pa[6:5] +: 8];
-                st <= S_ISA;
+                // ---------------------------------------- PCI sparse I/O
+                pt_req <= 1'b1; pt_cmd <= 2'd1; pt_dev <= 5'd0; pt_we <= c_we;
+                pt_addr <= {8'd0, pa[28:7], 2'b00}; pt_be <= sp_be(pa[4:3], pa[6:5]);
+                pt_wdata <= wlw; pci_hi <= 1'b0;
+                st <= S_PCI;
+            end else if (pa[33:29] == 5'b01111) begin
+                // ---------------------------------------- PCI configuration (type 0, bus 0)
+                pt_req <= 1'b1; pt_cmd <= 2'd0; pt_dev <= pa[20:16]; pt_we <= c_we;
+                pt_addr <= {21'd0, pa[15:13], pa[12:7], 2'b00}; pt_be <= sp_be(pa[4:3], pa[6:5]);
+                pt_wdata <= wlw; pci_hi <= 1'b0;
+                st <= S_PCI;
+            end else if (pa[33:32] == 2'd2) begin
+                // ---------------------------------------- PCI sparse memory: {HAXR1<31:27>, PA<31:5>>...}
+                pt_req <= 1'b1; pt_cmd <= 2'd2; pt_dev <= 5'd0; pt_we <= c_we;
+                pt_addr <= {haxr1[31:27], pa[31:7], 2'b00}; pt_be <= sp_be(pa[4:3], pa[6:5]);
+                pt_wdata <= wlw; pci_hi <= 1'b0;
+                st <= S_PCI;
+            end else if (pa[33:32] == 2'd3) begin
+                // ---------------------------------------- PCI dense memory: longword or quadword
+                pt_req <= 1'b1; pt_cmd <= 2'd2; pt_dev <= 5'd0; pt_we <= c_we;
+                pt_addr <= {pa[31:3], c_be[3:0] == 4'd0, 2'b00};
+                pt_be <= c_be[3:0] == 4'd0 ? c_be[7:4] : c_be[3:0];
+                pt_wdata <= c_be[3:0] == 4'd0 ? c_wdata[63:32] : c_wdata[31:0];
+                pci_hi <= c_be[3:0] != 4'd0 && c_be[7:4] != 4'd0;   // both halves: a quadword
+                st <= S_PCI;
             end else begin
                 c_rdata <= {64{1'b1}}; c_ack <= 1'b1;
             end
@@ -233,9 +323,31 @@ module apecs (
             f_req <= 1'b0;
             c_rdata <= lw2q({24'd0, f_rdata}); c_ack <= 1'b1; st <= S_IDLE;
         end
-        S_ISA: if (i_ack) begin
-            i_req <= 1'b0;
-            c_rdata <= lw2q({4{i_rdata}}); c_ack <= 1'b1; st <= S_IDLE;
+        // PCI: the claim is decided in the first cycle the request is out
+        S_PCI: begin
+            if (!pt_claim) begin
+                pt_req <= 1'b0;
+                c_rdata <= {64{1'b1}}; c_ack <= 1'b1; st <= S_IDLE;     // master abort
+            end else st <= S_PCIW;
+        end
+        S_PCIW: if (pt_ack) begin
+            pt_req <= 1'b0;
+            if (pci_hi) begin
+                // dense quadword: now the upper longword
+                pci_lo <= pt_rdata; pci_hi <= 1'b0;
+                pt_addr <= pt_addr + 32'd4; pt_be <= c_be[7:4]; pt_wdata <= c_wdata[63:32];
+                st <= S_PCI2;
+            end else begin
+                c_rdata <= (pt_cmd == 2'd2 && pa[33:32] == 2'd3 && c_be[3:0] != 4'd0 && c_be[7:4] != 4'd0)
+                           ? {pt_rdata, pci_lo} : lw2q(pt_rdata);
+                c_ack <= 1'b1; st <= S_IDLE;
+            end
+        end
+        S_PCI2: begin pt_req <= 1'b1; st <= S_PCI; end
+        S_DMA: if (d_ack) begin
+            d_req <= 1'b0;
+            dm_rdata <= dma_lane ? d_rdata[63:32] : d_rdata[31:0];
+            dm_ack <= 1'b1; st <= S_IDLE;
         end
         default: st <= S_IDLE;
         endcase
