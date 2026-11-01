@@ -41,6 +41,11 @@ module ev4_core (
     output reg         sl_xmit,
     input  wire        sl_rcv,
 
+    // DMA writes: invalidate the D-cache line at this index (the 21064's
+    // dInvReq, by index only: 8 KB of 32-byte lines, PA[12:5])
+    input  wire        dinv,
+    input  wire  [7:0] dinv_idx,
+
     // the six interrupt pins, irq_h[5:0] (level; AS200 wiring HARDWARE.md 3).
     // Read through HIRR; interrupt delivery is a STUB (to come with HIER)
     input  wire  [5:0] irq_h,
@@ -740,6 +745,8 @@ module ev4_core (
     reg         dsweep; reg [7:0] dsw_idx;
     reg         dc_we;  reg [9:0] dc_wa; reg [63:0] dc_wd; reg [7:0] dc_wbe;
     reg         dct_we; reg [7:0] dct_wa; reg [20:0] dct_wd; reg dct_v;
+    reg         tagw;                   // (blocking) a D-cache tag write is taken this cycle
+    reg         dinv_p; reg [7:0] dinv_pi;   // a DMA invalidate waiting for the tag port
     wire [12:3] dc_ra = stall_m1 ? m1_va[12:3] : agen[12:3];
     ev4_ram #(.AW(10), .DW(64), .BE(8)) dcache_d (.clk(clk), .raddr(dc_ra), .rdata(dc_q),
         .we(dc_we), .waddr(dc_wa), .wdata(dc_wd), .wbe(dc_wbe));
@@ -871,6 +878,7 @@ module ev4_core (
     // ================================================================ sequential logic
     integer i;
     always @(posedge clk) begin
+        tagw = 1'b0;
         dbg_retire <= 1'b0;
         ic_we <= 1'b0; ict_we <= 1'b0; dc_we <= 1'b0; dct_we <= 1'b0;
         // a fill's tag write lands one cycle after its last beat (registered
@@ -893,6 +901,7 @@ module ev4_core (
             ld_active <= !icmode; ld_start <= 1'b0; ld_fin <= 1'b0; ld_bcnt <= 9'd0; ld_blk <= 9'd0;
             ld_byte_ok <= 1'b0; ld_fetch <= 2'd0; ld_baddr <= 14'd0; ld_wph <= 3'd0;
             isweep <= icmode; isw_idx <= 8'd0; dsweep <= 1'b1; dsw_idx <= 8'd0; restart_after <= 64'd0;
+            dinv_p <= 1'b0;
             sl_xmit <= 1'b1;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
@@ -908,7 +917,7 @@ module ev4_core (
                 if (isw_idx == 8'd255) begin isweep <= 1'b0; ld_start <= 1'b1; end
             end
             if (dsweep) begin
-                dct_we <= 1'b1; dct_wa <= dsw_idx; dct_v <= 1'b0; dct_wd <= 21'd0;
+                dct_we <= 1'b1; dct_wa <= dsw_idx; dct_v <= 1'b0; dct_wd <= 21'd0; tagw = 1'b1;
                 dsw_idx <= dsw_idx + 8'd1;
                 if (dsw_idx == 8'd255) dsweep <= 1'b0;
             end
@@ -1221,7 +1230,7 @@ module ev4_core (
                     mem_req <= 1'b1; mem_we <= 1'b0; mem_istream <= 1'b0; mem_be <= 8'hFF;
                     mem_addr <= m2_cachable ? {m2_pa[33:5], 2'd0} : m2_pa[33:3];
                     mstate <= MS_WAIT;
-                    if (m2_cachable) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_v <= 1'b0; dct_wd <= 21'd0; end
+                    if (m2_cachable) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_v <= 1'b0; dct_wd <= 21'd0; tagw = 1'b1; end
                 end else if (wb_v && (m2_need_bus || m2_need_wb || fstate != FS_FILL)) begin
                     bown <= B_WB;
                     mem_req <= 1'b1; mem_we <= 1'b1; mem_istream <= 1'b0;
@@ -1249,7 +1258,7 @@ module ev4_core (
                     if (!bunc) begin dc_we <= 1'b1; dc_wa <= {m2_pa[12:5], bbeat}; dc_wd <= mem_rdata; dc_wbe <= 8'hFF; end
                     if (bunc || bbeat == 2'd3) begin
                         mem_req <= 1'b0; bown <= B_NONE; mstate <= MS_DONE;
-                        if (!bunc) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_wd <= m2_pa[33:13]; dct_v <= 1'b1; end
+                        if (!bunc) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_wd <= m2_pa[33:13]; dct_v <= 1'b1; tagw = 1'b1; end
                     end else begin
                         bbeat <= bbeat + 2'd1; mem_addr <= {m2_pa[33:5], bbeat + 2'd1};
                     end
@@ -1259,6 +1268,15 @@ module ev4_core (
             // a filled load completes from m2_ldata (mstate MS_DONE) even if the
             // RAM outputs it holds are stale: force the miss path's data
             if (mstate == MS_DONE && !stall_m2) mstate <= MS_IDLE;
+
+            // DMA invalidates (dInvReq): one may wait while the tag port is busy
+            // (a newer one replaces it only once the older is done: the 21071
+            // model sends at most one per DMA quadword, many cycles apart)
+            if (dinv) begin dinv_p <= 1'b1; dinv_pi <= dinv_idx; end
+            if ((dinv_p || dinv) && !tagw) begin
+                dct_we <= 1'b1; dct_wa <= dinv_p ? dinv_pi : dinv_idx; dct_v <= 1'b0; dct_wd <= 21'd0;
+                if (!(dinv && dinv_p)) dinv_p <= 1'b0;
+            end
         end
     end
 endmodule

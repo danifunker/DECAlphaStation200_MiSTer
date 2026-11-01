@@ -106,6 +106,8 @@ module as200_sys #(
     // irq_h (HARDWARE.md 3): 0 errors (STUB), 1 unused, 2 the 8259s, 3 NMI,
     // 4 the TOY's periodic interrupt, 5 HALT | 8242 KBRST
     wire  [5:0] irq_h;
+    wire        dinv;                   // DMA write -> D-cache invalidate (dInvReq)
+    wire  [7:0] dinv_idx;
     wire        sio_intr, sio_nmi, sio_toy, sio_kbrst;
     assign irq_h = {sio_kbrst, sio_toy, sio_nmi, sio_intr, 2'b00};
     wire        c_req, c_we, c_ist, c_ack;
@@ -118,6 +120,7 @@ module as200_sys #(
         .icmode(1'b0), .srom_addr(srom_addr), .srom_data(srom_q),
         .sl_xmit(srom_txd), .sl_rcv(srom_rxd),
         .irq_h(irq_h),
+        .dinv(dinv), .dinv_idx(dinv_idx),
         .mem_req(c_req), .mem_we(c_we), .mem_istream(c_ist), .mem_addr(c_addr),
         .mem_be(c_be), .mem_wdata(c_wdata), .mem_ack(c_ack), .mem_rdata(c_rdata),
         .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(dbg_insn), .dbg_rwr(dbg_rwr),
@@ -146,7 +149,8 @@ module as200_sys #(
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
         .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(pt_claim), .pt_ack(pt_ack), .pt_rdata(pt_rdata),
         .dm_req(dm_req), .dm_we(dm_we), .dm_addr(dm_addr), .dm_be(dm_be), .dm_wdata(dm_wdata),
-        .dm_ack(dm_ack), .dm_rdata(dm_rdata)
+        .dm_ack(dm_ack), .dm_rdata(dm_rdata),
+        .dinv(dinv), .dinv_idx(dinv_idx)
     );
 
     // ------------------------------------------------------------ PCI devices

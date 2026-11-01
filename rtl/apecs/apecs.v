@@ -96,7 +96,11 @@ module apecs (
     input  wire  [3:0] dm_be,
     input  wire [31:0] dm_wdata,
     output reg         dm_ack,
-    output reg  [31:0] dm_rdata
+    output reg  [31:0] dm_rdata,
+
+    // DMA writes into memory: invalidate the CPU's D-cache line (dInvReq)
+    output reg         dinv,
+    output reg   [7:0] dinv_idx
 );
     wire [33:0] pa = {c_addr, 3'b000} | (c_be[3:0] == 4'd0 ? 34'd4 : 34'd0);   // the longword addressed
 
@@ -222,6 +226,7 @@ module apecs (
     always @(posedge clk) begin
         c_ack <= 1'b0;
         dm_ack <= 1'b0;
+        dinv <= 1'b0;
         ca_we <= 1'b0; da_we <= 1'b0; nv_we <= 1'b0;
         if (rst) begin
             st <= S_IDLE; d_req <= 1'b0; f_req <= 1'b0; pt_req <= 1'b0; dm_ack <= 1'b0; leds <= 8'hFF;
@@ -237,6 +242,7 @@ module apecs (
                 d_wdata <= {dm_wdata, dm_wdata};
                 dma_lane <= dmx[2];
                 st <= S_DMA;
+                dinv <= dm_we; dinv_idx <= dmx[12:5];
             end else begin
                 dm_rdata <= 32'hFFFFFFFF; dm_ack <= 1'b1;      // no window: master abort (STUB: error bits)
             end
