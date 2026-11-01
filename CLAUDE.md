@@ -47,14 +47,26 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   (`make -C verilator cputest`). T0 runs three ways: QEMU user (`make -C tests/cpu`), alphaemu user
   (`emu`) and the bare-metal PALmode images on alphaemu (`pal-emu`, `tools/alphaemu -P -H`).
 
+- **2026-11-01: the pipelined core.** `rtl/cpu/ev4_core.v` (`docs/design/pipeline.md`: F0 F1 F2
+  D X M1 M2 W, 8 KB I-cache, 8 KB write-through D-cache, write buffer, the 21064's latencies with
+  the measured X->X forwarding loop, precise exceptions, serialized PAL instructions) passes all
+  seven T0 suites with traces identical to alphaemu (`make -C verilator cputest-pipe`), and
+  loads the SROM bitstream into its I-cache after reset like the 21064 (`icmode`; `make -C
+  verilator sromload` runs our replacement SROM up to its memory sizing). Timing probes and fits:
+  `docs/design/cpu-timing.md` (scratch/cpu_fmax).
+- **Replacement SROM**: `srom/avanti_srom.S`, `docs/design/srom.md`, `tests/srom/`.
+
 ## Next (in order)
 
-1. CPU: T3 privileged tests (PAL entries, IPRs, HW_LD/ST, CALL_PAL, traps) on ev4_seq; the ITB/DTB;
-   interrupts; then the FPU (T2), then the pipelined core co-simulated against ev4_seq.
-2. alphaemu: PAL entries/exceptions and the IPRs, so it stays the golden model for T3.
-3. The system: SROM replacement (cpu.md 1.4, option A), 21071-CA memory + flashbus, SDRAM, DROM to
-   its serial output; then PCI (21071-DA), the SIO devices and the 53C810 from the RS/6000 core
-   (`docs/REUSE.md`), TGA.
+1. The first whole-core timing fit of ev4_core at 10 ns (`scratch/cpu_fmax/core_top`), then fix
+   its critical paths (`cpu-timing.md`).
+2. The system for the SROM -> DROM path: the 21071-CA model (memory banks over SDRAM with the
+   aliasing the SROM's sizing expects, `docs/design/srom.md`), the flashbus (flash, DROM,
+   NVRAM, LEDs, jumpers), the 21071-DA CSRs; ev4_core in `rtl/as200.v` in place of the stub;
+   a Verilator system run to the DROM's output. Then PCI, the 82378 SIO (COM1 for SRM), the
+   53C810 and the rest from the RS/6000 core (`docs/REUSE.md`), TGA.
+3. CPU completeness: T3 privileged tests, ITB/DTB, interrupts, the FPU (T2); branch
+   prediction and block bus transfers for speed.
 
 ## Rules carried over from the user's other cores
 
