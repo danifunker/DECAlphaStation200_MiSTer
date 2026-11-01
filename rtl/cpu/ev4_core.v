@@ -123,11 +123,14 @@ module ev4_core (
     reg  [13:0] ld_baddr;              // next byte (8192 = past the end)
     reg   [2:0] ld_wph;                // block write phase: 1-4 data, 5 tag
 
-    // I-cache: 1024 x 64 data, 256 x 21 tags, 256 valid flops
+    // I-cache: 1024 x 64 data, 256 x {valid, tag[20:0]} tags. The valid bit
+    // lives in the tag RAM (no 256:1 lookup after the next-PC logic); a flush
+    // is a 256-cycle sweep (isweep), at reset with an empty I-cache.
     wire [63:0] ic_q;
-    wire [20:0] ict_q;
-    reg         icv_q;
-    reg [255:0] icv;
+    wire [21:0] ict_qv;
+    wire [20:0] ict_q = ict_qv[20:0];
+    wire        icv_q = ict_qv[21];
+    reg         isweep; reg [7:0] isw_idx;
     reg         ic_we;  reg [9:0] ic_wa; reg [63:0] ic_wd;
     reg         ict_we; reg [7:0] ict_wa; reg [20:0] ict_wd; reg ict_v;
 
@@ -147,13 +150,13 @@ module ev4_core (
     reg  [63:0] npc_o;
     reg         nv_o;
     reg         kill_o;
-    wire        x_take = x_redir && !w_redir && !ld_active && !ld_start && fstate == FS_FETCH;
+    wire        x_take = x_redir && !w_redir && !ld_active && !ld_start && !isweep && fstate == FS_FETCH;
     wire [63:0] npc  = x_take ? x_target_r : npc_o;
     wire        nv   = x_take ? 1'b1 : nv_o;
     wire        kill_f2 = kill_o || x_redir;
     always @* begin
         npc_o = pc_f1; nv_o = v_f1; kill_o = 1'b0;
-        if (ld_active) begin
+        if (ld_active || isweep) begin
             npc_o = 64'd0; nv_o = 1'b0; kill_o = 1'b1;
         end else if (ld_start) begin
             npc_o = 64'd0; nv_o = 1'b1; kill_o = 1'b1;
@@ -175,9 +178,8 @@ module ev4_core (
 
     ev4_ram #(.AW(10), .DW(64), .BE(1)) icache_d (.clk(clk), .raddr(npc[12:3]), .rdata(ic_q),
         .we(ic_we), .waddr(ic_wa), .wdata(ic_wd), .wbe(1'b1));
-    ev4_ram #(.AW(8), .DW(21), .BE(1)) icache_t (.clk(clk), .raddr(npc[12:5]), .rdata(ict_q),
-        .we(ict_we), .waddr(ict_wa), .wdata(ict_wd), .wbe(1'b1));
-    always @(posedge clk) icv_q <= rst ? 1'b0 : x_take ? icv[x_target_r[12:5]] : icv[npc_o[12:5]];
+    ev4_ram #(.AW(8), .DW(22), .BE(1)) icache_t (.clk(clk), .raddr(npc[12:5]), .rdata(ict_qv),
+        .we(ict_we), .waddr(ict_wa), .wdata({ict_v, ict_wd}), .wbe(1'b1));
 
     // ================================================================ D stage
     reg         d_v;  reg [63:0] d_pc; reg [31:0] d_ir; reg [2:0] d_exc;
@@ -430,19 +432,21 @@ module ev4_core (
     wire        m1_unal = !m1_hw && (m1_quad ? m1_va[2:0] != 3'd0 : m1_va[1:0] != 2'd0);
     wire        m1_mem  = m1_cls == C_LD || m1_cls == C_ST;
 
-    // D-cache: 1024 x 64 data (byte enables), 256 x 21 tags, 256 valid flops
+    // D-cache: 1024 x 64 data (byte enables), 256 x {valid, tag} tags; a
+    // flush is a 256-cycle sweep (dsweep: reset, D-cache enable changes),
+    // during which the D-cache neither hits nor fills
     wire [63:0] dc_q;
-    wire [20:0] dct_q;
-    reg         dcv_q;
-    reg [255:0] dcv;
+    wire [21:0] dct_qv;
+    wire [20:0] dct_q = dct_qv[20:0];
+    wire        dcv_q = dct_qv[21];
+    reg         dsweep; reg [7:0] dsw_idx;
     reg         dc_we;  reg [9:0] dc_wa; reg [63:0] dc_wd; reg [7:0] dc_wbe;
-    reg         dct_we; reg [7:0] dct_wa; reg [20:0] dct_wd;
+    reg         dct_we; reg [7:0] dct_wa; reg [20:0] dct_wd; reg dct_v;
     wire [12:3] dc_ra = stall_m1 ? m1_va[12:3] : agen[12:3];
     ev4_ram #(.AW(10), .DW(64), .BE(8)) dcache_d (.clk(clk), .raddr(dc_ra), .rdata(dc_q),
         .we(dc_we), .waddr(dc_wa), .wdata(dc_wd), .wbe(dc_wbe));
-    ev4_ram #(.AW(8), .DW(21), .BE(1)) dcache_t (.clk(clk), .raddr(dc_ra[12:5]), .rdata(dct_q),
-        .we(dct_we), .waddr(dct_wa), .wdata(dct_wd), .wbe(1'b1));
-    always @(posedge clk) dcv_q <= rst ? 1'b0 : dcv[dc_ra[12:5]];
+    ev4_ram #(.AW(8), .DW(22), .BE(1)) dcache_t (.clk(clk), .raddr(dc_ra[12:5]), .rdata(dct_qv),
+        .we(dct_we), .waddr(dct_wa), .wdata({dct_v, dct_wd}), .wbe(1'b1));
 
     reg  [63:0] m2_dq; reg [20:0] m2_dt; reg m2_dv;     // registered D-cache outputs
 
@@ -455,7 +459,7 @@ module ev4_core (
     wire        m2_store = m2_cls == C_ST;
     wire        m2_stc   = m2_ir[31:26] == 6'h2E || m2_ir[31:26] == 6'h2F;
     wire        m2_lock  = m2_ir[31:26] == 6'h2A || m2_ir[31:26] == 6'h2B;
-    wire        m2_cachable = !m2_pa[33] && dc_ena;
+    wire        m2_cachable = !m2_pa[33] && dc_ena && !dsweep;
     wire        m2_hit   = m2_cachable && m2_dv && m2_dt == m2_pa[33:13];
     wire  [7:0] m2_be    = m2_quad ? 8'hFF : (m2_pa[2] ? 8'hF0 : 8'h0F);
     wire [63:0] m2_wq    = m2_quad ? m2_sd : {m2_sd[31:0], m2_sd[31:0]};
@@ -539,26 +543,36 @@ module ev4_core (
         // a fill's tag write lands one cycle after its last beat (registered
         // write port): the line becomes valid with it, and the fetch restarts
         // the cycle after, so its read sees the new tag
-        ifill_done <= ict_we && !rst && !ld_active;
-        if (ict_we) icv[ict_wa] <= ict_v;
-        if (dct_we) dcv[dct_wa] <= 1'b1;
+        ifill_done <= ict_we && ict_v && !rst && !ld_active && !isweep;
         mul_go <= 1'b0;
         cc <= cc + 32'd1;
         if (rst) begin
             pal <= 1'b1; iccsr_fpe <= 1'b0; iccsr_map <= 1'b0; iccsr_hwe <= 1'b0;
             pal_base <= 20'd0; abox_ctl <= 16'd0; ps_cm <= 2'd0; alt_cm <= 2'd0;
             mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0;
-            fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= !icmode ? 1'b0 : 1'b1; v_f2 <= 1'b0;
+            fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b0; v_f2 <= 1'b0;   // fetch starts after the sweep or the SROM load
             ld_active <= !icmode; ld_start <= 1'b0; ld_fin <= 1'b0; ld_bcnt <= 9'd0; ld_blk <= 9'd0;
             ld_byte_ok <= 1'b0; ld_fetch <= 2'd0; ld_baddr <= 14'd0; ld_wph <= 3'd0;
-            icv <= 256'd0; dcv <= 256'd0;
+            isweep <= icmode; isw_idx <= 8'd0; dsweep <= 1'b1; dsw_idx <= 8'd0;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
             wb_v <= 1'b0; bown <= B_NONE; mem_req <= 1'b0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
+            // ------------------------------------------------ cache sweeps
+            if (isweep) begin
+                ict_we <= 1'b1; ict_wa <= isw_idx; ict_v <= 1'b0; ict_wd <= 21'd0;
+                isw_idx <= isw_idx + 8'd1;
+                if (isw_idx == 8'd255) begin isweep <= 1'b0; ld_start <= 1'b1; end
+            end
+            if (dsweep) begin
+                dct_we <= 1'b1; dct_wa <= dsw_idx; dct_v <= 1'b0; dct_wd <= 21'd0;
+                dsw_idx <= dsw_idx + 8'd1;
+                if (dsw_idx == 8'd255) dsweep <= 1'b0;
+            end
+
             // ------------------------------------------------ SROM load
-            ld_start <= 1'b0;
+            if (!(isweep && isw_idx == 8'd255)) ld_start <= 1'b0;
             if (ld_fin) begin ld_fin <= 1'b0; ld_start <= 1'b1; end
             if (ld_active) begin
                 if (ld_wph != 3'd0) begin
@@ -710,7 +724,7 @@ module ev4_core (
                         if (w_ir[6]) case (w_ir[4:0])
                             5'd14: begin
                                 abox_ctl <= w_res[15:0];
-                                if (w_res[10] != abox_ctl[10]) dcv <= 256'd0;   // D-cache on/off: start clean
+                                if (w_res[10] != abox_ctl[10]) begin dsweep <= 1'b1; dsw_idx <= 8'd0; end   // D-cache on/off: start clean
                             end
                             5'd15: alt_cm <= w_res[4:3];
                             default: ;
@@ -753,14 +767,14 @@ module ev4_core (
                     mem_req <= 1'b1; mem_we <= 1'b0; mem_istream <= 1'b0; mem_be <= 8'hFF;
                     mem_addr <= m2_cachable ? {m2_pa[33:5], 2'd0} : m2_pa[33:3];
                     mstate <= MS_WAIT;
-                    if (m2_cachable) dcv[m2_pa[12:5]] <= 1'b0;
+                    if (m2_cachable) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_v <= 1'b0; dct_wd <= 21'd0; end
                 end else if (wb_v && (m2_need_bus || m2_need_wb || fstate != FS_FILL)) begin
                     bown <= B_WB;
                     mem_req <= 1'b1; mem_we <= 1'b1; mem_istream <= 1'b0;
                     mem_addr <= wb_a; mem_be <= wb_be; mem_wdata <= wb_d;
                 end else if (fstate == FS_FILL && !ifill_issued) begin
                     bown <= B_IFILL; bbeat <= 2'd0; ifill_issued <= 1'b1;
-                    icv[ifill_line[12:5]] <= 1'b0;
+                    ict_we <= 1'b1; ict_wa <= ifill_line[12:5]; ict_v <= 1'b0; ict_wd <= 21'd0;
                     mem_req <= 1'b1; mem_we <= 1'b0; mem_istream <= 1'b1; mem_be <= 8'hFF;
                     mem_addr <= {ifill_line, 2'd0};
                 end
@@ -781,7 +795,7 @@ module ev4_core (
                     if (!bunc) begin dc_we <= 1'b1; dc_wa <= {m2_pa[12:5], bbeat}; dc_wd <= mem_rdata; dc_wbe <= 8'hFF; end
                     if (bunc || bbeat == 2'd3) begin
                         mem_req <= 1'b0; bown <= B_NONE; mstate <= MS_DONE;
-                        if (!bunc) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_wd <= m2_pa[33:13]; end
+                        if (!bunc) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_wd <= m2_pa[33:13]; dct_v <= 1'b1; end
                     end else begin
                         bbeat <= bbeat + 2'd1; mem_addr <= {m2_pa[33:5], bbeat + 2'd1};
                     end
