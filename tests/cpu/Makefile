@@ -40,8 +40,19 @@ user: $(SUITES:%=$(B)/user/%)
 		if $(QEMU) $(B)/user/$$s; then echo "PASS $$s"; else echo "FAIL $$s"; fails=1; fi; \
 	done; exit $$fails
 
+# the same programs on tools/alphaemu (the golden model for the RTL lockstep)
+EMU = ../../build/alphaemu
+$(EMU): ../../tools/alphaemu/alphaemu.c
+	cc -O2 -Wall -o $@ $<
+
+emu: $(EMU) $(SUITES:%=$(B)/user/%)
+	@fails=0; for s in $(SUITES); do \
+		if $(EMU) -e $(B)/user/$$s -T $(B)/user/$$s.trace 2>/dev/null; then echo "PASS $$s (alphaemu)"; \
+		else echo "FAIL $$s (alphaemu)"; fails=1; fi; \
+	done; exit $$fails
+
 clean:
 	rm -rf $(B)
 
-.PHONY: all user clean
+.PHONY: all user emu clean
 .PRECIOUS: $(B)/%.S $(B)/user/%.o

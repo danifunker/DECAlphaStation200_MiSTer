@@ -16,6 +16,16 @@
  *   alphaemu -l <file>@<fileoff>:<addr>[:len] ... -p <start_pc>
  *            [-s lo:hi] [-d <addr>:<len>:<outfile>]... [-m <memMB>] [-n maxinsn]
  *            [-r reg=value]... [-t trace_count]
+ *   alphaemu -e <elf> [-m <memMB>] [-n maxinsn] [-T tracefile]
+ *
+ * -e runs a static Alpha Linux ELF (the T0 CPU tests, tests/cpu) as a user
+ * program: its segments are loaded at their virtual addresses (memory is
+ * the window [lowest segment, +memMB)), the stack is at the top, and
+ * CALL_PAL callsys handles exit (1) and write (4). The exit status is the
+ * program's.
+ *
+ * -T writes one line per retired instruction for lockstep comparison with
+ * the RTL: "<pc> <insn> [r<n>=<value>] [m<addr>=<value>/<size>]".
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,10 +39,18 @@ static uint8_t *mem; static u64 memsize;
 static u64 R[32], F[32], pc;
 static u64 wlo = ~0ULL, whi = 0;          /* write range outside stop window */
 static u64 stop_lo, stop_hi;
+static u64 user_base; static int user_mode;    /* -e: VA - user_base = offset into mem */
+static FILE *tf;                                /* -T trace */
+static u64 t_maddr, t_mval; static int t_msize; /* the instruction's store, for -T */
 
 static void die(const char *m) { fprintf(stderr, "FATAL @pc=%#" PRIx64 ": %s\n", pc, m); exit(2); }
 
 static u64 pa(u64 a, int n) {
+    if (user_mode) {
+        a -= user_base;
+        if (a + n > memsize || a + n < a) { fprintf(stderr, "bad addr %#" PRIx64 "\n", a + user_base); die("memory access out of range"); }
+        return a;
+    }
     if ((a >> 31) == 0x1ffffffffULL) a &= 0x7fffffffULL;   /* NT 32-bit superpage 0x80000000 -> PA 0 */
     a &= 0x3ffffffffULL;
     if (a + n > memsize) { fprintf(stderr, "bad addr %#" PRIx64 "\n", a); die("memory access out of range"); }
@@ -40,6 +58,7 @@ static u64 pa(u64 a, int n) {
 }
 static u64 ld(u64 a, int n) { a = pa(a, n); u64 v = 0; memcpy(&v, mem + a, n); return v; }
 static void st(u64 a, u64 v, int n) {
+    t_maddr = a; t_mval = n == 8 ? v : v & ((1ULL << (8 * n)) - 1); t_msize = n;
     a = pa(a, n); memcpy(mem + a, &v, n);
     if (a < stop_lo || a >= stop_hi) { if (a < wlo) wlo = a; if (a + n > whi) whi = a + n; }
 }
@@ -54,7 +73,7 @@ int main(int argc, char **argv) {
     u64 maxinsn = 4000000000ULL, mb = 64, trace = 0;
     struct { u64 a, l; char *f; } dumps[16]; int nd = 0;
     struct { char *f; u64 off, a, l; } loads[16]; int nl = 0;
-    int have_pc = 0, have_stop = 0;
+    int have_pc = 0, have_stop = 0; char *elf = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-m")) mb = strtoull(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "-t")) trace = strtoull(argv[++i], 0, 0);
@@ -68,6 +87,8 @@ int main(int argc, char **argv) {
             loads[nl].l = (*p == ':') ? strtoull(p + 1, 0, 0) : ~0ULL; nl++;
         } else if (!strcmp(argv[i], "-d")) {
             char *s = argv[++i]; dumps[nd].a = strtoull(s, &s, 0); dumps[nd].l = strtoull(s + 1, &s, 0); dumps[nd].f = s + 1; nd++;
+        } else if (!strcmp(argv[i], "-e")) { elf = argv[++i]; have_pc = 1;
+        } else if (!strcmp(argv[i], "-T")) { tf = fopen(argv[++i], "w"); if (!tf) die("open trace");
         } else if (!strcmp(argv[i], "-r")) {
             char *s = argv[++i]; int r = strtol(s, &s, 0); R[r] = strtoull(s + 1, 0, 0);
         } else die("bad arg");
@@ -75,6 +96,29 @@ int main(int argc, char **argv) {
     if (!have_pc) die("need -p");
     memsize = mb << 20; mem = calloc(1, memsize); if (!mem) die("oom");
     u64 lo = ~0ULL, hi = 0;
+    if (elf) {
+        FILE *fp = fopen(elf, "rb"); if (!fp) die("open elf");
+        uint8_t eh[64]; if (fread(eh, 1, 64, fp) != 64 || memcmp(eh, "\177ELF\2\1", 6)) die("not an ELF64 LE file");
+        u64 phoff, entry; uint16_t phent, phnum;
+        memcpy(&entry, eh + 24, 8); memcpy(&phoff, eh + 32, 8); memcpy(&phent, eh + 54, 2); memcpy(&phnum, eh + 56, 2);
+        user_mode = 1; user_base = ~0ULL;
+        for (int pass = 0; pass < 2; pass++)
+            for (int k = 0; k < phnum; k++) {
+                uint8_t ph[56]; uint32_t type; u64 off, va, fsz, msz;
+                fseek(fp, phoff + (u64)k * phent, SEEK_SET); if (fread(ph, 1, 56, fp) != 56) die("read phdr");
+                memcpy(&type, ph, 4); memcpy(&off, ph + 8, 8); memcpy(&va, ph + 16, 8);
+                memcpy(&fsz, ph + 32, 8); memcpy(&msz, ph + 40, 8);
+                if (type != 1) continue;                                 /* PT_LOAD */
+                if (pass == 0) { if ((va & ~0xffffULL) < user_base) user_base = va & ~0xffffULL; continue; }
+                if (va - user_base + msz > memsize) die("ELF segment beyond memory");
+                fseek(fp, off, SEEK_SET);
+                if (fsz && fread(mem + (va - user_base), 1, fsz, fp) != fsz) die("read segment");
+            }
+        fclose(fp);
+        pc = entry;
+        R[30] = user_base + memsize - 4096;                             /* sp */
+        stop_lo = 0; stop_hi = ~0ULL; have_stop = 1;
+    }
     for (int i = 0; i < nl; i++) {
         FILE *fp = fopen(loads[i].f, "rb"); if (!fp) die("open load file");
         fseek(fp, 0, SEEK_END); u64 sz = ftell(fp); fseek(fp, loads[i].off, SEEK_SET);
@@ -103,6 +147,22 @@ int main(int argc, char **argv) {
         u64 res = 0; int wr = -1;
         switch (op) {
         case 0x00:
+            if (user_mode && (ins & 0x3ffffff) == 0x83) {            /* callsys */
+                if (R[0] == 1) {
+                    if (tf) fprintf(tf, "%016" PRIx64 " %08x exit %" PRIu64 "\n", pc, ins, R[16]);
+                    fprintf(stderr, "exit(%" PRIu64 ") after %" PRIu64 " insns\n", R[16], n);
+                    if (tf) fclose(tf);
+                    exit((int)R[16]);
+                }
+                if (R[0] == 4) {
+                    u64 len = R[18]; u64 b = pa(R[17], len);
+                    fwrite(mem + b, 1, len, R[16] == 2 ? stderr : stdout);
+                    R[0] = len; R[19] = 0;
+                    if (tf) fprintf(tf, "%016" PRIx64 " %08x r0=%016" PRIx64 "\n", pc, ins, len);
+                    pc = npc; continue;
+                }
+                die("unsupported syscall");
+            }
             fprintf(stderr, "STOP: call_pal %#x at %#" PRIx64 " after %" PRIu64 " insns\n", ins & 0x3ffffff, pc, n);
             goto done;
         case 0x08: res = R[rb] + disp16; wr = ra; break;                    /* lda  */
@@ -246,6 +306,13 @@ int main(int argc, char **argv) {
         }
         if (wr >= 0 && wr != 31) R[wr] = res;
         R[31] = 0;
+        if (tf) {
+            fprintf(tf, "%016" PRIx64 " %08x", pc, ins);
+            if (wr >= 0 && wr != 31) fprintf(tf, " r%d=%016" PRIx64, wr, res);
+            if (t_msize) fprintf(tf, " m%016" PRIx64 "=%016" PRIx64 "/%d", t_maddr, t_mval, t_msize);
+            fputc('\n', tf);
+        }
+        t_msize = 0;
         pc = npc;
     }
 done:
