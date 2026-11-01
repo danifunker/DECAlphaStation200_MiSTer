@@ -4,6 +4,7 @@
 |---|---|
 | `rtl/scsi/ncr53c810.v` | The 53C810: a PCI device (number 6, IDSEL AD17) on the internal PCI target bus and DMA port of `pci.md`. INTA goes to PIRQ3 |
 | `rtl/scsi/scsi_targets.v` | Hard disks at ID 0 (`dka0`) and ID 1 (`dka100`), and a CD-ROM at ID 4 (`dka400`), on hps_io block-device slots 0, 1 and 2 |
+| `rtl/scsi/cd_audio.v` | The CD's audio player, inside `scsi_targets` (from the HP 9000/715 core's `cd_audio.sv`; `cdrom.md`) |
 | `verilator/tb/tb_ncr810.cpp`, `tb_ncr810_top.v` | The unit bench: `make -C verilator tb_ncr810` |
 
 Both RTL files are ported to Verilog-2001 from the user's IBM RS/6000 7248 core. The sources are
@@ -58,7 +59,7 @@ HP 9000/715 core's `ncr53c710.sv` and `scsi_targets.sv`.
 
 Inside either BAR, offsets 80-FF alias 00-7F.
 
-### Targets (`scsi_targets #(DISK0_ID = 0, DISK1_ID = 1, CD_ID = 4)`)
+### Targets (`scsi_targets #(DISK0_ID = 0, DISK1_ID = 1, CD_ID = 4, CD_ALWAYS = 1, CLK_HZ = 100000000)`)
 
 - A single clock: hps_io runs on the system clock in this core.
 - Ports are flat; slot s occupies `[32s+31:32s]` of `img_blocks` and `sd_lba`, and `[6s+5:6s]` of
@@ -67,15 +68,28 @@ Inside either BAR, offsets 80-FF alias 00-7F.
   hps_io's 8-bit side. There is one `sd_buff_din` for all slots; the top fans it out.
 - `img_present[2:0]` and `img_blocks` (the size in 512-byte blocks) are latched by the top from
   `img_mounted`/`img_size`.
-- `cd_change` is pulsed when the CD slot is remounted.
+- `cd_change` is pulsed when the CD slot is (re)mounted (`img_mounted[2]`). It clears the track
+  table, stops a play, returns the block size to 2048 and makes the next command see UNIT ATTENTION.
+- `cd_audio_l`, `cd_audio_r` (signed 16-bit) and `cd_audio_stb` (a one-clock pulse at 44.1 kHz, from
+  `CLK_HZ`) are the CD audio, for the mixer (`cdrom.md` 2).
 - `activity` is high while a target is connected.
-- Requests are up to 4 blocks (2 KB, the sector buffer).
-- The CD slot keeps the RS6K design:
-  - Main serves a flat disc of 2048-byte sectors as 512-byte LBAs.
-  - The track table is at block `C000_0000` (`support/*_cdrom.cpp` of the HP/RS6K families, still
-    to be cloned into `support/decalpha`).
+- Requests are up to 4 blocks (2 KB, the sector buffer). A CD audio frame is 5 blocks into the
+  player's own buffer.
+- The CD slot:
+  - Main (`support/decalpha`, `cdrom.md`) serves the disc as 2048-byte sectors by disc LBA.
+  - The track table is at block `C000_0000` and audio frame f at `8000_0000` + 5f.
+  - With `CD_ALWAYS` the drive answers selection with no image (NOT READY, MEDIUM NOT PRESENT).
 
 ### Timing structure (100 MHz)
+
+**Targets (2026-11-01)**: the fit failed `Equal77 -> tdata` (-1.117 ns). The compares and adders on
+`d_idx` were inside the synthesised byte, and that byte went straight into `tdata`. Now:
+- every response is addressed by registered cursors: `d_idx`; MODE SENSE's section, page and offset;
+  READ TOC's entry byte, kind and table address;
+- the byte is registered (`syn_r`), and `tdata` takes `syn_r` or the buffer's registered output;
+- a data-in byte goes out three clocks after the previous one was taken (cursor, RAM / `syn_r`, send).
+
+**Controller:**
 
 The restructuring for the 10 ns fit (2026-11-01) removed the failing paths from `ins0`,
 SCRATCHA/ADDER and `pt_addr` into DSP, DSTAT/SIST, TEMP, DNAD and the other registers, without
@@ -242,18 +256,26 @@ All registers are readable and writable as in the RS6K port.
 
 | Command(s) | Model behaviour |
 |---|---|
-| TEST UNIT READY, REZERO, FORMAT, SEEK, RESERVE/RELEASE, START STOP, SEND DIAGNOSTIC, PREVENT ALLOW, VERIFY, SYNCHRONIZE CACHE | GOOD |
-| REQUEST SENSE | Supported |
-| INQUIRY | DEC strings `RZ28` and `RRD45`. **EVPD gives CHECK CONDITION / ILLEGAL REQUEST (new)** |
-| READ/WRITE(6/10) | Supported |
-| MODE SENSE(6/10) | Pages 1, 3, 4 and 8; 0E on the CD; write-protect bit set on the CD |
-| MODE SELECT(6/10) | **The CD takes the block descriptor's block length: 512 or 2048 (new)**; the rest of the parameter list is ignored |
+| TEST UNIT READY, REZERO, SEEK(6/10), RESERVE/RELEASE, START STOP, SEND DIAGNOSTIC, PREVENT ALLOW, VERIFY, SYNCHRONIZE CACHE | GOOD. On the CD, SEEK and START STOP with Start = 0 stop a play |
+| FORMAT UNIT | GOOD; with FmtData the defect list (its header's length) is taken and ignored. ILLEGAL on the CD |
+| REQUEST SENSE | Fixed format; it reports and clears a pending UNIT ATTENTION |
+| INQUIRY | DEC strings `RZ28` and `RRD45`. EVPD gives CHECK CONDITION / ILLEGAL REQUEST 24 |
+| READ/WRITE(6/10/12), WRITE AND VERIFY | Supported (WRITE on the CD: DATA PROTECT 27) |
 | READ CAPACITY | Supported |
-| READ TOC | From Main's table, else one data track |
-| READ SUB-CHANNEL | "No audio status" |
-| PLAY AUDIO, PAUSE, STOP | Accepted, do nothing |
+| READ DEFECT DATA | An empty list (disks) |
+| MODE SENSE(6/10) | Disks: pages 1, 2, 3, 4, 8, 0A (3F = all, 100 bytes). The CD: 1, 2, 0D, 0E (52 bytes). DBD drops the block descriptor. Page control: changeable gives zeros except page 0E's selection (0F) and volume (FF); default gives page 0E at unity. Write protect is set on the CD. Other pages: ILLEGAL REQUEST 24 |
+| MODE SELECT(6/10) | The CD takes the block descriptor's length (512 or 2048) and page 0E's port 0/1 selection and volume (every page of the list is walked); the rest is ignored |
+| READ TOC (CD) | Formats 0 (from a start track; 0xAA = the lead-out), 1 (the last session's first track; the session count) and 2 (the full TOC: A0, A1, A2, the tracks, all as session 1); LBA or M:S:F; MMC byte 2 or SCSI-2 byte 9 bits 7:6. From Main's table; with none, one data track over the image |
+| READ SUB-CHANNEL (CD) | SubQ off (header only); formats 1 (position, LBA or M:S:F), 2 and 3 (not valid). Audio status 11/12/13/15; 13 is reported once |
+| PLAY AUDIO (10), (12), MSF, TRACK/INDEX (CD) | `cd_audio.v`. Address FFFFFFFF / FF:FF:FF = the current position. A start beyond the lead-out gives ILLEGAL REQUEST 21, and the end is clipped to it |
+| PAUSE/RESUME (CD) | With no play: ILLEGAL REQUEST 2C |
+| STOP PLAY/SCAN (CD) | Supported |
+| READ CD (CD) | User data only (expected type any or mode 1, flags 10h; flags 0 = no data); else ILLEGAL REQUEST 24 |
+| The CD with no image | NOT READY 3A for all but INQUIRY, REQUEST SENSE, MODE SENSE/SELECT, START STOP, PREVENT ALLOW, STOP PLAY |
+| The CD after a (re)mount | UNIT ATTENTION 28 once, for anything but INQUIRY and REQUEST SENSE |
+| CD commands on a disk | ILLEGAL REQUEST 20 |
 | SDTR | Answered with the same period and an offset of at most 8 |
-| Anything else | CHECK CONDITION / ILLEGAL REQUEST |
+| Anything else (REPORT LUNS, LOG SENSE, 16-byte CDBs ...) | CHECK CONDITION / ILLEGAL REQUEST 20. A 16-byte CDB is taken whole first |
 
 The CD's block size returns to 2048 on a bus reset or a remount.
 
@@ -279,6 +301,26 @@ The CD's block size returns to 2048 on a bus reset or a remount.
 - **Single step**: two SSI stops, then SIR.
 - **The CD-ROM at ID 4**: INQUIRY type 5 removable; READ CAPACITY with 2048-byte blocks; a 2048-byte
   READ; MODE SELECT 512; READ CAPACITY with 512-byte blocks; a 512-byte READ.
+- **The CD's table and audio** (2026-11-01). The model serves Main's windows: a disc of a data track and
+  two audio tracks in two sessions, with each sample numbered.
+  - Without the window: the made-up one-track table and its lead-out M:S:F.
+  - After `cd_change`: UNIT ATTENTION once, and REQUEST SENSE taking it.
+  - READ TOC formats 0 (LBA, M:S:F, from track 2, past the last track), 1 (both encodings) and 2.
+  - PLAY AUDIO MSF: all 2352 samples of track 2 on `cd_audio_l/r` in order at unity, silence after,
+    the strobe count, READ SUB-CHANNEL while playing (11, track, M:S:F) and after (13, then 15),
+    formats 0 and 2.
+  - PAUSE with no play (2C).
+  - MODE SELECT page 0E (port 0 = right at 128, port 1 = left at 255), MODE SENSE back with DBD and
+    as changeable.
+  - PLAY TRACK/INDEX 3 with a PAUSE (silence, status 12) and RESUME: every sample, swapped and scaled.
+  - STOP during a play; PLAY past the lead-out (21).
+  - READ CD of 2 sectors; the CD's mode page list and its missing page 4.
+  - No disc: INQUIRY answers, then UNIT ATTENTION, then NOT READY 3A for TUR and READ CAPACITY; the
+    disc back.
+- **The disks' commands**: READ/WRITE(12) and (6) against the image, READ past the end (21), MODE
+  SENSE 3F (the six pages in order, geometry), MODE SENSE(10) page 8 with DBD, FORMAT UNIT with and
+  without a defect list, READ DEFECT DATA, SYNCHRONIZE CACHE, VERIFY, START STOP, READ TOC on a disk
+  (20), a 16-byte CDB.
 
 ## 4. Known gaps
 
@@ -296,8 +338,7 @@ The CD's block size returns to 2048 on a bus reset or a remount.
   revision, so with REV = 0x02 it does not use them.
 - **STIME0 scaling**: the selection timeout is 2^code/16 ms (code 0xD = 512 ms). SRM's poll of
   absent IDs costs about 0.5 s each, as on the real machine.
-- **No CD audio**: PLAY and the rest are accepted and do nothing. `hp9000-715/rtl/scsi/cd_audio.sv`
-  can be brought back later.
-- **Not yet wired**: `rtl/as200_sys.v` has the controller (device 6) but no targets on its SCSI
-  bus yet. Neither the MiSTer top's hps_io slots nor Main's `support/decalpha` write buffer and CD
-  layer are wired.
+- **CD audio limits**: `cdrom.md` 4 (indexes, UPC/ISRC, digital audio extraction, multi-session
+  full TOC).
+- **`cd_change` and the audio outputs** must be wired through `as200_sys` and the top (`img_mounted[2]`
+  and the mixer).
