@@ -11,8 +11,13 @@ by design. Known differences, reported separately, not counted as errors:
     zero (ARM 4.7.5), so on an exact tie QEMU's result is 1 LSB off.
   - QEMU sets FPCR[INE] for divides; the 21064 never does (HRM 2.6).
   - Underflow without /U: QEMU flushes to a signed zero; EV4 writes true zero.
+  - Results that round up to MIN (ARM 4.7.5): QEMU underflows (tininess before rounding).
+  - QEMU maps G onto T, so both ends of the G range (exponents 1, 2, 2046, 2047) are lost.
+  - QEMU writes F results with the F exponent not mapped to the register's 11 bits.
+  - CVTST of a register that is not a canonical S value is UNPREDICTABLE (ARM 4.7.1).
+  - FPCR INE/IOV bits are counted as information only (QEMU records them differently).
 
-  qemu_check.py [--n 300] [--only ADDG,...]
+  qemu_check.py [--n 300] [--only ADDG,...]   (default: the IEEE operations and CMPGxx)
 """
 import argparse
 import os
@@ -57,7 +62,16 @@ def build_and_run(vecs, tmp):
     return [struct.unpack('<QQ', out[i:i + 16]) for i in range(0, len(out) - 15, 16)]
 
 
+# QEMU's VAX arithmetic and conversions are not a usable reference (1.0 + 1.5 = 2.0 in ADDG,
+# F results with unmapped exponents, traps on CVTGQ/CVTGF/...), so by default only the IEEE
+# operations and the VAX compares are run; --only runs any of them.
+DEFAULT = sorted(n for n in BASE if BASE[n][0] == 0x16) + ['CMPGEQ', 'CMPGLE', 'CMPGLT']
 MINS = (0x0010000000000000, 0x3810000000000000, 0x0080000000000000)   # T/G, S/F, D smallest normals
+
+
+def canon_s(r):
+    e = (r >> 52) & 0x7FF
+    return r & ((1 << 29) - 1) == 0 and (e in (0, 0x7FF) or 897 <= e <= 1150)
 
 
 def classify(name, v, qr):
@@ -66,14 +80,18 @@ def classify(name, v, qr):
     fn = (ir >> 5) & 0x7FF
     if qr == res:
         return 'same'
+    if not vax and fn in (0x2AC, 0x6AC) and not canon_s(fb):
+        return 'unpred'                          # CVTST of a non-S value: UNPREDICTABLE (ARM 4.7.1)
     if vax and (fn >> 6) & 3 == 2 and fpmodel.model(ir, fa, fb, dyn, vax_rne=True)[0] == qr:
         return 'tie'                             # QEMU's nearest even vs the VAX tie rule
     if fpcr & 8 and qr & ~(1 << 63) == 0:
         return 'unf'                             # true zero here, a signed zero in QEMU
     if res & ~(1 << 63) in MINS and qr & ~(1 << 63) == 0:
         return 'minedge'                         # rounds up to MIN (ARM 4.7.5); QEMU flushes
-    if vax and any(((x >> 52) & 0x7FF) in (1, 2) for x in (fa, fb, res)):
-        return 'grange'                          # QEMU maps G onto T: the lowest G exponents are lost
+    if vax and qr == (res - (896 << 52)) & ((1 << 64) - 1):
+        return 'fbug'                            # QEMU writes F results with the 8-bit F exponent unmapped
+    if vax and any(((x >> 52) & 0x7FF) in (1, 2, 2046, 2047) for x in (fa, fb, res)):
+        return 'grange'                          # QEMU maps G onto T: both ends of the G range are lost
     return 'bad'
 
 
@@ -82,8 +100,8 @@ def main():
     ap.add_argument('--n', type=int, default=300)
     ap.add_argument('--only', default='')
     a = ap.parse_args()
-    names = sorted(BASE) if not a.only else a.only.split(',')
-    keys = ('same', 'tie', 'unf', 'minedge', 'grange', 'bad', 'qtrap')
+    names = DEFAULT if not a.only else a.only.split(',')
+    keys = ('same', 'tie', 'unf', 'minedge', 'grange', 'fbug', 'unpred', 'bad', 'qtrap')
     tot = dict.fromkeys(keys + ('flags',), 0)
     shown = 0
     with tempfile.TemporaryDirectory() as tmp:
@@ -100,7 +118,7 @@ def main():
             st = dict.fromkeys(keys + ('flags',), 0)
             i = 0
             while i < len(vecs):
-                chunk = vecs[i:i + 20000]
+                chunk = vecs[i:i + 3000]
                 got = build_and_run([v[:4] for v in chunk], tmp)
                 for v, (qr, qf) in zip(chunk, got):
                     c = classify(name, v, qr)
@@ -113,7 +131,9 @@ def main():
                               % ((name,) + v + (qr, (qf >> 52) & 0x3F)))
                 if len(got) < len(chunk):                # QEMU trapped on this one: skip it
                     v = chunk[len(got)]
-                    if v[4] & ~(1 << 63) in MINS:
+                    if (v[0] >> 5) & 0x7FF in (0x2AC, 0x6AC) and v[0] >> 26 == 0x16 and not canon_s(v[2]):
+                        st['unpred'] += 1
+                    elif v[4] & ~(1 << 63) in MINS:
                         st['minedge'] += 1               # QEMU's underflow trap at the MIN edge
                     else:
                         st['qtrap'] += 1
@@ -123,12 +143,12 @@ def main():
                     i += len(got) + 1
                 else:
                     i += len(chunk)
-            print('%-7s %6d: %6d same, %4d VAX ties, %4d unf, %4d MIN edge, %4d G range, %4d differ, '
+            print('%-7s %6d: %6d same, %4d VAX ties, %4d unf, %4d MIN edge, %4d G range, %4d F exp, %4d unpredictable, %4d differ, '
                   '%d QEMU-only traps; %d with other INE/IOV' % ((name, sum(st[k] for k in keys)) +
                                                                  tuple(st[k] for k in keys) + (st['flags'],)))
             for k in st:
                 tot[k] += st[k]
-    print('qemu_check: %d vectors: %d same, %d VAX ties, %d underflows, %d MIN edge, %d G range, %d differ, '
+    print('qemu_check: %d vectors: %d same, %d VAX ties, %d underflows, %d MIN edge, %d G range, %d F exponent, %d unpredictable, %d differ, '
           '%d QEMU-only traps; %d with other INE/IOV flags' % ((sum(tot[k] for k in keys),) +
                                                                 tuple(tot[k] for k in keys) + (tot['flags'],)))
     return 1 if tot['bad'] or tot['qtrap'] else 0

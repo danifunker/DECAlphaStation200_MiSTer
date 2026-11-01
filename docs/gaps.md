@@ -14,8 +14,9 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | ~~FPU: FP register file, LDS/LDT/STS/STT, LDF/LDG/STF/STG~~ | **done** 2026-11-01 | P1 | One 64-entry register file (F = 32-63); T3 `t3_fp`. Found as: SRM's PALcode state save (`STT $f0..` at 0xF2F4) trapped OPCDEC and looped |
 | ~~FPU: CPYS/CPYSN/CPYSE, FCMOVxx, MT_FPCR/MF_FPCR, FP branches, CVTLQ/CVTQL~~ | **done** 2026-11-01 | P1 | T3 `t3_fp`; CVTQL/V's IOV flag not yet set |
-| FPU: IEEE add/sub/mul/div/compare/convert (S, T), traps, FPCR, EXC_SUM | open | P1/P2 | Pipelined per `pipeline.md` 6; reference: AXPbox `AlphaCPU_ieeefloat.cpp` |
-| FPU: VAX F/G/D arithmetic | open | P2 | OpenVMS; AXPbox `AlphaCPU_vaxfloat.cpp` |
+| FPU: IEEE add/sub/mul/div/compare/convert (S, T), traps, FPCR, EXC_SUM | partial | P1/P2 | The unit is done 2026-11-01: `rtl/cpu/ev4_fpu.v` + `ev4_fpu_dec.v` (`docs/design/fpu.md`; every qualifier, the EV4 exception rules; 5 cycles, divides 29/58; `make -C verilator tb_fpu`, 6.7M vectors). **Not yet integrated into `ev4_core`** (opcode 16 still OPCDEC): fpu.md 4 |
+| FPU: VAX F/G/D arithmetic | partial | P2 | In the same unit (ADD/SUB/MUL/DIV F/G, CMPGxx, CVTGF/GD/DG/GQ/QF/QG); waits for the same integration |
+| FPU: pipelined issue (scoreboard, imprecise traps across the shadow) | open | P3 | The unit accepts one non-divide per cycle; the first integration holds X until done (fpu.md 4.5) |
 | Machine checks: BIU_STAT/BIU_ADDR/FILL_* latching, MCHK entry, irq_h[0] (21071 errors) | stub | P2 | Error registers read 0; no MCHK is ever raised |
 | Performance counters (PC0/PC1 interrupts, PCMUX) | open | P3 | ICCSR fields stored only |
 | SLR (serial-line interrupt), CRR | open | P3 | |
