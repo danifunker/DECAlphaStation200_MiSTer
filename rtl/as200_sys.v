@@ -99,14 +99,34 @@ module as200_sys #(
         .f_ack(f_ack), .f_rdata(f_rdata),
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
         .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(pt_claim), .pt_ack(pt_ack), .pt_rdata(pt_rdata),
-        .dm_req(1'b0), .dm_we(1'b0), .dm_addr(32'd0), .dm_be(4'd0), .dm_wdata(32'd0),
-        .dm_ack(), .dm_rdata()
+        .dm_req(dm_req), .dm_we(dm_we), .dm_addr(dm_addr), .dm_be(dm_be), .dm_wdata(dm_wdata),
+        .dm_ack(dm_ack), .dm_rdata(dm_rdata)
     );
 
     // ------------------------------------------------------------ PCI devices
     // (pci.md 2) claim/ack/rdata of every device ORed; I/O that no device
     // claims is the ISA side's (subtractive)
-    wire        other_claim = 1'b0;               // the 53C810, the SIO's own registers: to come
+
+    // the 53C810 (device 6, IDSEL AD17, PIRQ3); its SCSI bus is not connected
+    // yet (the targets join with the hps_io block devices): selection times out
+    wire        dm_req, dm_we, dm_ack;
+    wire [31:0] dm_addr, dm_wdata, dm_rdata;
+    wire  [3:0] dm_be;
+    wire        scsi_claim, scsi_ack, scsi_inta_n;
+    wire [31:0] scsi_rdata;
+    ncr53c810 #(.DEVNUM(6)) scsi (
+        .clk(clk), .reset(rst),
+        .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
+        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(scsi_claim), .pt_ack(scsi_ack), .pt_rdata(scsi_rdata),
+        .dm_req(dm_req), .dm_we(dm_we), .dm_addr(dm_addr), .dm_be(dm_be), .dm_wdata(dm_wdata),
+        .dm_ack(dm_ack), .dm_rdata(dm_rdata),
+        .inta_n(scsi_inta_n),
+        .sb_sel(), .sb_sel_id(), .sb_sel_atn(), .sb_sel_done(1'b0), .sb_sel_fail(1'b1),
+        .sb_bsy(1'b0), .sb_req(1'b0), .sb_phase(3'd0), .sb_tdata(8'd0),
+        .sb_ack(), .sb_idata(), .sb_ackhold(), .sb_atn(), .sb_rst()
+    );
+
+    wire        other_claim = scsi_claim;         // the SIO's own registers: to come
     wire        isa_claim   = pt_req && pt_cmd == 2'd1 && !other_claim;
     assign pt_claim = other_claim || isa_claim;
 
@@ -153,6 +173,6 @@ module as200_sys #(
             isa_busy <= 1'b1;
         end else if (!pt_req) isa_busy <= 1'b0;
     end
-    assign pt_ack   = isa_ack;
-    assign pt_rdata = isa_rd;
+    assign pt_ack   = isa_ack | scsi_ack;
+    assign pt_rdata = (isa_ack ? isa_rd : 32'd0) | scsi_rdata;
 endmodule

@@ -107,7 +107,7 @@ sromload: obj_pipe/Vev4_core
 # ---------------------------------------------------------------- system simulation
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the
 # flash and DROM images from scratch/ (not in git)
-SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(RTL)/sio/ns16550.v $(RTL)/as200_sys.v
+SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(RTL)/sio/ns16550.v $(RTL)/scsi/ncr53c810.v $(RTL)/as200_sys.v
 FLASH   ?= ../scratch/roms/archive_alpha-station-200-roms/flash_v7.0_arc4.58.bin
 DROM    ?= ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E47_DROM1.7.bin
 
