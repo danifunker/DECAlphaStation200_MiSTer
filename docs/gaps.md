@@ -50,10 +50,10 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
-| Targets (disk ID 0/1, CD ID 4) on hps_io block devices | partial | P1/P2 | Wired in `as200_sys` and the top (2026-11-01); the system sim serves images. First board test pending; the CD track table (block C000_0000) needs Main support |
-| Main_MiSTer support (write buffering, CD layer) on branch `dec-alphastation` | open | P2 | Like `support/hp9k`, `support/ibmrs6k` |
+| Targets (disk ID 0/1, CD ID 4) on hps_io block devices | partial | P1/P2 | Wired in `as200_sys` and the top (2026-11-01); SRM lists dka400 on the board. The command set for SRM/NT/Unix was done 2026-11-01 (`64d57ae`: TOC 0/1/2, sub-channel, media change, NOT READY, READ CD, the (12) forms, mode pages). `cd_change` is still to be wired from `img_mounted[2]` |
+| ~~Main_MiSTer support (write buffering, CD layer) on branch `dec-alphastation`~~ | **done** 2026-11-01 | P2 | `support/decalpha` (Main `3520ddd`): ISO/CUE/BIN/CHD, the track table, audio frames, the disk write buffer. It builds; the board test is pending (`cdrom.md`) |
 | Disconnect/reselect, target mode, parity, DMA FIFO, SEL/RSL/CMP interrupts | open | P3 | scsi.md 4 |
-| CD audio | open | P4 | `hp9000-715/rtl/scsi/cd_audio.sv`; the mix takes `cd_audio_l/r` + `cd_audio_stb` (audio.md 4) |
+| CD audio | partial | P4 | `rtl/scsi/cd_audio.v` (2026-11-01, `64d57ae`): PLAY/PAUSE/STOP, page 0E, `cd_audio_l/r/stb` checked in the bench. Its outputs are to replace the ties at the mixer (audio.md 4). Limits: `cdrom.md` 4 |
 
 ## SIO and ISA (`rtl/sio/`, `docs/design/sio.md`)
 
