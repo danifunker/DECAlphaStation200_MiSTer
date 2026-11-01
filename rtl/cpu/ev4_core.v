@@ -70,8 +70,8 @@ module ev4_core (
                C_LD  = 4'd5, C_ST  = 4'd6, C_BR  = 4'd7, C_CBR = 4'd8, C_JMP = 4'd9,
                C_MISC = 4'd10, C_MFPR = 4'd11, C_MTPR = 4'd12, C_REI = 4'd13, C_CPAL = 4'd14;
     // exception codes carried down the pipe
-    localparam E_NONE = 3'd0, E_OPCDEC = 3'd1, E_FEN = 3'd2, E_ITBM = 3'd3,
-               E_UNAL = 3'd4, E_DTBM = 3'd5, E_ARITH = 3'd6;
+    localparam E_NONE = 4'd0, E_OPCDEC = 4'd1, E_FEN = 4'd2, E_ITBM = 4'd3,
+               E_UNAL = 4'd4, E_DTBM = 4'd5, E_ARITH = 4'd6, E_DFAULT = 4'd7, E_ITBACV = 4'd8;
 
     // ================================================================ architectural state (W)
     reg         pal;
@@ -98,8 +98,36 @@ module ev4_core (
 
     reg  [63:0] pal_temp [0:31];
 
+    // ---------------------------------------------------------------- TBs (cpu.md 4.2, 4.3, 6)
+    reg  [42:13] tb_tag;                // TB_TAG: VA of the next PTE write
+    reg   [1:0] tb_gh;                  // TB_CTL[6:5]
+    // ITB: entries 0-7 small (8 KB), 8-11 large (4 MB); no ASN (ASM kept for ITBASM)
+    reg  [11:0] itb_v, itb_asm;
+    reg  [42:13] itb_tag [0:11];
+    reg  [33:13] itb_pfn [0:11];
+    reg   [3:0] itb_re  [0:11];         // {URE, SRE, ERE, KRE}
+    reg   [2:0] itb_sp;                 // small replacement pointer
+    reg   [1:0] itb_lp;                 // large replacement pointer
+    reg  [34:0] itb_temp;               // ITB_PTE_TEMP read format [34:0]
+    // DTB: 32 entries, any granularity
+    reg  [31:0] dtb_v, dtb_asm;
+    reg  [42:13] dtb_tag [0:31];
+    reg   [1:0] dtb_gh  [0:31];
+    reg  [33:13] dtb_pfn [0:31];
+    reg   [9:0] dtb_pr  [0:31];         // {FOW, FOR, UWE, SWE, EWE, KWE, URE, SRE, ERE, KRE}
+    reg   [4:0] dtb_p;
+    reg  [34:0] dtb_temp;               // DTB_PTE_TEMP read format [34:0]
+
+    function dtb_hit_i;                 // does DTB entry i map va?
+        input v; input [42:13] tag; input [1:0] gh; input [42:13] va;
+        dtb_hit_i = v && va[42:22] == tag[42:22] &&
+                    (gh == 2'd3 || va[21:19] == tag[21:19]) &&
+                    (gh[1]      || va[18:16] == tag[18:16]) &&
+                    (gh != 2'd0 || va[15:13] == tag[15:13]);
+    endfunction
+
     // ================================================================ forward declarations
-    reg         w_v;  reg [63:0] w_pc; reg [31:0] w_ir; reg [3:0] w_cls; reg [2:0] w_exc;
+    reg         w_v;  reg [63:0] w_pc; reg [31:0] w_ir; reg [3:0] w_cls; reg [3:0] w_exc;
     reg  [63:0] w_res; reg [4:0] w_dst; reg w_dst_v;
     reg  [63:0] w_va; reg w_cmf;   // *_cmf: a CMOV whose condition was false (rewrites Rc, not traced)
     reg         w_st;  reg [63:0] w_sdata; reg [3:0] w_ssize;
@@ -148,9 +176,28 @@ module ev4_core (
 
     reg  [63:0] q2; reg [20:0] t2; reg v2;    // F2 copies of the RAM outputs
 
-    // F2: translation and hit
-    wire        f2_tr_ok = pal || (iccsr_map && kern && pc_f2[42:41] == 2'b10);
-    wire        f2_hit   = v2 && t2 == pc_f2[33:13];
+    // F2: translation (PALmode physical, the superpage, the ITB) and hit
+    reg  [11:0] itb_m;
+    reg  [33:13] itb_spfn;
+    reg   [3:0] itb_sre;
+    reg         itb_large;
+    integer ii;
+    always @* begin
+        itb_spfn = 21'd0; itb_sre = 4'd0; itb_large = 1'b0;
+        for (ii = 0; ii < 12; ii = ii + 1) begin
+            itb_m[ii] = itb_v[ii] && pc_f2[42:22] == itb_tag[ii][42:22] &&
+                        (ii >= 8 || pc_f2[21:13] == itb_tag[ii][21:13]);
+            if (itb_m[ii]) begin itb_spfn = itb_spfn | itb_pfn[ii]; itb_sre = itb_sre | itb_re[ii]; end
+            if (itb_m[ii] && ii >= 8) itb_large = 1'b1;
+        end
+    end
+    wire        f2_phys  = pal || (iccsr_map && kern && pc_f2[42:41] == 2'b10);
+    wire        f2_itbm  = !f2_phys && itb_m == 12'd0;
+    wire        f2_acv   = !f2_phys && !f2_itbm && !itb_sre[ps_cm];
+    wire        f2_tr_ok = !f2_itbm && !f2_acv;
+    wire [33:0] f2_pa    = f2_phys ? pc_f2[33:0] :
+                           itb_large ? {itb_spfn[33:22], pc_f2[21:0]} : {itb_spfn, pc_f2[12:0]};
+    wire        f2_hit   = v2 && t2 == f2_pa[33:13];
     wire        f2_miss  = v_f2 && f2_tr_ok && !f2_hit && fstate == FS_FETCH;
     wire [31:0] f2_insn  = pc_f2[2] ? q2[63:32] : q2[31:0];
     wire        f_hold   = stall_d;
@@ -194,7 +241,7 @@ module ev4_core (
         .we(ict_we), .waddr(ict_wa), .wdata({ict_v, ict_wd}), .wbe(1'b1));
 
     // ================================================================ D stage
-    reg         d_v;  reg [63:0] d_pc; reg [31:0] d_ir; reg [2:0] d_exc;
+    reg         d_v;  reg [63:0] d_pc; reg [31:0] d_ir; reg [3:0] d_exc;
 
     // register file: three read ports (A = Ra, B = Rb, C = Rc for CMOV)
     wire [63:0] rf_a, rf_b, rf_c;
@@ -230,7 +277,7 @@ module ev4_core (
     reg        dc_ua, dc_ub;           // reads Ra, Rb
     reg        dc_fast, dc_ldlat;      // result forwardable from X / only from W
     reg        dc_ser;
-    reg  [2:0] dc_exc;
+    reg  [3:0] dc_exc;
     always @* begin
         dc_cls = C_NOP; dc_dst = d_ra; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0;
         dc_fast = 1'b0; dc_ldlat = 1'b0; dc_ser = 1'b0; dc_exc = E_NONE;
@@ -284,7 +331,7 @@ module ev4_core (
     wire dc_uc = d_cmov;
 
     // ================================================================ X stage registers
-    reg         x_v;  reg [63:0] x_pc; reg [31:0] x_ir; reg [3:0] x_cls; reg [2:0] x_exc;
+    reg         x_v;  reg [63:0] x_pc; reg [31:0] x_ir; reg [3:0] x_cls; reg [3:0] x_exc;
     reg  [63:0] x_a, x_b, x_c;
     reg   [4:0] x_dst; reg x_dst_v; reg x_fast; reg x_ldlat; reg x_ser;
     reg  [63:0] x_btarget;
@@ -293,13 +340,14 @@ module ev4_core (
     reg         x_sel_lda, x_sel_link;  // fast-result selects, decoded in D
 
     // M1 / M2 registers (declared here for forwarding)
-    reg         m1_v;  reg [63:0] m1_pc; reg [31:0] m1_ir; reg [3:0] m1_cls; reg [2:0] m1_exc;
+    reg         m1_v;  reg [63:0] m1_pc; reg [31:0] m1_ir; reg [3:0] m1_cls; reg [3:0] m1_exc;
     reg  [63:0] m1_rf, m1_rs, m1_va, m1_sd; reg m1_cmf; reg m1_isf;
     wire [63:0] m1_res = m1_isf ? m1_rf : m1_rs;    // fast and slow results come from separate flops
     reg   [4:0] m1_dst; reg m1_dst_v; reg m1_ldlat;
-    reg         m2_v;  reg [63:0] m2_pc; reg [31:0] m2_ir; reg [3:0] m2_cls; reg [2:0] m2_exc;
+    reg         m2_v;  reg [63:0] m2_pc; reg [31:0] m2_ir; reg [3:0] m2_cls; reg [3:0] m2_exc;
     reg  [63:0] m2_res, m2_va, m2_sd; reg m2_cmf;
     reg  [33:0] m2_pa;
+    reg   [2:0] m2_fb, w_fb;            // D_FAULT reason: {FOW, FOR, ACV}
     reg   [4:0] m2_dst; reg m2_dst_v; reg m2_ldlat;
     reg         r_v; reg [4:0] r_dst; reg [63:0] r_res;      // retired last cycle
 
@@ -383,12 +431,14 @@ module ev4_core (
         ipr_rd = 64'd0;
         if (d_ir[7])      ipr_rd = pal_temp[d_ir[4:0]];
         else if (d_ir[6]) case (d_ir[4:0])
+            5'd3:  ipr_rd = {29'd0, dtb_temp};                             // DTB_PTE_TEMP
             5'd4:  ipr_rd = {49'd0, mm_csr};
             5'd5:  ipr_rd = va_ipr;
             default: ipr_rd = 64'd0;
             endcase
         else if (d_ir[5]) case (d_ir[4:0])
             5'd2:  ipr_rd = {40'd0, iccsr_fpe, iccsr_map, iccsr_hwe, 21'd0};
+            5'd3:  ipr_rd = {29'd0, itb_temp};                             // ITB_PTE_TEMP
             5'd4:  ipr_rd = exc_addr;
             5'd5:  ipr_rd = {60'd0, sl_rcv, 3'b000};                       // SL_RCV
             5'd12: ipr_rd = {51'd0, irq_h[2:0], 2'b00, irq_h[5:3], 3'b000, |irq_h, 1'b0};   // HIRR [12:10] [7:5], HWR
@@ -440,11 +490,34 @@ module ev4_core (
     wire        m1_quad = m1_hw ? m1_ir[12] :
                           (m1_ir[31:26] == 6'h0B || m1_ir[31:26] == 6'h0F || m1_ir[31:26] == 6'h29 ||
                            m1_ir[31:26] == 6'h2B || m1_ir[31:26] == 6'h2D || m1_ir[31:26] == 6'h2F);
-    wire        m1_xok  = m1_phys ||
-                          (spe2 && m1_cm == 2'd0 && m1_va[42:41] == 2'b10) ||
-                          (spe1 && m1_cm == 2'd0 && m1_va[42:30] == 13'h1FFE);
-    wire [33:0] m1_pa   = (!m1_phys && spe1 && m1_cm == 2'd0 && m1_va[42:30] == 13'h1FFE && !(spe2 && m1_va[42:41] == 2'b10))
-                          ? {4'd0, m1_va[29:0]} : m1_va[33:0];
+    wire        m1_sp2  = spe2 && m1_cm == 2'd0 && m1_va[42:41] == 2'b10;
+    wire        m1_sp1  = spe1 && m1_cm == 2'd0 && m1_va[42:30] == 13'h1FFE;
+    // the DTB (all entries compared at once; at most one matches)
+    reg  [31:0] dtb_m;
+    reg  [33:13] dtb_spfn;
+    reg   [1:0] dtb_sgh;
+    reg   [9:0] dtb_spr;
+    integer di;
+    always @* begin
+        dtb_spfn = 21'd0; dtb_sgh = 2'd0; dtb_spr = 10'd0;
+        for (di = 0; di < 32; di = di + 1) begin
+            dtb_m[di] = dtb_hit_i(dtb_v[di], dtb_tag[di], dtb_gh[di], m1_va[42:13]);
+            if (dtb_m[di]) begin dtb_spfn = dtb_spfn | dtb_pfn[di]; dtb_sgh = dtb_sgh | dtb_gh[di]; dtb_spr = dtb_spr | dtb_pr[di]; end
+        end
+    end
+    wire        m1_dtbhit = dtb_m != 32'd0;
+    wire        m1_xok  = m1_phys || m1_sp2 || m1_sp1 || m1_dtbhit;
+    wire [33:0] m1_dpa  = {dtb_spfn[33:22],
+                           dtb_sgh == 2'd3 ? m1_va[21:19] : dtb_spfn[21:19],
+                           dtb_sgh[1]      ? m1_va[18:16] : dtb_spfn[18:16],
+                           dtb_sgh != 2'd0 ? m1_va[15:13] : dtb_spfn[15:13], m1_va[12:0]};
+    wire [33:0] m1_pa   = (m1_phys || m1_sp2) ? m1_va[33:0] : m1_sp1 ? {4'd0, m1_va[29:0]} : m1_dpa;
+    // protection (DTB hits only; superpages are kernel-only by construction)
+    wire        m1_wr   = m1_cls == C_ST;
+    wire        m1_acv  = !m1_phys && !m1_sp2 && !m1_sp1 && m1_dtbhit &&
+                          (m1_wr ? !dtb_spr[4 + m1_cm] : !dtb_spr[m1_cm]);
+    wire        m1_for  = !m1_phys && !m1_sp2 && !m1_sp1 && m1_dtbhit && !m1_wr && dtb_spr[8];
+    wire        m1_fow  = !m1_phys && !m1_sp2 && !m1_sp1 && m1_dtbhit &&  m1_wr && dtb_spr[9];
     wire        m1_unal = !m1_hw && (m1_quad ? m1_va[2:0] != 3'd0 : m1_va[1:0] != 2'd0);
     wire        m1_mem  = m1_cls == C_LD || m1_cls == C_ST;
 
@@ -539,6 +612,8 @@ module ev4_core (
         E_OPCDEC: begin w_ent = 1'b1; w_off = 14'h13E0; end
         E_FEN:    begin w_ent = 1'b1; w_off = 14'h17E0; end
         E_ITBM:   begin w_ent = 1'b1; w_off = 14'h03E0; end
+        E_ITBACV: begin w_ent = 1'b1; w_off = 14'h07E0; end
+        E_DFAULT: begin w_ent = 1'b1; w_off = 14'h01E0; end
         E_UNAL:   begin w_ent = 1'b1; w_off = 14'h11E0; end
         E_DTBM:   begin w_ent = 1'b1; w_off = pal ? 14'h09E0 : 14'h08E0; end
         E_ARITH:  begin w_ent = 1'b1; w_off = 14'h0060; end
@@ -569,6 +644,7 @@ module ev4_core (
         if (rst) begin
             pal <= 1'b1; iccsr_fpe <= 1'b0; iccsr_map <= 1'b0; iccsr_hwe <= 1'b0;
             pal_base <= 20'd0; abox_ctl <= 16'd0; ps_cm <= 2'd0; alt_cm <= 2'd0;
+            itb_v <= 12'd0; dtb_v <= 32'd0; itb_sp <= 3'd0; itb_lp <= 2'd0; dtb_p <= 5'd0;
             mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0; cc_hi <= 32'd0; cc_en <= 1'b0;
             fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b0; v_f2 <= 1'b0;   // fetch starts after the sweep or the SROM load
             ld_active <= !icmode; ld_start <= 1'b0; ld_fin <= 1'b0; ld_bcnt <= 9'd0; ld_blk <= 9'd0;
@@ -633,7 +709,7 @@ module ev4_core (
             // ------------------------------------------------ fetch
             pc_f1 <= npc; v_f1 <= nv;
             if (fstate == FS_FETCH && !(w_redir || x_redir) && f2_miss) begin
-                fstate <= FS_FILL; restart_pc <= pc_f2; ifill_line <= pc_f2[33:5];
+                fstate <= FS_FILL; restart_pc <= pc_f2; ifill_line <= f2_pa[33:5];
             end
             if (fstate == FS_FILL && (w_redir || x_redir)) restart_pc <= w_redir ? w_target : x_target_r;
             if (fstate == FS_FILL && ifill_done) begin fstate <= FS_FETCH; ifill_issued <= 1'b0; end
@@ -648,7 +724,7 @@ module ev4_core (
                 d_v   <= v_f2 && (fstate == FS_FETCH) && (!f2_tr_ok || f2_hit);
                 d_pc  <= pc_f2;
                 d_ir  <= f2_tr_ok ? f2_insn : 32'd0;
-                d_exc <= f2_tr_ok ? E_NONE : E_ITBM;
+                d_exc <= f2_tr_ok ? E_NONE : f2_itbm ? E_ITBM : E_ITBACV;
             end
 
             // ------------------------------------------------ D -> X
@@ -698,7 +774,9 @@ module ev4_core (
                 m2_va <= m1_va; m2_sd <= m1_sd; m2_pa <= m1_pa; m2_cmf <= m1_cmf;
                 m2_dst <= m1_dst; m2_dst_v <= m1_dst_v; m2_ldlat <= m1_ldlat;
                 m2_exc <= (m1_exc != E_NONE || !m1_mem) ? m1_exc :
-                          m1_unal ? E_UNAL : !m1_xok ? E_DTBM : E_NONE;
+                          m1_unal ? E_UNAL : !m1_xok ? E_DTBM :
+                          (m1_acv || m1_for || m1_fow) ? E_DFAULT : E_NONE;
+                m2_fb <= {m1_fow && !m1_acv, m1_for && !m1_acv, m1_acv};
                 m2_dq <= dc_q; m2_dt <= dct_q; m2_dv <= dcv_q; m2_hitq <= m1_hit;
                 mstate <= MS_IDLE;
             end
@@ -726,7 +804,7 @@ module ev4_core (
             else begin
                 w_v <= m2_v && !stall_m2;
                 w_pc <= m2_pc; w_ir <= m2_ir; w_cls <= m2_cls; w_exc <= m2_exc;
-                w_dst <= m2_dst; w_dst_v <= m2_dst_v; w_va <= m2_va; w_cmf <= m2_cmf;
+                w_dst <= m2_dst; w_dst_v <= m2_dst_v; w_va <= m2_va; w_cmf <= m2_cmf; w_fb <= m2_fb;
                 w_res <= m2_load ? m2_lres : (m2_store && m2_stc) ? {63'd0, m2_stc_ok} : m2_res;
                 w_st <= m2_store && m2_exc == E_NONE && !(m2_stc && !m2_stc_ok);
                 w_sdata <= m2_quad ? m2_sd : {32'd0, m2_sd[31:0]};
@@ -752,6 +830,20 @@ module ev4_core (
                                 if (w_res[10] != abox_ctl[10]) begin dsweep <= 1'b1; dsw_idx <= 8'd0; end   // D-cache on/off: start clean
                             end
                             5'd15: alt_cm <= w_res[4:3];
+                            5'd0:  tb_gh <= w_res[6:5];                                // TB_CTL
+                            5'd2: begin                                                 // DTB_PTE
+                                dtb_v[dtb_p] <= 1'b1; dtb_tag[dtb_p] <= tb_tag; dtb_gh[dtb_p] <= tb_gh;
+                                dtb_pfn[dtb_p] <= w_res[52:32]; dtb_asm[dtb_p] <= w_res[4];
+                                dtb_pr[dtb_p] <= {w_res[2], w_res[1], w_res[15:12], w_res[11:8]};
+                                dtb_p <= dtb_p + 5'd1;
+                            end
+                            5'd6: dtb_v <= 32'd0;                                       // DTBZAP
+                            5'd7: dtb_v <= dtb_v & dtb_asm;                             // DTBASM
+                            5'd8: begin : dtbis                                         // DTBIS
+                                integer q;
+                                for (q = 0; q < 32; q = q + 1)
+                                    if (dtb_hit_i(dtb_v[q], dtb_tag[q], dtb_gh[q], w_res[42:13])) dtb_v[q] <= 1'b0;
+                            end
                             5'd16: cc_hi <= w_res[63:32];             // CC
                             5'd17: begin cc <= w_res[31:0]; cc_en <= w_res[32]; end   // CC_CTL
                             5'd21, 5'd23: begin                       // FLUSH_IC, FLUSH_IC_ASM: sweep, then resume after this
@@ -765,18 +857,51 @@ module ev4_core (
                             5'd9: ps_cm <= w_res[4:3];
                             5'd11: pal_base <= w_res[33:14];
                             5'd22: sl_xmit <= w_res[4];               // SL_XMIT
+                            5'd0: tb_tag <= w_res[42:13];                              // TB_TAG
+                            5'd1: begin                                                 // ITB_PTE
+                                if (tb_gh == 2'd3) begin
+                                    itb_v[8 + itb_lp] <= 1'b1; itb_tag[8 + itb_lp] <= tb_tag;
+                                    itb_pfn[8 + itb_lp] <= w_res[52:32]; itb_re[8 + itb_lp] <= w_res[11:8];
+                                    itb_asm[8 + itb_lp] <= w_res[4]; itb_lp <= itb_lp + 2'd1;
+                                end else begin
+                                    itb_v[itb_sp] <= 1'b1; itb_tag[itb_sp] <= tb_tag;
+                                    itb_pfn[itb_sp] <= w_res[52:32]; itb_re[itb_sp] <= w_res[11:8];
+                                    itb_asm[itb_sp] <= w_res[4]; itb_sp <= itb_sp + 3'd1;
+                                end
+                            end
+                            5'd6: begin itb_v <= 12'd0; itb_sp <= 3'd0; itb_lp <= 2'd0; end   // ITBZAP
+                            5'd7: itb_v <= itb_v & itb_asm;                             // ITBASM
+                            5'd8: begin : itbis                                         // ITBIS
+                                integer q;
+                                for (q = 0; q < 12; q = q + 1)
+                                    if (itb_v[q] && w_res[42:22] == itb_tag[q][42:22] &&
+                                        (q >= 8 || w_res[21:13] == itb_tag[q][21:13])) itb_v[q] <= 1'b0;
+                            end
                             default: ;
                             endcase
                     end
                     if (w_cls == C_MFPR && !w_ir[7] && w_ir[6] && w_ir[4:0] == 5'd5) mm_lock <= 1'b0;
+                    if (w_cls == C_MFPR && !w_ir[7] && w_ir[6] && w_ir[4:0] == 5'd2) begin   // DTB_PTE read
+                        dtb_temp <= {dtb_asm[dtb_p], dtb_pfn[dtb_p], dtb_pr[dtb_p][3:0], dtb_pr[dtb_p][7:4], dtb_pr[dtb_p][9:8], 3'b000};
+                        dtb_p <= dtb_p + 5'd1;
+                    end
+                    if (w_cls == C_MFPR && !w_ir[7] && !w_ir[6] && w_ir[5] && w_ir[4:0] == 5'd1) begin   // ITB_PTE read
+                        if (tb_gh == 2'd3) begin
+                            itb_temp <= {itb_asm[8 + itb_lp], itb_pfn[8 + itb_lp], itb_re[8 + itb_lp][3:0], 9'd0};
+                            itb_lp <= itb_lp + 2'd1;
+                        end else begin
+                            itb_temp <= {itb_asm[itb_sp], itb_pfn[itb_sp], itb_re[itb_sp][3:0], 9'd0};
+                            itb_sp <= itb_sp + 3'd1;
+                        end
+                    end
                     if (w_cls == C_MISC && w_ir[15:0] == 16'hE000) intr_flag <= 1'b0;
                     if (w_cls == C_MISC && w_ir[15:0] == 16'hF000) intr_flag <= 1'b1;
                     if (w_cls == C_REI) pal <= exc_addr[0];
                 end
-                if (w_exc == E_UNAL || w_exc == E_DTBM) begin
+                if (w_exc == E_UNAL || w_exc == E_DTBM || w_exc == E_DFAULT) begin
                     if (!mm_lock) begin
                         va_ipr <= w_va;
-                        mm_csr <= {w_ir[31:26], w_ir[25:21], 3'b000, w_cls == C_ST};   // opcode, Ra, FOW FOR ACV = 0, WR
+                        mm_csr <= {w_ir[31:26], w_ir[25:21], w_exc == E_DFAULT ? w_fb : 3'b000, w_cls == C_ST};   // opcode, Ra, FOW FOR ACV, WR
                         mm_lock <= 1'b1;
                     end
                 end
