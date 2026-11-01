@@ -77,6 +77,10 @@ module as200_sys #(
     input  wire  [6:0] year_ovr,
     input  wire        console_arc,     // OSD: boot the ARC console (TOY CMOS 3Fh = 1)
     output wire        speaker,
+    // audio (signed 16-bit, a new pair each aud_tgl toggle, 48 kHz)
+    output wire [15:0] aud_l,
+    output wire [15:0] aud_r,
+    output wire        aud_tgl,
 
     // retire trace (simulation)
     output wire        dbg_retire,
@@ -216,9 +220,10 @@ module as200_sys #(
         .dm_wdata(sio_dm_wdata), .dm_ack(sio_dm_ack), .dm_rdata(dm_rdata),
         .pirq_n({scsi_inta_n, 3'b111}), .serr(1'b0), .iochk(1'b0),
         .intr(sio_intr), .nmi(sio_nmi), .toy_irq(sio_toy), .kbrst(sio_kbrst), .spk(speaker),
-        .xio_addr(), .xio_rd(), .xio_wr(), .xio_wdata(), .xio_claim(1'b0), .xio_rdata(8'hFF),
-        .xio_irq(16'd0), .xio_dreq(8'd0), .xio_dack(), .xio_dack_ch(), .xio_dack_data(),
-        .xio_dev_data(16'd0), .xio_dma_ch(), .xio_tc(),
+        .xio_addr(xio_addr), .xio_rd(xio_rd), .xio_wr(xio_wr), .xio_wdata(xio_wdata),
+        .xio_claim(xio_claim), .xio_rdata(xio_rdata), .xio_irq(xio_irq), .xio_dreq(xio_dreq),
+        .xio_dack(xio_dack), .xio_dack_ch(xio_dack_ch), .xio_dack_data(xio_dack_data),
+        .xio_dev_data(xio_dev_data), .xio_dma_ch(xio_dma_ch), .xio_tc(xio_tc),
         .com1_txd(com1_txd), .com1_rxd(com1_rxd), .com1_rts_n(), .com1_dtr_n(),
         .com1_cts_n(1'b0), .com1_dsr_n(1'b0), .com1_ri_n(1'b1), .com1_dcd_n(1'b0),
         .com1_tx_stb(com1_tx_stb), .com1_tx_byte(com1_tx_byte),
@@ -229,6 +234,24 @@ module as200_sys #(
         .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_arc(console_arc), .lpt_data()
     );
 
+    // CD audio (the CD-ROM target's player): not yet
+    wire [15:0] cd_audio_l = 16'd0, cd_audio_r = 16'd0;
+    wire        cd_audio_stb = 1'b0;
+
+    // the AS200 sound card (WSS AD1848 at 530h, OPL at 388h; rtl/audio) on the SIO's ISA expansion bus
+    wire [15:0] xio_addr, xio_irq, xio_dack_data, xio_dev_data;
+    wire        xio_rd, xio_wr, xio_claim, xio_dack, xio_tc;
+    wire  [7:0] xio_wdata, xio_rdata, xio_dreq;
+    wire  [2:0] xio_dack_ch, xio_dma_ch;
+    as200_audio #(.CLK_HZ(100000000)) audio (
+        .clk(clk), .rst(rst),
+        .xio_addr(xio_addr), .xio_rd(xio_rd), .xio_wr(xio_wr), .xio_wdata(xio_wdata),
+        .xio_claim(xio_claim), .xio_rdata(xio_rdata), .xio_irq(xio_irq), .xio_dreq(xio_dreq),
+        .xio_dack(xio_dack), .xio_dack_ch(xio_dack_ch), .xio_dack_data(xio_dack_data),
+        .xio_dev_data(xio_dev_data), .xio_dma_ch(xio_dma_ch), .xio_tc(xio_tc),
+        .speaker(speaker), .cd_audio_l(cd_audio_l), .cd_audio_r(cd_audio_r), .cd_audio_stb(cd_audio_stb),
+        .mute(4'd0), .aud_l(aud_l), .aud_r(aud_r), .aud_tgl(aud_tgl)
+    );
     assign pt_claim = scsi_claim | sio_claim;
     assign pt_ack   = scsi_ack | sio_ack;
     assign pt_rdata = scsi_rdata | (sio_ack ? sio_rdata : 32'd0);

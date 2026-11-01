@@ -32,9 +32,7 @@ assign HDMI_FREEZE = 0;
 assign HDMI_BLACKOUT = 0;
 assign HDMI_BOB_DEINT = 0;
 
-assign AUDIO_S = 0;
-assign AUDIO_L = 0;
-assign AUDIO_R = 0;
+assign AUDIO_S = 1;
 assign AUDIO_MIX = 0;
 
 assign LED_DISK = 0;
@@ -258,6 +256,8 @@ wire       kbd_stb;
 wire [7:0] kbd_ascii;
 wire [7:0] leds;
 wire       srom_txd;
+wire [15:0] aud_l, aud_r;
+wire       aud_tgl;
 
 wire        d_req, d_we, d_ack;
 wire [26:3] d_addr;
@@ -312,10 +312,14 @@ as200_sys machine
 	.year_ovr(7'd99),
 	.console_arc(cfg[16]),
 	.speaker(),
+	.aud_l(aud_l), .aud_r(aud_r), .aud_tgl(aud_tgl),
 
 	.dbg_retire(), .dbg_pc(), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
 	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize()
 );
+
+// audio into the audio clock (rtl/audio/audio_cdc.v)
+audio_cdc audio_cdc(.clk_audio(CLK_AUDIO), .in_l(aud_l), .in_r(aud_r), .in_tgl(aud_tgl), .out_l(AUDIO_L), .out_r(AUDIO_R));
 
 // main memory: the SDRAM module
 wire        sdram_ready;
