@@ -276,10 +276,14 @@ module ev4_core (
     reg  [63:0] x_a, x_b, x_c;
     reg   [4:0] x_dst; reg x_dst_v; reg x_fast; reg x_ldlat; reg x_ser;
     reg  [63:0] x_btarget;
+    reg  [63:0] x_link;                 // PC + 4, computed in D
+    reg  [63:0] x_ipr;                  // HW_MFPR's IPR value, read in D (serialized)
+    reg         x_sel_lda, x_sel_link;  // fast-result selects, decoded in D
 
     // M1 / M2 registers (declared here for forwarding)
     reg         m1_v;  reg [63:0] m1_pc; reg [31:0] m1_ir; reg [3:0] m1_cls; reg [2:0] m1_exc;
-    reg  [63:0] m1_res, m1_va, m1_sd; reg m1_cmf;
+    reg  [63:0] m1_rf, m1_rs, m1_va, m1_sd; reg m1_cmf; reg m1_isf;
+    wire [63:0] m1_res = m1_isf ? m1_rf : m1_rs;    // fast and slow results come from separate flops
     reg   [4:0] m1_dst; reg m1_dst_v; reg m1_ldlat;
     reg         m2_v;  reg [63:0] m2_pc; reg [31:0] m2_ir; reg [3:0] m2_cls; reg [2:0] m2_exc;
     reg  [63:0] m2_res, m2_va, m2_sd; reg m2_cmf;
@@ -303,10 +307,8 @@ module ev4_core (
     wire        x_hwm  = x_ir[31:26] == 6'h1B || x_ir[31:26] == 6'h1F;
     wire [63:0] x_va   = (x_ir[31:26] == 6'h0B || x_ir[31:26] == 6'h0F || (x_hwm && x_ir[12]))
                          ? {agen[63:3], 3'b000} : x_hwm ? {agen[63:2], 2'b00} : agen;
-    wire [63:0] x_pc4  = x_pc + 64'd4;
     // the fast result: what the X->X loop forwards
-    wire [63:0] fast_res = x_cls == C_LDA ? agen :
-                           (x_cls == C_BR || x_cls == C_JMP) ? x_pc4 :
+    wire [63:0] fast_res = x_sel_lda ? agen : x_sel_link ? x_link :
                            (fa_wr ? fa_res : x_c);            // a false CMOV keeps Rc
 
     // ---------------------------------------------------------------- hazards and forwarding (D)
@@ -363,17 +365,17 @@ module ev4_core (
     wire x_mul_wait = x_v && x_cls == C_MUL && x_exc == E_NONE && !mul_fin;
     assign stall_x = stall_m1 || x_mul_wait;
 
-    // IPR read (serialized, so the state is current)
+    // IPR read, in D (HW_MFPR issues serialized, so the state is current)
     reg [63:0] ipr_rd;
     always @* begin
         ipr_rd = 64'd0;
-        if (x_ir[7])      ipr_rd = pal_temp[x_ir[4:0]];
-        else if (x_ir[6]) case (x_ir[4:0])
+        if (d_ir[7])      ipr_rd = pal_temp[d_ir[4:0]];
+        else if (d_ir[6]) case (d_ir[4:0])
             5'd4:  ipr_rd = {49'd0, mm_csr};
             5'd5:  ipr_rd = va_ipr;
             default: ipr_rd = 64'd0;
             endcase
-        else if (x_ir[5]) case (x_ir[4:0])
+        else if (d_ir[5]) case (d_ir[4:0])
             5'd2:  ipr_rd = {40'd0, iccsr_fpe, iccsr_map, iccsr_hwe, 21'd0};
             5'd4:  ipr_rd = exc_addr;
             5'd9:  ipr_rd = {29'd0, ps_cm[1], 32'd0, ps_cm[0], 1'b0};
@@ -401,19 +403,19 @@ module ev4_core (
                      (x_cls == C_BR || x_cls == C_JMP || (x_cls == C_CBR && x_cond));
     assign x_target_r = x_cls == C_JMP ? {x_b[63:2], 2'b00} : x_btarget;
 
-    // X result into M1
-    reg [63:0] x_res;
+    // the slow X results (into M1's second result flop)
+    reg [63:0] x_slow;
     always @* begin
         case (x_cls)
-        C_ALU, C_LDA, C_BR, C_JMP: x_res = fast_res;
-        C_SHF:  x_res = sh_res;
-        C_MUL:  x_res = mul_res;
-        C_MFPR: x_res = ipr_rd;
-        C_MTPR: x_res = x_b;
-        C_MISC: x_res = x_ir[15:0] == 16'hC000 ? {32'd0, cc} : {63'd0, intr_flag};
-        default: x_res = 64'd0;
+        C_SHF:  x_slow = sh_res;
+        C_MUL:  x_slow = mul_res;
+        C_MFPR: x_slow = x_ipr;
+        C_MTPR: x_slow = x_b;
+        C_MISC: x_slow = x_ir[15:0] == 16'hC000 ? {32'd0, cc} : {63'd0, intr_flag};
+        default: x_slow = 64'd0;
         endcase
     end
+    wire x_isf = x_cls == C_ALU || x_cls == C_LDA || x_cls == C_BR || x_cls == C_JMP;
     wire x_ovf = (x_cls == C_ALU && fa_ovf) || (x_cls == C_MUL && mul_ovf);
 
     // ================================================================ M1
@@ -643,6 +645,10 @@ module ev4_core (
                            ? {56'd0, d_ir[20:13]} : (loop_b ? fast_res : fwd_b);
                     x_c <= loop_c ? fast_res : fwd_c;
                     x_btarget <= d_pc + 64'd4 + {{41{d_ir[20]}}, d_ir[20:0], 2'b00};
+                    x_link <= d_pc + 64'd4;
+                    x_ipr <= ipr_rd;
+                    x_sel_lda <= dc_cls == C_LDA;
+                    x_sel_link <= dc_cls == C_BR || dc_cls == C_JMP;
                     if (dc_ser) ser_pending <= 1'b1;
                 end
             end
@@ -661,7 +667,7 @@ module ev4_core (
                 m1_v <= x_v && !x_mul_wait;
                 m1_pc <= x_pc; m1_ir <= x_ir; m1_cls <= x_cls;
                 m1_exc <= (x_exc == E_NONE && x_ovf) ? E_ARITH : x_exc;
-                m1_res <= x_res; m1_va <= x_va; m1_sd <= x_a; m1_cmf <= x_cls == C_ALU && !fa_wr;
+                m1_rf <= fast_res; m1_rs <= x_slow; m1_isf <= x_isf; m1_va <= x_va; m1_sd <= x_a; m1_cmf <= x_cls == C_ALU && !fa_wr;
                 m1_dst <= x_dst; m1_dst_v <= x_dst_v; m1_ldlat <= x_ldlat;
             end
 
