@@ -418,10 +418,19 @@ module ev4_core (
     reg  [63:0] m1_rf, m1_rs, m1_va, m1_sd; reg m1_cmf; reg m1_isf;
     wire [63:0] m1_res = m1_isf ? m1_rf : m1_rs;    // fast and slow results come from separate flops
     reg   [5:0] m1_dst; reg m1_dst_v; reg m1_ldlat;
-    reg         m2_v;  reg [63:0] m2_pc; reg [31:0] m2_ir; reg [3:0] m2_cls; reg [3:0] m2_exc;
+    reg         m2_v;  reg [63:0] m2_pc; reg [31:0] m2_ir; reg [3:0] m2_cls;
     reg  [63:0] m2_res, m2_va, m2_sd; reg m2_cmf;
     reg  [33:0] m2_pa;
-    reg   [2:0] m2_fb, w_fb;            // D_FAULT reason: {FOW, FOR, ACV}
+    reg   [2:0] w_fb;                   // D_FAULT reason: {FOW, FOR, ACV}
+    reg   [3:0] m2_exc0;                // the exception known in M1
+    reg         m2_tchk;                // a DTB-translated memory access: check the vectors
+    reg  [31:0] m2_dtbm, m2_vacv, m2_vfor, m2_vfow;
+    wire        m2_acv = |m2_vacv, m2_for = |m2_vfor, m2_fow = |m2_vfow;
+    wire  [3:0] m2_exc = m2_exc0 != E_NONE ? m2_exc0 :
+                         !m2_tchk ? E_NONE :
+                         m2_dtbm == 32'd0 ? E_DTBM :
+                         (m2_acv || m2_for || m2_fow) ? E_DFAULT : E_NONE;
+    wire  [2:0] m2_fb = {m2_fow && !m2_acv, m2_for && !m2_acv, m2_acv};
     reg   [5:0] m2_dst; reg m2_dst_v; reg m2_ldlat;
     reg         r_v; reg [5:0] r_dst; reg [63:0] r_res;      // retired last cycle
 
@@ -524,19 +533,30 @@ module ev4_core (
     end
 
     // branch resolution
+    // the branch condition from flags of operand A computed with it in D (or
+    // from the forwarded result): the zero tests are off the X -> next-PC path
+    reg x_az, x_az63, x_as, x_al;       // A == 0, A[62:0] == 0, A[63], A[0]
     reg x_cond;
     always @* begin
-        if (!x_ir[29]) x_cond = ftest(x_ir[28:26], x_a);                 // FBxx (opcodes 31-37)
-        else
+        if (!x_ir[29]) begin                                              // FBxx (opcodes 31-37)
+            case (x_ir[28:26])
+            3'd1: x_cond = x_az63;                                        // FBEQ
+            3'd2: x_cond = x_as && !x_az63;                               // FBLT
+            3'd3: x_cond = x_as || x_az63;                                // FBLE
+            3'd5: x_cond = !x_az63;                                       // FBNE
+            3'd6: x_cond = !(x_as && !x_az63);                            // FBGE
+            default: x_cond = !(x_as || x_az63);                          // FBGT
+            endcase
+        end else
         case (x_ir[28:26])
-        3'd0: x_cond = !x_a[0];
-        3'd1: x_cond = x_a == 64'd0;
-        3'd2: x_cond = x_a[63];
-        3'd3: x_cond = x_a[63] || x_a == 64'd0;
-        3'd4: x_cond = x_a[0];
-        3'd5: x_cond = x_a != 64'd0;
-        3'd6: x_cond = !x_a[63];
-        default: x_cond = !x_a[63] && x_a != 64'd0;
+        3'd0: x_cond = !x_al;
+        3'd1: x_cond = x_az;
+        3'd2: x_cond = x_as;
+        3'd3: x_cond = x_as || x_az;
+        3'd4: x_cond = x_al;
+        3'd5: x_cond = !x_az;
+        3'd6: x_cond = !x_as;
+        default: x_cond = !x_as && !x_az;
         endcase
     end
     wire x_fire = x_v && !stall_x && !w_redir;
@@ -907,6 +927,10 @@ module ev4_core (
                     x_dst <= dc_dst; x_dst_v <= dc_dst_v; x_fast <= dc_fast; x_ldlat <= dc_ldlat;
                     x_ser <= dc_ser;
                     x_a <= loop_a ? fast_res : fwd_a;
+                    x_az   <= loop_a ? fast_res == 64'd0 : fwd_a == 64'd0;
+                    x_az63 <= loop_a ? fast_res[62:0] == 63'd0 : fwd_a[62:0] == 63'd0;
+                    x_as   <= loop_a ? fast_res[63] : fwd_a[63];
+                    x_al   <= loop_a ? fast_res[0] : fwd_a[0];
                     x_b <= d_lit && (dc_cls == C_ALU || dc_cls == C_SHF || dc_cls == C_MUL)
                            ? {56'd0, d_ir[20:13]} : (loop_b ? fast_res : fwd_b);
                     x_c <= fwd_c;                       // CMOV's Rc: never from the loop (stalls instead)
@@ -945,10 +969,10 @@ module ev4_core (
                 m2_pc <= m1_pc; m2_ir <= m1_ir; m2_cls <= m1_cls; m2_res <= m1_res;
                 m2_va <= m1_va; m2_sd <= m1_sd; m2_pa <= m1_pa; m2_cmf <= m1_cmf;
                 m2_dst <= m1_dst; m2_dst_v <= m1_dst_v; m2_ldlat <= m1_ldlat;
-                m2_exc <= (m1_exc != E_NONE || !m1_mem) ? m1_exc :
-                          m1_unal ? E_UNAL : !m1_xok ? E_DTBM :
-                          (m1_acv || m1_for || m1_fow) ? E_DFAULT : E_NONE;
-                m2_fb <= {m1_fow && !m1_acv, m1_for && !m1_acv, m1_acv};
+                // translation faults are formed in M2 from registered vectors (timing)
+                m2_exc0 <= (m1_exc != E_NONE || !m1_mem) ? m1_exc : m1_unal ? E_UNAL : E_NONE;
+                m2_tchk <= m1_exc == E_NONE && m1_mem && !m1_unal && !m1_spx;
+                m2_dtbm <= dtb_m; m2_vacv <= dtb_acv; m2_vfor <= dtb_for; m2_vfow <= dtb_fow;
                 m2_dq <= dc_q; m2_dt <= dct_q; m2_dv <= dcv_q; m2_hitq <= m1_hit;
                 mstate <= MS_IDLE;
             end
