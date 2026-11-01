@@ -211,4 +211,13 @@ tb_fpu: obj_tb_fpu/Vev4_fpu
 	python3 -I ../tests/fpu/gen_fpu.py --n $(FPU_N) --mix $(FPU_MIX) --seed $(FPU_SEED) --jobs 3 2>/dev/null | \
 		obj_tb_fpu/Vev4_fpu - --kill 0
 
-.PHONY: tb_fpu
+obj_tb_fpu_dec/Vev4_fpu_dec: $(RTL)/cpu/ev4_fpu_dec.v tb/tb_fpu_dec.cpp
+	$(TB_V) --Mdir obj_tb_fpu_dec --top-module ev4_fpu_dec $^
+
+# the decoder against fpmodel.legal() for every function code of opcodes 15 and 16
+tb_fpu_dec: obj_tb_fpu_dec/Vev4_fpu_dec
+	python3 -I -c 'import sys; sys.path.insert(0, "../tests/fpu"); from fpmodel import legal; \
+		[print("%08x %d" % (ir, legal(ir))) for opc in (0x15, 0x16) for fn in range(2048) \
+		 for ir in [(opc << 26) | (31 << 21) | (31 << 16) | (fn << 5) | 31]]' | obj_tb_fpu_dec/Vev4_fpu_dec
+
+.PHONY: tb_fpu tb_fpu_dec
