@@ -853,6 +853,58 @@ int main(int argc, char **argv) {
     }
     printf("SRM pke_script on dka400 (status bytes): %s\n", fails ? "see failures" : "ok");
 
+    // ================================================================ the board's sequence (build 14)
+    // power-on with no CD image; SRM's port init and probe while the drive is NOT READY;
+    // the ISO mounted from the OSD at >>>; show device; boot dka400 (SRM's open, then block 0)
+    t->img_present = 0b001;
+    t->reset = 1; for (int k = 0; k < 8; k++) tick(); t->reset = 0; tick();
+    cfg_wr(0x10, IOBASE); cfg_wr(0x14, MEMBASE); cfg_wr(0x04, 0x0007, 0x3);
+    space = MEMSP;
+    wb(ISTAT, 0x40); wb(ISTAT, 0x00);
+    wb(SCNTL0, 0x0A); wb(SCNTL1, 0x80); wb(SCNTL3, 0x33); wb(SCID, 7); wb(SXFER, 0);
+    wb(CTEST4, 0x08); wb(DMODE, 0xC0); wb(DIEN, 0); wb(DCNTL, 0x09); wb(SIEN0, 0); wb(SIEN1, 0);
+    wb(STEST3, 0x80); wb(RESPID, 0x80);
+    wb(SCNTL1, 0x08); for (int k = 0; k < 20; k++) tick(); wb(SCNTL1, 0x80);
+    rb(SIST0); rb(SIST1); rb(DSTAT);
+    pke_build();
+    {
+        struct { int id; std::vector<uint8_t> c; uint32_t in, out; int want; const char *what; } q[] = {
+            {0, {0x12, 0, 0, 0, 255, 0}, 255, 0, 0, "probe: INQUIRY dka0"},
+            {4, {0x12, 0, 0, 0, 255, 0}, 255, 0, 0, "probe: INQUIRY dka400 (no disc)"},
+            {4, {0xA0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x08, 0, 0}, 264, 0, 2, "probe: REPORT LUNS dka400"},
+            {4, {0x03, 0, 0, 0, 18, 0}, 18, 0, 0, "REQUEST SENSE"},
+            {4, {0x00, 0, 0, 0, 0, 0}, 0, 0, 2, "open: TUR (no disc)"},
+            {4, {0x03, 0, 0, 0, 18, 0}, 18, 0, 0, "REQUEST SENSE (3A)"},
+        };
+        for (auto &x : q) {
+            int st_ = srm_cmd(x.id, x.c, x.in, x.out);
+            CHECK(st_ == x.want, "board seq: %s: status %02X, expected %02X", x.what, st_ & 0xFF, x.want);
+        }
+        CHECK(mem[PIN + 2] == 2 && mem[PIN + 12] == 0x3A, "no disc sense %02X/%02X", mem[PIN + 2], mem[PIN + 12]);
+        // the ISO mounted from the OSD
+        t->img_present = 0b101;
+        pulse_change();
+        struct { std::vector<uint8_t> c; uint32_t in, out; int want; const char *what; } b[] = {
+            {{0x12, 0, 0, 0, 255, 0}, 255, 0, 0, "show device: INQUIRY"},
+            {{0x00, 0, 0, 0, 0, 0}, 0, 0, 2, "boot open: TUR (attention)"},
+            {{0x03, 0, 0, 0, 18, 0}, 18, 0, 0, "REQUEST SENSE (28)"},
+            {{0x1B, 0, 0, 0, 1, 0}, 0, 0, 0, "START UNIT"},
+            {{0x00, 0, 0, 0, 0, 0}, 0, 0, 0, "TUR"},
+            {{0x15, 0x10, 0, 0, 12, 0}, 0, 12, 0, "MODE SELECT 512"},
+            {{0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 8, 0, 0, "READ CAPACITY"},
+            {{0x28, 0, 0, 0, 0, 0, 0, 0, 1, 0}, 512, 0, 0, "READ(10) block 0"},
+            {{0x28, 0, 0, 0, 0, 1, 0, 0, 1, 0}, 512, 0, 0, "READ(10) block 1"},
+        };
+        uint8_t ms[12] = {0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 2, 0};
+        memcpy(mem + POUT, ms, 12);
+        for (auto &x : b) {
+            int st_ = srm_cmd(4, x.c, x.in, x.out);
+            CHECK(st_ == x.want, "board seq: %s: status %02X, expected %02X", x.what, st_ & 0xFF, x.want);
+            if (x.c[0] == 0x25) CHECK(get32(PIN + 4) == 0x00020000, "READ CAPACITY block length %08X", get32(PIN + 4));
+        }
+    }
+    printf("the board's sequence (no disc at power-on, mount at >>>, boot dka400): %s\n", fails ? "see failures" : "ok");
+
     printf("%s: %d failure(s), %llu cycles\n", fails ? "FAIL" : "PASS", fails, (unsigned long long)cyc);
     delete t;
     return fails ? 1 : 0;

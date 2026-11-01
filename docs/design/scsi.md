@@ -297,7 +297,7 @@ All registers are readable and writable as in the RS6K port.
 | SDTR | Answered with the same period and an offset of at most 8 |
 | Anything else (REPORT LUNS, LOG SENSE, 16-byte CDBs ...) | CHECK CONDITION / ILLEGAL REQUEST 20. A 16-byte CDB is taken whole first |
 
-The CD's block size returns to 2048 only at power-on. A bus reset or a remount keeps it, as a mode
+The CD's block size returns to 2048 only at power-on (512 with the parameter `CD_BOOT512 = 1`). A bus reset or a remount keeps it, as a mode
 parameter is kept.
 
 This fixes "bad SCSI status (b8)" at `boot dka400` (board build 13, 2026-11-01). The cause was:
@@ -356,6 +356,20 @@ This fixes "bad SCSI status (b8)" at `boot dka400` (board build 13, 2026-11-01).
     READ(10) of block 0 and of 15 blocks, the 10-byte vendor EC.
   - Then a bus reset and a remount, each followed by a 1-block READ and READ CAPACITY.
   - Every status byte is checked (0x00 or 0x02 as expected; 0xEE = not written).
+- **The board's sequence** (build 14):
+  1. Power-on with no CD image; SRM's port init and bus reset.
+  2. The probe of dka0 and dka400 (INQUIRY 255, REPORT LUNS) and an open attempt while NOT READY
+     (TUR, REQUEST SENSE 3A).
+  3. The ISO mounted (`cd_change`), then `show device` (INQUIRY).
+  4. The boot open: TUR with UNIT ATTENTION, REQUEST SENSE 28, START UNIT, TUR, MODE SELECT 512,
+     READ CAPACITY (512).
+  5. READ(10) of blocks 0 and 1.
+
+  Every status byte is correct. So the board's "bad SCSI status (b8)" at `boot dka400` is not the
+  SCSI protocol. SRM V7.0 (its strings in the DRAM image) would have printed "block size is not 512
+  bytes" had READ CAPACITY said 2048. The probable cause is the open gap "D-cache invalidation on
+  DMA writes": the status byte (a stack local in SRM) and the block-0 buffer are DMA-written while
+  the CPU's write-through D-cache still holds their old lines.
 - **The disks' commands**: READ/WRITE(12) and (6) against the image, READ past the end (21), MODE
   SENSE 3F (the six pages in order, geometry), MODE SENSE(10) page 8 with DBD, FORMAT UNIT with and
   without a defect list, READ DEFECT DATA, SYNCHRONIZE CACHE, VERIFY, START STOP, READ TOC on a disk

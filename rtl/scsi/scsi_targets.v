@@ -65,7 +65,9 @@ module scsi_targets #(
     parameter [2:0] DISK1_ID  = 3'd1,
     parameter [2:0] CD_ID     = 3'd4,
     parameter       CD_ALWAYS = 1,          // the CD drive answers selection with no image
-    parameter       CLK_HZ    = 100000000   // for the 44.1 kHz audio sample clock
+    parameter       CLK_HZ    = 100000000,  // for the 44.1 kHz audio sample clock
+    parameter       CD_BOOT512 = 0          // the CD's power-on block length: 1 = 512 (as DEC's RRD
+                                            // drives are said to start), 0 = 2048; MODE SELECT changes it
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -516,7 +518,7 @@ module scsi_targets #(
             // init, a command timeout) does not make it select again: with 2048 after one,
             // a 1-block READ sent 2048 bytes into SRM's 512, its script's err104 and flush
             // skipped the status move, and SRM reported "bad SCSI status (b8)" (board, build 13)
-            if (rst) cd_512 <= 1'b0;
+            if (rst) cd_512 <= CD_BOOT512 != 0;
         end else begin
             case (st)
                 T_FREE: if (sel) begin
