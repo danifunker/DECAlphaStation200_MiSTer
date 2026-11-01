@@ -28,6 +28,18 @@ virtual pins, `quartus_sh --flow compile`; the number is the slow 100C model.
 | 6 | -0.469 (~95.5 MHz) | 4300 | D-cache tag compare in M2 -> stall -> every enable; D forwarding select. Fix: the hit compared in M1 and registered |
 | 7 | **+0.128 (~101 MHz)** | 4300 | **Meets 100 MHz** (2026-11-01). Thin margin: the whole-system fit will need more |
 
+### The whole machine (MiSTer top, 100 MHz system clock)
+
+Grouped with a `report_timing -npaths 400` script on the system clock (source -> destination register).
+
+| Build | Slack | ALMs | Worst paths, and the fix |
+|---|---|---|---|
+| 4 (CPU + 21071 + SDRAM) | -0.589 | 12.6k | CPU `x_a -> x_c` (CMOV's old-Rc select in the forwarding loop), `x_ir -> m1_rs`. Fix: CMOV 2 cycles, operand C never loop-forwarded |
+| 5 (+ 53C810, SIO) | -1.100 | 19.7k | 8259 priority -> CPU HIRR read; 53C810 SCRIPTS decode and PCI register decode. Fix: irq_h registered in the CPU; SIO outputs registered and the 8259 pipelined; the 53C810 restructured (agents) |
+| 6 (+ ITB/DTB) | -2.396 | 22.4k | the ITB lookup in F2. Fix: the lookup in F1, registered into F2 |
+| 7 | -1.503 | 21.9k | the TOY's BCD conversion into the SIO read data; DTB select -> D-cache tag/protection. Fix: displayed time registered; per-entry tag compare and protection, ORed |
+| 8 (`0c8dfa6`) | -1.244 | ~22k | not yet grouped |
+
 ## Consequences for the pipeline (cpu.md 11)
 
 - **No bypass mux in front of the ALU in the execute stage.** Operands must arrive registered:

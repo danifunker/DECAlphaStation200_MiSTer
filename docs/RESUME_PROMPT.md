@@ -1,4 +1,80 @@
-# Resume prompt
+# Resume prompt (2026-11-01: moving from the Linux box to a Mac)
+
+## Setup on the Mac
+
+1. **Clone** the repo (local commits only so far: push from the Linux box first, or copy the repo
+   directory). Sibling repos the docs refer to (reference only): `../hp9000-715`, `../IBMRS6K42p`
+   (`origin/master`), `../Template_MiSTer`, `../Main_MiSTer`.
+2. **`scratch/`** (1.7 GB, third-party material, never in git) has to be copied over. From the Mac:
+   ```
+   rsync -a --exclude '*.trace' --exclude 'led2e.*' --exclude 'sys_*.txt' --exclude 'srm*.txt' \
+       dani@<linux-box>:repos/DECAlphaStation200_MiSTer/scratch/ scratch/
+   ```
+   The excluded files are simulation traces and a checkpoint that is only valid for the old
+   simulator binary. What matters: `scratch/roms/` (flash, DROM V1.2/V1.7, the archive.org chip
+   images, extracted SRM/ARC, the DEC 3000 SROM), `scratch/refs/` (HRM, TI manual, 21071 data
+   sheet, EB64+ and AlphaPC64 guides), `scratch/ebsdk/` (DEC SDK, reference only), `scratch/disasm/`,
+   `scratch/isos/`, `scratch/README.md` (manifest with SHA-1s).
+3. **Tools**
+   - Verilator 5.x: `brew install verilator` (the Linux box used 5.028).
+   - The Alpha cross binutils/gcc (`alpha-linux-gnu-as`, `-gcc`, `-objdump`) have no Homebrew
+     package. Simplest: an Ubuntu container (OrbStack or Docker) with `binutils-alpha-linux-gnu
+     gcc-alpha-linux-gnu qemu-user`, run from the repo directory. They are needed for `tests/cpu`
+     (T0/T3 images, ignored build dir) and `srom/` (the SROM's build products are committed, so the
+     RTL builds without them). `tools/alphaemu` is plain C and builds natively.
+   - **Quartus 17.0 Lite does not run on macOS.** Fits stay on the Linux box (or a Linux x86 VM
+     with enough RAM): one fit at a time, `setsid nohup quartus_sh --flow compile DECAlphaStation200
+     > fit.log 2>&1 < /dev/null &`.
+   - Board: the MiSTer at **192.168.99.143** (ssh root, key login; the Mac needs its own key in
+     `/root/.ssh/authorized_keys`). misterkvms-cli has a macOS build; on Linux it was
+     `~/Downloads/MiSTerKVMS-0.9.5-linux-x86_64/misterkvms-cli --mister 192.168.99.143`.
+4. Claude's project memory on the Linux box (`~/.claude/projects/-home-dani-repos-DECAlphaStation200-MiSTer/memory/`)
+   only held two pointers (board .143, the user's sibling-core rules in the hp9000-715 memory); their
+   substance is in `CLAUDE.md`.
+5. Start Claude Code in the repo root and paste the prompt below.
+
+---
+
+We're building a MiSTer (DE10-Nano) FPGA core of the **DEC AlphaStation 200 4/100** in this repo.
+Read `CLAUDE.md` first (decisions, rules, state), then `docs/CORE_SPEC.md`, `docs/design/cpu.md`,
+`docs/design/pipeline.md`, `docs/design/cpu-timing.md`, `docs/design/srom.md`, `docs/design/pci.md`,
+`docs/design/scsi.md`, `docs/design/sio.md`.
+
+Where it stands (2026-11-01):
+- `rtl/as200_sys.v` is the machine: the pipelined 21064 `rtl/cpu/ev4_core.v` (I/D caches, ITB/DTB,
+  interrupts, SROM bitstream loaded into the I-cache at reset), the 21071 model `rtl/apecs/apecs.v`
+  (memory banks, CSRs, flashbus, PCI target bus, DMA windows, IACK), the 53C810 `rtl/scsi/`, the
+  82378 SIO and ISA devices `rtl/sio/`. Our replacement SROM is `srom/avanti_srom.S`.
+- **On the board (.143)**: build 5 runs our SROM and DEC's whole DROM V1.7 POST at 100 MHz from
+  SDRAM, then the flash loader starts SRM (screens in the session history; the HDMI terminal shows the
+  SROM serial port, COM1 and the LED codes).
+- **In simulation** (`make -C verilator system`, checkpoints with `--save-led 2E` / `--restore`): SRM's
+  flash stub decompresses SRM and enters it. SRM then printed (in its PALcode's raw string loop)
+  "warning -- PALcode is not built for this CPU chip version": DC_STAT.CHIP_ID read 0. Fixed in
+  `d8eeffe` (CHIP_ID = 7) together with **interrupt delivery** (HIER/SIER/ASTER, SIRR/ASTRR, PAL 0xE0).
+  **That fix has not been run in the system simulation yet.**
+- Tests: `make -C verilator cputest-pipe` (7 T0 suites, traces = alphaemu), `t3` (TLB + interrupt),
+  `sromload`, `tb_sdram`, `tb_ncr810`, `tb_sio`, `tb_sio_drom` all pass.
+- Timing (100 MHz, slow 100C corner): the last full fit (commit `0c8dfa6`, no interrupts yet) is at
+  **-1.244 ns**, 22k ALMs (52%). It runs on the board regardless; the remaining paths need grouping
+  again (`docs/design/cpu-timing.md` has the method and the history).
+
+Next, in order:
+1. Rebuild the system sim (`make -C verilator obj_sys/Vas200_sys`; `SIM_FAST=1` is the default and
+   makes the TOY tick fast), make a new checkpoint at LED 2E, run on into SRM and watch COM1 (the
+   simulator's stdout). Expect SRM's next needs: real interrupts from the TOY (IRQ4) and the 8259
+   (IRQ2, the vector through IACK at 1.B000.0000), the FPU (SRM uses some FP; ICCSR.FPE), and
+   whatever the console's device probes touch.
+2. A board build with `d8eeffe` and later on the Linux box; close timing (re-group the failing paths).
+3. The SCSI targets on the hps_io block devices (`rtl/scsi/scsi_targets.v` exists, not wired);
+   CMOS/NVRAM save (TOY byte 3Fh picks SRM vs ARC); the 28F020 flash command set; the FPU (T2); TGA.
+
+Rules: all new RTL in plain Verilog-2001 (`.v`); commit often, never push without asking; never
+delete files without asking; third-party material only in `scratch/`; one Quartus fit at a time.
+
+---
+
+# Earlier resume prompt (2026-10-31, historical)
 
 > 2026-11-01: historical. The target is now the **4/100**, at a 100 MHz clock target; `CLAUDE.md` and `docs/CORE_SPEC.md` are current.
 

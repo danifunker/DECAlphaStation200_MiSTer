@@ -2,8 +2,8 @@
 
 An FPGA recreation of the DEC AlphaStation 200 4/100 ("Avanti": 21064 EV4,
 21071-AA APECS, ZLXp-E1 TGA, NCR 53C810, 82378 SIO) for the MiSTer
-(DE10-Nano, Cyclone V 5CSEBA6). Read `docs/RESUME_PROMPT.md` for the
-research history, `docs/CORE_SPEC.md` for the **locked** hardware
+(DE10-Nano, Cyclone V 5CSEBA6). Read `docs/RESUME_PROMPT.md` first (the
+current resume prompt and the Mac setup, then the research history), `docs/CORE_SPEC.md` for the **locked** hardware
 configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 
 ## Decisions (user, 2026-10-31, initial bring-up)
@@ -17,7 +17,7 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 | Main_MiSTer | Branch **`dec-alphastation`** off `master` (88d2d10) in `../Main_MiSTer`, for this core's Main needs: SCSI write buffering and CD-ROM handling like the HP/Sun/RS6K families (`support/hp9k`, `support/ibmrs6k` on `origin/ibmrs6k`), CD audio later. Don't check it out in `../Main_MiSTer` (other sessions use that tree on `hp9k-family`): use a worktree. |
 | Simulator | Verilator, headless: `make -C verilator` / `make -C verilator smoke` (`verilator/sim_main.cpp` options in its header). |
 | Memory | SDRAM = system RAM (32/64/128 MB), DDR3 = TGA VRAM, flash/DROM images, BRAM = caches (user's standing preference). |
-| Clocks | **Target: the CPU at 100 MHz** (the 4/100's own speed; user, 2026-11-01): a fast pipelined CPU and FPU with caches. Today's PLL: 50 MHz system (`outclk_0`), 50 MHz shifted for SDRAM (`outclk_1`, unused yet), 65 MHz pixel (`outclk_2`, 1024x768@60); the system clock moves to 100 MHz with the CPU. |
+| Clocks | **The CPU and the machine at 100 MHz** (the 4/100's own speed; user, 2026-11-01): PLL `outclk_0` 100 MHz system (CPU, machine, SDRAM, hps_io), `outclk_2` 65 MHz pixel (1024x768@60); SDRAM_CLK = the system clock inverted through a DDR output register. |
 | Machine | **AlphaStation 200 4/100** (user, 2026-11-01; was the 4/166). DROM V1.2's speed table stops at 166 MHz, so the SROM hands over PA 0x10 = 10000 ps, 0x68 = 100 and speed code 9 at 0x70 (DROM V1.7's own 100 MHz code), plus the memory size in MB at 0x38 |
 | SROM | User wants **the original SROM** baked in; the part is a **Xilinx XC1765D** 64 Kbit serial PROM at E23 and no dump is public (searched 2026-11-01). **Our replacement: `srom/avanti_srom.S`** (`docs/design/srom.md`; `tools/srom/srom.py` packs/decodes the 21064 bitstream, verified bit for bit against DEC's DEC 3000 SROM), built into `srom/build/avanti_srom.{bin,bitstream,hex}`; a real dump drops in as the same bitstream. |
 | ROMs | `games/DECAlphaStation200/boot0.rom` = the 1 MB flash image, default SRM v7.0-9 + ARC 4.58 (the real chips from archive.org `alpha-station-200-roms`; ioctl index 0; Load ROM replaces it for the session), `boot1.rom` = **DROM V1.7** (index 0x40; knows 100 MHz). NVRAM: slot SC4. |
@@ -66,24 +66,27 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   the LED codes). The board has boot0.rom = SRM 7.0-9 + ARC 4.58 chips, boot1.rom = DROM V1.7.
   `rtl/as200.v` + `bringup_stub.v` remain only for the bring-up Verilator smoke test.
 
+- **2026-11-01, later:** the 53C810 and the 82378 SIO + ISA devices are in `as200_sys`; the whole
+  DROM V1.7 POST passes in simulation **and on the board** (build 5), and the flash loader starts SRM.
+  The core gained the ITB/DTB (T3 `t3_tlb`), interrupt delivery (T3 `t3_intr`), DC_STAT CHIP_ID,
+  CC/CC_CTL, SL_XMIT/SL_RCV, FLUSH_IC as a sweep (a deadlock with an in-flight fill fixed). The
+  system sim has checkpoints (`--save-led 2E`, `--restore`). Last full fit: -1.244 ns at 100 MHz,
+  22k ALMs (`docs/design/cpu-timing.md`).
+- **2026-11-01: development moves to a Mac** (`docs/RESUME_PROMPT.md`: setup, `scratch/` copy,
+  tools; Quartus fits stay on Linux).
+
 ## Next (in order)
 
-1. The first whole-core timing fit of ev4_core at 10 ns (`scratch/cpu_fmax/core_top`), then fix
-   its critical paths (`cpu-timing.md`).
-2. **DONE 2026-11-01 (system sim): the whole DROM V1.7 POST passes** (NVRAM, 53C810, 82378, 3287,
-   8242, 87312, Interrupts) with the 53C810 (`rtl/scsi/`, `docs/design/scsi.md`) and the 82378 SIO +
-   ISA devices (`rtl/sio/`, `docs/design/sio.md`); the flash loader starts SRM (LED 2E, ~7 s of
-   machine time, ~19 min of simulation). **Next: the ITB/DTB** -- SRM's flash stub runs with
-   D-stream translation and fills the DTB from its DTB-miss handler (PA 0x4009E0); the core has
-   superpages only, so it loops there. Then SRM on COM1; interrupt delivery (HIER, PAL INTERRUPT);
-   the SCSI targets on hps_io; CMOS save (byte 3Fh picks SRM/ARC); the 28F020 command set; TGA.
-3. CPU completeness: T3 privileged tests, ITB/DTB, interrupts, the FPU (T2); branch
-   prediction and block bus transfers for speed.
+1. System sim with `d8eeffe` (CHIP_ID, interrupts): a new LED-2E checkpoint, then run into SRM and
+   watch COM1. SRM's next needs: TOY/8259 interrupts end to end, the FPU, its device probes.
+2. A board build with the latest RTL; close timing at 100 MHz (re-group the failing paths).
+3. SCSI targets on hps_io (`rtl/scsi/scsi_targets.v`), CMOS save (TOY 3Fh: SRM/ARC), the 28F020
+   command set, the FPU (T2), branch prediction and block bus transfers, TGA.
 
 ## Rules carried over from the user's other cores
 
 - Commit often in small steps (local commits; never push without asking).
-- One Quartus fit at a time on this box (14 GB, 6 cores). Before a fit check
+- One Quartus fit at a time on the Linux box (14 GB, 6 cores; Quartus does not run on macOS). Before a fit check
   `pgrep -a quartus` and the DSPPC603/Pippin session (it has priority). Launch
   with `setsid nohup quartus_sh --flow compile DECAlphaStation200 > fit.log 2>&1 < /dev/null &`.
   Never edit `files.qip`/QSF/SDC while a fit runs.
