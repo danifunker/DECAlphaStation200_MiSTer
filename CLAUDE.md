@@ -35,13 +35,24 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   `as -mev4` does not reject BWX opcodes, so every test image is scanned
   with objdump for BWX/FIX/CIX/MVI opcodes.
 
+- **Board build 3 (2026-10-31) on .143**: banner, keyboard echo through COM1, OSD with Changes
+  pending; timing met on all clocks (8.1k ALMs). Note: Quartus keeps octal string escapes like
+  `"\001"` literally (Verilator doesn't), so don't use them in RTL strings.
+- **CPU**: `docs/design/cpu.md` is the 21064 specification (reset, ISA, PAL instructions, IPRs, PAL
+  entries, translation rules, RTL plan, open questions). `rtl/cpu/ev4_ialu.v` and `ev4_imul.v` pass
+  their unit benches (`make -C verilator tb_ialu tb_imul`); **`rtl/cpu/ev4_seq.v`, the sequential
+  reference core, runs all seven T0 suites with retire traces identical to alphaemu**
+  (`make -C verilator cputest`). T0 runs three ways: QEMU user (`make -C tests/cpu`), alphaemu user
+  (`emu`) and the bare-metal PALmode images on alphaemu (`pal-emu`, `tools/alphaemu -P -H`).
+
 ## Next (in order)
 
-1. Board check of the scaffold on .143 (OSD, banner, keyboard echo).
-2. CPU test suite T0 (`docs/CPU_TEST_PLAN.md`): bare-metal PALmode harness, self-checking integer tests.
-3. `tools/alphaemu` -> golden model with traces.
-4. The 21064 RTL (`rtl/cpu/`), its Verilator test harness, lockstep with alphaemu.
-5. The system around it: SROM replacement, 21071 (memory, flashbus, PCI), SIO devices and the 53C810 from the RS/6000 core (`docs/REUSE.md`), TGA.
+1. CPU: T3 privileged tests (PAL entries, IPRs, HW_LD/ST, CALL_PAL, traps) on ev4_seq; the ITB/DTB;
+   interrupts; then the FPU (T2), then the pipelined core co-simulated against ev4_seq.
+2. alphaemu: PAL entries/exceptions and the IPRs, so it stays the golden model for T3.
+3. The system: SROM replacement (cpu.md 1.4, option A), 21071-CA memory + flashbus, SDRAM, DROM to
+   its serial output; then PCI (21071-DA), the SIO devices and the 53C810 from the RS/6000 core
+   (`docs/REUSE.md`), TGA.
 
 ## Rules carried over from the user's other cores
 

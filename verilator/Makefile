@@ -29,7 +29,7 @@ smoke: $(EXE)
 		--screenshot smoke.png
 
 clean:
-	rm -rf obj_dir obj_tb_* smoke.png
+	rm -rf obj_dir obj_tb_* obj_cpu smoke.png
 
 .PHONY: all smoke clean
 
@@ -61,3 +61,24 @@ tb_imul: obj_tb_imul/Vev4_imul $(VEC)/imul.vec
 	obj_tb_imul/Vev4_imul $(VEC)/imul.vec
 
 .PHONY: tb_imul
+
+# ---------------------------------------------------------------- CPU tests on the RTL
+# the T0 bare-metal images on rtl/cpu/ev4_seq.v, each trace diffed against
+# alphaemu -P (make -C ../tests/cpu pal pal-emu builds both)
+CPU_RTL = $(RTL)/cpu/ev4_ialu.v $(RTL)/cpu/ev4_imul.v $(RTL)/cpu/ev4_seq.v
+T0      = ../tests/cpu/build/pal
+SUITES  = inta intl ints intm lda mem branch
+
+obj_cpu/Vev4_seq: $(CPU_RTL) cputest/tb_cpu.cpp
+	$(TB_V) --Mdir obj_cpu --top-module ev4_seq -Wno-BLKSEQ $^
+
+cputest: obj_cpu/Vev4_seq
+	$(MAKE) -C ../tests/cpu pal-emu >/dev/null
+	@fails=0; for s in $(SUITES); do \
+		if obj_cpu/Vev4_seq $(T0)/$$s.bin --trace $(T0)/$$s.rtl.trace > $(T0)/$$s.rtl.log; then r=PASS; else r=FAIL; fails=1; fi; \
+		if cmp -s $(T0)/$$s.trace $(T0)/$$s.rtl.trace; then t="trace = alphaemu"; \
+		else t="trace differs: $$(diff $(T0)/$$s.trace $(T0)/$$s.rtl.trace | head -3 | tr '\n' ' ')"; fails=1; fi; \
+		echo "$$r $$s: $$(cat $(T0)/$$s.rtl.log | tr -d '\n'); $$t"; \
+	done; exit $$fails
+
+.PHONY: cputest
