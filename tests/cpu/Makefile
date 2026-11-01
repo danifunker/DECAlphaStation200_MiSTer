@@ -40,6 +40,30 @@ user: $(SUITES:%=$(B)/user/%)
 		if $(QEMU) $(B)/user/$$s; then echo "PASS $$s"; else echo "FAIL $$s"; fails=1; fi; \
 	done; exit $$fails
 
+# bare-metal PALmode images (rt/t0_pal.h): ELF linked at PA 0 and a raw .bin
+# for the RTL harness; `make pal-emu` runs them on alphaemu -P
+OBJCOPY = $(CROSS)objcopy
+$(B)/pal/%.o: $(B)/%.S rt/t0.h rt/t0_pal.h
+	@mkdir -p $(B)/pal
+	$(CPP) $< > $(B)/pal/$*.s
+	@python3 -I check_ev4.py $(B)/pal/$*.s
+	$(AS) -o $@ $(B)/pal/$*.s
+
+$(B)/pal/%.elf: $(B)/pal/%.o
+	$(LD) -N -Ttext=0 -e _start -o $@ $<
+
+$(B)/pal/%.bin: $(B)/pal/%.elf
+	$(OBJCOPY) -O binary $< $@
+
+pal: $(SUITES:%=$(B)/pal/%.bin)
+
+TOHOST = 0x800000
+pal-emu: $(EMU) pal
+	@fails=0; for s in $(SUITES); do \
+		if $(EMU) -P -H $(TOHOST) -m 16 -l $(B)/pal/$$s.bin@0:0 -p 0 -T $(B)/pal/$$s.trace 2>$(B)/pal/$$s.log; \
+		then echo "PASS $$s (alphaemu -P)"; else echo "FAIL $$s (alphaemu -P)"; tail -2 $(B)/pal/$$s.log; fails=1; fi; \
+	done; exit $$fails
+
 # the same programs on tools/alphaemu (the golden model for the RTL lockstep)
 EMU = ../../build/alphaemu
 $(EMU): ../../tools/alphaemu/alphaemu.c
@@ -54,5 +78,5 @@ emu: $(EMU) $(SUITES:%=$(B)/user/%)
 clean:
 	rm -rf $(B)
 
-.PHONY: all user emu clean
-.PRECIOUS: $(B)/%.S $(B)/user/%.o
+.PHONY: all user emu pal pal-emu clean
+.PRECIOUS: $(B)/%.S $(B)/user/%.o $(B)/pal/%.o $(B)/pal/%.elf

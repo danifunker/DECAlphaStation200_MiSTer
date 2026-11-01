@@ -24,6 +24,13 @@
  * CALL_PAL callsys handles exit (1) and write (4). The exit status is the
  * program's.
  *
+ * -P (PAL harness, the T0 bare-metal images): HW_MTPR/HW_MFPR keep a
+ * 256-entry IPR array indexed by the instruction's low byte (only EXC_ADDR,
+ * 0x24, matters), HW_REI continues at EXC_ADDR & ~3 instead of stopping,
+ * and PC is not checked against the load window (KSEG addresses map to
+ * PA = VA[33:0] like every other address). -H <pa> stops on a store to
+ * that physical address: value 1 = exit 0, anything else = exit 1.
+ *
  * -T writes one line per retired instruction for lockstep comparison with
  * the RTL: "<pc> <insn> [r<n>=<value>] [m<addr>=<value>/<size>]".
  */
@@ -40,6 +47,7 @@ static u64 R[32], F[32], pc;
 static u64 wlo = ~0ULL, whi = 0;          /* write range outside stop window */
 static u64 stop_lo, stop_hi;
 static u64 user_base; static int user_mode;    /* -e: VA - user_base = offset into mem */
+static int pal_mode; static u64 ipr[256]; static u64 tohost = ~0ULL;
 static FILE *tf;                                /* -T trace */
 static u64 t_maddr, t_mval; static int t_msize; /* the instruction's store, for -T */
 
@@ -58,6 +66,11 @@ static u64 pa(u64 a, int n) {
 }
 static u64 ld(u64 a, int n) { a = pa(a, n); u64 v = 0; memcpy(&v, mem + a, n); return v; }
 static void st(u64 a, u64 v, int n) {
+    if (pal_mode && (a & 0x3ffffffffULL) == tohost) {
+        fprintf(stderr, "TOHOST %#" PRIx64 " (+8 %#" PRIx64 ", +16 %#" PRIx64 ")\n", v, ld(a + 8, 8), ld(a + 16, 8));
+        if (tf) fclose(tf);
+        exit(v == 1 ? 0 : 1);
+    }
     t_maddr = a; t_mval = n == 8 ? v : v & ((1ULL << (8 * n)) - 1); t_msize = n;
     a = pa(a, n); memcpy(mem + a, &v, n);
     if (a < stop_lo || a >= stop_hi) { if (a < wlo) wlo = a; if (a + n > whi) whi = a + n; }
@@ -88,6 +101,8 @@ int main(int argc, char **argv) {
         } else if (!strcmp(argv[i], "-d")) {
             char *s = argv[++i]; dumps[nd].a = strtoull(s, &s, 0); dumps[nd].l = strtoull(s + 1, &s, 0); dumps[nd].f = s + 1; nd++;
         } else if (!strcmp(argv[i], "-e")) { elf = argv[++i]; have_pc = 1;
+        } else if (!strcmp(argv[i], "-P")) { pal_mode = 1;
+        } else if (!strcmp(argv[i], "-H")) { tohost = strtoull(argv[++i], 0, 0);
         } else if (!strcmp(argv[i], "-T")) { tf = fopen(argv[++i], "w"); if (!tf) die("open trace");
         } else if (!strcmp(argv[i], "-r")) {
             char *s = argv[++i]; int r = strtol(s, &s, 0); R[r] = strtoull(s + 1, 0, 0);
@@ -134,7 +149,7 @@ int main(int argc, char **argv) {
 
     u64 n;
     for (n = 0; n < maxinsn; n++) {
-        if (pc < stop_lo || pc >= stop_hi) {
+        if (!pal_mode && (pc < stop_lo || pc >= stop_hi)) {
             fprintf(stderr, "STOP: pc left window -> %#" PRIx64 " after %" PRIu64 " insns\n", pc, n);
             break;
         }
@@ -270,11 +285,12 @@ int main(int argc, char **argv) {
             default: die("unimpl 0x18");
             }
             break;
-        case 0x19: res = 0; wr = ra; break;              /* hw_mfpr */
+        case 0x19: res = pal_mode ? ipr[ins & 0xff] : 0; wr = ra; break;   /* hw_mfpr */
         case 0x1a: { u64 t = R[rb] & ~3ULL; res = npc; wr = ra; npc = t; } break;
         case 0x1b: { u64 ad = R[rb] + sext(ins & 0xfff, 12); res = (ins & 0x1000) ? ld(ad, 8) : sext(ld(ad, 4), 32); wr = ra; } break;
-        case 0x1d: break;                                  /* hw_mtpr */
+        case 0x1d: if (pal_mode) ipr[ins & 0xff] = R[rb]; break;            /* hw_mtpr */
         case 0x1e:
+            if (pal_mode) { npc = ipr[0x24] & ~3ULL; break; }
             fprintf(stderr, "STOP: hw_rei at %#" PRIx64 " after %" PRIu64 " insns\n", pc, n);
             goto done;
         case 0x1f: { u64 ad = R[rb] + sext(ins & 0xfff, 12); st(ad, a, (ins & 0x1000) ? 8 : 4); } break;
