@@ -1,5 +1,6 @@
 # Replacement SROM for the AlphaStation 200 core (docs/design/srom.md).
-#   make            build/avanti_srom.{bin,bitstream,hex,lst}
+#   make            build/avanti_srom.{bin,bitstream,hex,lst}, build/avanti_srom.bitstream.hex
+#                   (the bitstream, one byte per line: the core's SROM ROM, rtl/as200_sys.v)
 #   make check      EV4 opcode scan, size, bitstream round trip
 # Options: make DEFS="-DBCACHE=0 -DDROM_CALIBRATE"
 CROSS   = alpha-linux-gnu-
@@ -13,7 +14,7 @@ B       = build
 # 223 blocks x 32 bytes: the 65,536-bit XC1765D
 MAX     = 7136
 
-all: $(B)/avanti_srom.bin $(B)/avanti_srom.bitstream $(B)/avanti_srom.hex $(B)/avanti_srom.lst
+all: $(B)/avanti_srom.bin $(B)/avanti_srom.bitstream $(B)/avanti_srom.hex $(B)/avanti_srom.lst $(B)/avanti_srom.bitstream.hex
 
 $(B)/avanti_srom.s: avanti_srom.S
 	@mkdir -p $(B)
@@ -35,6 +36,9 @@ $(B)/avanti_srom.bitstream: $(B)/avanti_srom.bin
 	$(SROM) encode $< $@
 
 # 64-bit words for $readmemh, 1024 words = the 8 KB I-cache (cpu.md 11.3 srom_data)
+$(B)/avanti_srom.bitstream.hex: $(B)/avanti_srom.bitstream
+	python3 -I -c "import sys; d=open(sys.argv[1],'rb').read(); open(sys.argv[2],'w').write(''.join('%02x\\n' % b for b in d))" $< $@
+
 $(B)/avanti_srom.hex: $(B)/avanti_srom.bin
 	$(SROM) hex $< $@
 

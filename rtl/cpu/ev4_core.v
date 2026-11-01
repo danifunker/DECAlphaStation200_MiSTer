@@ -454,7 +454,7 @@ module ev4_core (
     reg         m2_hitq;                                 // the hit, compared in M1 (timing)
     // M1 compares the tag it just read (M1 re-reads while stalled, so this
     // stays current through fills)
-    wire        m1_hit = !m1_pa[33] && dc_ena && !dsweep && dcv_q && dct_q == m1_pa[33:13];
+    wire        m1_hit = m1_pa[33:32] == 2'd0 && dc_ena && !dsweep && dcv_q && dct_q == m1_pa[33:13];
 
     // ================================================================ M2
     wire        m2_hw    = m2_ir[31:26] == 6'h1B || m2_ir[31:26] == 6'h1F;
@@ -465,7 +465,7 @@ module ev4_core (
     wire        m2_store = m2_cls == C_ST;
     wire        m2_stc   = m2_ir[31:26] == 6'h2E || m2_ir[31:26] == 6'h2F;
     wire        m2_lock  = m2_ir[31:26] == 6'h2A || m2_ir[31:26] == 6'h2B;
-    wire        m2_cachable = !m2_pa[33] && dc_ena && !dsweep;
+    wire        m2_cachable = m2_pa[33:32] == 2'd0 && dc_ena && !dsweep;   // the AS200's memory is all below 4 GB; above is I/O
     wire        m2_hit   = m2_hitq && !dsweep;
     wire  [7:0] m2_be    = m2_quad ? 8'hFF : (m2_pa[2] ? 8'hF0 : 8'h0F);
     wire [63:0] m2_wq    = m2_quad ? m2_sd : {m2_sd[31:0], m2_sd[31:0]};
