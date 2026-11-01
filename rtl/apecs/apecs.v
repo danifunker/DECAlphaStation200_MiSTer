@@ -331,6 +331,10 @@ module apecs (
         end
         // PCI: the claim is decided in the first cycle the request is out
         S_PCI: begin
+`ifdef SIM_PCILOG
+            if (pt_cmd == 2'd0) $display("PCICFG %s dev %0d addr %h be %h wdata %h claim %0d",
+                                         pt_we ? "W" : "R", pt_dev, pt_addr, pt_be, pt_wdata, pt_claim);
+`endif
             if (!pt_claim) begin
                 pt_req <= 1'b0;
                 c_rdata <= {64{1'b1}}; c_ack <= 1'b1; st <= S_IDLE;     // master abort
@@ -338,6 +342,9 @@ module apecs (
         end
         S_PCIW: if (pt_ack) begin
             pt_req <= 1'b0;
+`ifdef SIM_PCILOG
+            if (pt_cmd == 2'd0 && !pt_we) $display("PCICFG   -> %h", pt_rdata);
+`endif
             if (pci_hi) begin
                 // dense quadword: now the upper longword
                 pci_lo <= pt_rdata; pci_hi <= 1'b0;

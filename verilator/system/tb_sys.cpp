@@ -12,6 +12,11 @@
 //                      flashbus, the cycle and instruction counts) to --ckpt FILE
 //     --save-led XX    write the checkpoint when the LEDs first show XX
 //     --restore FILE   start from a checkpoint instead of reset
+//     --disk0 / --disk1 / --cd FILE   SCSI images (IDs 0, 1, 4), read/write in memory
+//                      (the CD is a flat file of 2048-byte sectors served as 512-byte blocks)
+//     --type STR       type STR into COM1 (\n = Return), one character every
+//                      2 ms of machine time, starting --type-at cycles in
+//                      (default: at once); more --type options queue up
 //
 // Prints every LED change (with the TI Table 8-1 meaning of the SROM codes),
 // the SROM serial port's output (the DROM's console: SL_XMIT decoded as a
@@ -63,7 +68,10 @@ int main(int argc, char **argv) {
     uint64_t cycles = 200000000, trace_from = 0;
     int mem = 0, until_led = -1, jumpers = 0x03, save_led = -1;
     uint64_t save_at = 0;
-    std::string ckpt = "../scratch/sys.ckpt", restore;
+    std::string ckpt = "../scratch/sys.ckpt", restore, typed;
+    uint64_t type_at = 0;
+    std::vector<uint8_t> img[3];
+    bool img_on[3] = {false, false, false};
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() { if (i + 1 >= argc) { fprintf(stderr, "%s needs a value\n", a.c_str()); exit(2); } return argv[++i]; };
@@ -79,6 +87,25 @@ int main(int argc, char **argv) {
         else if (a == "--save-led") save_led = strtol(next(), 0, 16);
         else if (a == "--ckpt") ckpt = next();
         else if (a == "--restore") restore = next();
+        else if (a == "--type") {
+            std::string v = next();
+            for (size_t k = 0; k < v.size(); k++) {
+                if (v[k] == '\\' && k + 1 < v.size() && v[k + 1] == 'n') { typed += '\r'; k++; }
+                else typed += v[k];
+            }
+        }
+        else if (a == "--type-at") type_at = strtoull(next(), 0, 0);
+        else if (a == "--disk0" || a == "--disk1" || a == "--cd") {
+            int sl = a == "--disk0" ? 0 : a == "--disk1" ? 1 : 2;
+            const char *fn = next();
+            FILE *f = fopen(fn, "rb");
+            if (!f) { perror(fn); return 2; }
+            fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
+            img[sl].resize(sz);
+            if (fread(img[sl].data(), 1, sz, f) != (size_t)sz) { fprintf(stderr, "short read %s\n", fn); return 2; }
+            fclose(f); img_on[sl] = true;
+            fprintf(stderr, "SCSI slot %d: %s, %ld bytes\n", sl, fn, sz);
+        }
         else if (a[0] == '+') ;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
@@ -95,6 +122,17 @@ int main(int argc, char **argv) {
     t->com1_rxd = 1;
     t->com2_rxd = 1;
     t->srom_rxd = 1;
+    {
+        uint8_t pres = 0;
+        for (int sl = 0; sl < 3; sl++) if (img_on[sl]) {
+            pres |= 1 << sl;
+            uint32_t blocks = (uint32_t)(img[sl].size() / 512);
+            t->img_blocks[sl] = blocks;
+        }
+        t->img_present = pres;
+    }
+    t->sd_ack = 0; t->sd_buff_wr = 0;
+    int sd_slot = -1, sd_dir = 0, sd_pos = 0, sd_len = 0; uint32_t sd_lba_q = 0;
     t->ps2_key = 0; t->ps2_mouse = 0; t->year_ovr_en = 0; t->year_ovr = 0;
     {   // the TOY's time from the host clock, in hps_io's RTC layout (BCD:
         // sec, min, hour, day, month, year, weekday; bit 64 toggles on update)
@@ -158,6 +196,42 @@ int main(int argc, char **argv) {
         }
         tick();
         cyc++;
+        // the hps_io block devices (as in verilator/tb/tb_ncr810.cpp): one byte a cycle
+        t->sd_buff_wr = 0;
+        if (sd_slot < 0) {
+            for (int sl = 0; sl < 3; sl++) if ((t->sd_rd | t->sd_wr) & (1 << sl)) {
+                sd_slot = sl; sd_dir = (t->sd_wr >> sl) & 1; sd_pos = -1;
+                sd_len = ((int)((t->sd_blk_cnt >> (6 * sl)) & 63) + 1) * 512;
+                sd_lba_q = t->sd_lba[sl];
+                t->sd_ack = 1 << sl;
+                break;
+            }
+        } else {
+            size_t base = (size_t)sd_lba_q * 512;
+            std::vector<uint8_t> &im = img[sd_slot];
+            bool toc = sd_lba_q >= 0xC0000000u;          // the CD's track table: none (zeros)
+            if (sd_dir == 0) {
+                sd_pos++;
+                if (sd_pos < sd_len) {
+                    t->sd_buff_addr = sd_pos; t->sd_buff_wr = 1;
+                    t->sd_buff_dout = (!toc && base + sd_pos < im.size()) ? im[base + sd_pos] : 0;
+                } else { t->sd_ack = 0; sd_slot = -1; }
+            } else {
+                if (sd_pos >= 0 && !toc && base + sd_pos < im.size()) im[base + sd_pos] = t->sd_buff_din;
+                sd_pos++;
+                if (sd_pos < sd_len) t->sd_buff_addr = sd_pos;
+                else { t->sd_ack = 0; sd_slot = -1; }
+            }
+        }
+        // COM1 typing
+        t->com1_kbd_stb = 0;
+        {
+            static size_t tpos = 0; static uint64_t tnext = 0;
+            if (tpos < typed.size() && cyc >= type_at && cyc >= tnext) {
+                t->com1_kbd_byte = (uint8_t)typed[tpos++]; t->com1_kbd_stb = 1;
+                tnext = cyc + 200000;
+            }
+        }
         if (save_at && cyc == save_at) save();
         if (t->leds != last_led && (int)t->leds == save_led) { save(); save_led = -1; }
         if (t->leds != last_led) {

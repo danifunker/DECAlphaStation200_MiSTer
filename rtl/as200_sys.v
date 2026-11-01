@@ -49,6 +49,19 @@ module as200_sys #(
     output wire        com2_txd,
     input  wire        com2_rxd,
 
+    // SCSI images (hps_io block devices: slot 0 disk ID 0, 1 disk ID 1, 2 CD-ROM ID 4)
+    input  wire  [2:0] img_present,
+    input  wire [95:0] img_blocks,      // 512-byte blocks, slot s at [32s+31:32s]
+    output wire [95:0] sd_lba,
+    output wire [17:0] sd_blk_cnt,
+    output wire  [2:0] sd_rd,
+    output wire  [2:0] sd_wr,
+    input  wire  [2:0] sd_ack,
+    input  wire [13:0] sd_buff_addr,
+    input  wire  [7:0] sd_buff_dout,
+    output wire  [7:0] sd_buff_din,
+    input  wire        sd_buff_wr,
+
     // keyboard and mouse (hps_io), the TOY's time (hps_io RTC) and year override
     input  wire [10:0] ps2_key,
     input  wire [24:0] ps2_mouse,
@@ -126,8 +139,20 @@ module as200_sys #(
     // (pci.md 2) claim/ack/rdata of every device ORed; I/O that no device
     // claims is the ISA side's (subtractive)
 
-    // the 53C810 (device 6, IDSEL AD17, PIRQ3); its SCSI bus is not connected
-    // yet (the targets join with the hps_io block devices): selection times out
+    // the 53C810 (device 6, IDSEL AD17, PIRQ3) and the targets on its SCSI bus
+    wire        sb_sel, sb_sel_atn, sb_sel_done, sb_sel_fail, sb_bsy, sb_req, sb_ack, sb_ackhold, sb_atn, sb_rst;
+    wire  [2:0] sb_sel_id, sb_phase;
+    wire  [7:0] sb_tdata, sb_idata;
+    scsi_targets #(.DISK0_ID(3'd0), .DISK1_ID(3'd1), .CD_ID(3'd4)) targets (
+        .clk(clk), .rst(rst),
+        .sel(sb_sel), .sel_id(sb_sel_id), .sel_atn(sb_sel_atn), .sel_done(sb_sel_done), .sel_fail(sb_sel_fail),
+        .bsy(sb_bsy), .req(sb_req), .phase(sb_phase), .tdata(sb_tdata),
+        .ack(sb_ack), .idata(sb_idata), .ackhold(sb_ackhold), .atn(sb_atn), .brst(sb_rst),
+        .img_present(img_present), .img_blocks(img_blocks),
+        .sd_lba(sd_lba), .sd_blk_cnt(sd_blk_cnt), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
+        .sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din),
+        .sd_buff_wr(sd_buff_wr)
+    );
     // DMA masters: the 53C810 and the SIO's 8237s, fixed priority, the owner
     // kept until its transfer is acknowledged
     wire        dm_req, dm_we, dm_ack;
@@ -161,9 +186,9 @@ module as200_sys #(
         .dm_req(scsi_dm_req), .dm_we(scsi_dm_we), .dm_addr(scsi_dm_addr), .dm_be(scsi_dm_be),
         .dm_wdata(scsi_dm_wdata), .dm_ack(scsi_dm_ack), .dm_rdata(dm_rdata),
         .inta_n(scsi_inta_n),
-        .sb_sel(), .sb_sel_id(), .sb_sel_atn(), .sb_sel_done(1'b0), .sb_sel_fail(1'b1),
-        .sb_bsy(1'b0), .sb_req(1'b0), .sb_phase(3'd0), .sb_tdata(8'd0),
-        .sb_ack(), .sb_idata(), .sb_ackhold(), .sb_atn(), .sb_rst()
+        .sb_sel(sb_sel), .sb_sel_id(sb_sel_id), .sb_sel_atn(sb_sel_atn), .sb_sel_done(sb_sel_done),
+        .sb_sel_fail(sb_sel_fail), .sb_bsy(sb_bsy), .sb_req(sb_req), .sb_phase(sb_phase), .sb_tdata(sb_tdata),
+        .sb_ack(sb_ack), .sb_idata(sb_idata), .sb_ackhold(sb_ackhold), .sb_atn(sb_atn), .sb_rst(sb_rst)
     );
 
     // the 82378 SIO (device 7) and everything on ISA: I/O no other device
