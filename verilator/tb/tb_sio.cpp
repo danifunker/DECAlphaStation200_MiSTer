@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
     outb(0x4D1, 0x08);
     CHECK(inb(0x4D1) == 0x08, "ELCR %02x", inb(0x4D1));
     outb(0xA1, 0xF7);
-    t->pirq_n = 0x7; wait(4);
+    t->pirq_n = 0x7; wait(8);                           // slave, then master: 7 clocks to intr
     CHECK(t->intr, "no intr for PIRQ3 -> IRQ11");
     outb(0xA0, 0x0A); CHECK(inb(0xA0) == 0x08, "slave IRR %02x", inb(0xA0));
     CHECK(iack() == 0x0B, "vector for IRQ11");

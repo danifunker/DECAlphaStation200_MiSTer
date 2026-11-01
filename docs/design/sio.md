@@ -26,7 +26,7 @@ Parameters: `CLK_HZ` (100 MHz), `RTC_FAST` (benches only), `DEVNUM` (7), `REVID`
 |---|---|---|
 | PCI target (pci.md 2) | `pt_req pt_cmd[1:0] pt_dev[4:0] pt_addr[31:0] pt_be[3:0] pt_we pt_wdata[31:0]` in; `pt_claim` (combinational), `pt_ack`, `pt_rdata` out | plus **`pt_sub`** in: an I/O cycle that no other device claims. `as200_sys.v` drives it as `pt_req && pt_cmd == 1 && !other_claim`, with `other_claim` excluding the SIO |
 | PCI master (pci.md 3) | `dm_req dm_we dm_addr dm_be dm_wdata` out, `dm_ack dm_rdata` in | the ISA DMA |
-| Interrupts | `pirq_n[3:0]`, `serr`, `iochk` in; `intr` (CPU IRQ2), `nmi` (IRQ3), `toy_irq` (IRQ4), `kbrst` (OR it with HALT for IRQ5), `spk` out | `serr`/`iochk` are active high |
+| Interrupts | `pirq_n[3:0]`, `serr`, `iochk` in; `intr` (CPU IRQ2), `nmi` (IRQ3), `toy_irq` (IRQ4), `kbrst` (OR it with HALT for IRQ5), `spk` out | `serr`/`iochk` are active high. The four CPU lines come straight from flip-flops (one clock of latency) |
 | Other ISA devices | `xio_addr xio_rd xio_wr xio_wdata` out, `xio_claim` (combinational from `xio_addr`) and `xio_rdata` in, `xio_irq[15:0]` in, DMA: `xio_dreq[7:0]` in, `xio_dack xio_dack_ch xio_dack_data xio_dma_ch xio_tc` out, `xio_dev_data` in | for the sound card, a real FDC, and so on. Same strobe rules as the internal devices |
 | COM1, COM2 | `comN_txd/rxd/rts_n/dtr_n/cts_n/dsr_n/ri_n/dcd_n`; COM1 also has `com1_tx_stb/tx_byte` (vterm) and `com1_rx_inj_stb/byte` (keyboard into the console) | ns16550's own ports |
 | Keyboard, mouse | `ps2_key[10:0]`, `ps2_mouse[24:0]` | hps_io format |
@@ -105,7 +105,14 @@ disabled).
 
 - **8259** (`isa_pic.v`): everything the RS/6000 model has: ICW1-4 (AEOI, single, LTIM), OCW1-3,
   rotation, special mask, poll, edge/level per line through the ELCR (IRQ0-2, 8 and 13 edge only),
-  and the acknowledge as a single operation.
+  and the acknowledge as a single operation. **Pipelined for 100 MHz** (the full fit's worst paths
+  ran from IRR/IMR/ISR through the priority logic): each cycle, stage 1 registers the highest
+  unmasked request and the highest in service (and the non-specific EOI's line). Stage 2 registers
+  the request to raise INT for, and that register alone drives INT, the IACK vector, the poll and
+  the acknowledge's IRR/ISR updates. A request reaches a chip's INT 3 clocks after its line rises.
+  Through the slave and the master that is 6 clocks, plus 1 for the SIO's `intr` flop. For 2 clocks
+  after any write, acknowledge or poll, the stale resolution is masked: INT is low, and an
+  acknowledge gets the spurious vector.
 - **8254** (`isa_pit.v`): 1.193182 MHz by phase accumulation, all six modes, latch and read-back,
   counter 2's gate and speaker on port 61h. Mode 3 counts by two down **through 0** before it
   reloads, so the MSB-only polling of DROM's calibration sees 0 for one tick.

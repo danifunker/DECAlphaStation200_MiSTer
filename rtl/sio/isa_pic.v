@@ -19,7 +19,9 @@
 // Bus (pci.md 5): io_rd/io_wr are one-cycle strobes already qualified by
 // the SIO's decode of this device's ports; io_dout is combinational from the
 // state, the side effects of a read (poll) happen on the io_rd clock.
-// iack is a strobe too, iack_vec the vector combinationally.
+// iack is a strobe too, iack_vec the vector combinationally (from registers).
+// The priority resolution is pipelined (isa_pic_chip): INT follows a request by
+// three clocks, and the CPU-facing intr is registered once more in the SIO.
 module isa_pic (
     input  wire        clk,
     input  wire        rst,
@@ -108,22 +110,38 @@ module isa_pic_chip (
     reg [1:0] step;                   // 0 ready; 1 ICW2 next; 2 ICW3 next; 3 ICW4 next
     reg [2:0] lowest;
 
-    // the request to raise INT for: the highest unmasked request above the highest in
-    // service (special mask mode: any unmasked request not itself in service)
-    wire [3:0] hr = prio(irr & ~imr, lowest);
-    wire [3:0] hs = prio(smm ? (isr & ~imr) : isr, lowest);
-    wire [2:0] dr = hr[2:0] - lowest - 3'd1;
-    wire [2:0] ds = hs[2:0] - lowest - 3'd1;
-    wire [3:0] pend = hr[3] ? 4'h8 :
-                      smm ? (isr[hr[2:0]] ? 4'h8 : hr) :
-                      (!hs[3] && dr >= ds) ? 4'h8 : hr;
+    // The priority resolution is pipelined (timing at 100 MHz): stage 1 registers the
+    // highest unmasked request (hr_q) and the highest in service (hs_q), stage 2 registers
+    // the request to raise INT for (pend_q), which drives INT, the acknowledge, the poll
+    // and the vector. A request reaches INT three clocks after its line rises. After any
+    // write, acknowledge or poll the pipeline holds stale values for two clocks: INT is
+    // held low and an acknowledge in that window gets the spurious vector (as an 8259
+    // whose request went away), so nothing acts on a stale resolution.
+    reg  [3:0] hr_q, hs_q, eoi_q, pend_q;
+    reg  [1:0] stale;
+    wire [2:0] dr = hr_q[2:0] - lowest - 3'd1;
+    wire [2:0] ds = hs_q[2:0] - lowest - 3'd1;
+    wire [3:0] pend_d = hr_q[3] ? 4'h8 :
+                        smm ? (isr[hr_q[2:0]] ? 4'h8 : hr_q) :
+                        (!hs_q[3] && dr >= ds) ? 4'h8 : hr_q;
+    wire [3:0] pend = stale != 2'd0 ? 4'h8 : pend_q;
     assign pend_o = pend;
     assign int_o  = !pend[3];
     wire [2:0] ack_n = pend[3] ? 3'd7 : pend[2:0];
     assign vec    = {vbase, ack_n};
-    wire [3:0] eoi_n = prio(isr, lowest);
+    wire [3:0] eoi_n = eoi_q;                          // the highest in service, registered
     wire [7:0] lvl   = elcr | {8{ltim}};
     assign elcr_q = elcr;
+
+    always @(posedge clk) begin
+        hr_q   <= prio(irr & ~imr, lowest);
+        hs_q   <= prio(smm ? (isr & ~imr) : isr, lowest);
+        eoi_q  <= prio(isr, lowest);
+        pend_q <= pend_d;
+        if (wr || elcr_wr || ack || (rd && poll)) stale <= 2'd2;
+        else if (stale != 2'd0) stale <= stale - 2'd1;
+        if (rst) begin hr_q <= 4'h8; hs_q <= 4'h8; eoi_q <= 4'h8; pend_q <= 4'h8; stale <= 2'd2; end
+    end
 
     wire icw1  = wr && !a0 && din[4];
     wire ocw3  = wr && !a0 && !din[4] && din[3];

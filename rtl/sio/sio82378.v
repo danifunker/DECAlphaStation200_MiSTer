@@ -64,10 +64,10 @@ module sio82378 #(
     input  wire  [3:0] pirq_n,         // PCI PIRQ0-3, active low
     input  wire        serr,           // PCI SERR# (asserted high here)
     input  wire        iochk,          // ISA IOCHK# (asserted high here)
-    output wire        intr,           // CPU IRQ2
-    output wire        nmi,            // CPU IRQ3
-    output wire        toy_irq,        // CPU IRQ4
-    output wire        kbrst,          // CPU IRQ5 (with HALT)
+    output reg         intr,           // CPU IRQ2 (all four from flip-flops)
+    output reg         nmi,            // CPU IRQ3
+    output reg         toy_irq,        // CPU IRQ4
+    output reg         kbrst,          // CPU IRQ5 (with HALT)
     output wire        spk,            // the speaker (8254 counter 2 and port 61)
 
     // ISA devices outside this module
@@ -325,7 +325,15 @@ module sio82378 #(
         iochk_st <= (iochk_st | iochk) & ~p61[3];
         if (rst) begin nmi_dis <= 1'b1; serr_st <= 1'b0; iochk_st <= 1'b0; p92 <= 8'h00; end
     end
-    assign nmi = !nmi_dis && (serr_st || iochk_st);
+    wire pic_intr, toy_int, kbc_rst;
+    // the CPU's interrupt lines come straight from flip-flops (timing: nothing of the
+    // 8259's, the TOY's or the 8242's logic reaches the CPU in the same cycle)
+    always @(posedge clk) begin
+        intr    <= pic_intr && !rst;
+        nmi     <= !nmi_dis && (serr_st || iochk_st) && !rst;
+        toy_irq <= toy_int && !rst;
+        kbrst   <= kbc_rst && !rst;
+    end
 
     // ---------------------------------------------------------------- interrupts
     wire irq0, irq1, irq12, irq_fdc, irq_lpt, sg_irq, com1_irq, com2_irq;
@@ -348,7 +356,7 @@ module sio82378 #(
         .clk(clk), .rst(rst),
         .io_addr(a), .io_rd(io_rd && s_pic), .io_wr(io_wr && s_pic), .io_din(io_din), .io_dout(q_pic),
         .iack(iack), .iack_vec(iack_vec),
-        .irq(isa_irq), .intr(intr)
+        .irq(isa_irq), .intr(pic_intr)
     );
 
     isa_pit #(.CLK_HZ(CLK_HZ)) pit (
@@ -370,14 +378,14 @@ module sio82378 #(
     isa_kbc #(.CLK_HZ(CLK_HZ)) kbc (
         .clk(clk), .rst(rst),
         .io_addr(a), .io_rd(io_rd && s_kbc), .io_wr(io_wr && s_kbc), .io_din(io_din), .io_dout(q_kbc),
-        .irq1(irq1), .irq12(irq12), .kbrst(kbrst),
+        .irq1(irq1), .irq12(irq12), .kbrst(kbc_rst),
         .ps2_key(ps2_key), .ps2_mouse(ps2_mouse)
     );
 
     isa_rtc #(.CLK_HZ(CLK_HZ), .FAST(RTC_FAST)) toy (
         .clk(clk), .rst(rst),
         .io_addr(a), .io_rd(io_rd && s_rtc), .io_wr(io_wr && s_rtc), .io_din(io_din), .io_dout(q_rtc),
-        .irq(toy_irq),
+        .irq(toy_int),
         .rtc(rtc), .year_ovr_en(year_ovr_en), .year_ovr(year_ovr)
     );
 
