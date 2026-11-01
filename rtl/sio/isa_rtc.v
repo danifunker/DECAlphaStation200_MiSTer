@@ -40,7 +40,9 @@ module isa_rtc #(
 
     input  wire [64:0] rtc,           // hps_io
     input  wire        year_ovr_en,
-    input  wire  [6:0] year_ovr       // binary 0-99
+    input  wire  [6:0] year_ovr,      // binary 0-99
+    input  wire        console_arc    // CMOS 3Fh at reset: 1 = ARC, 0 = SRM (the DROM's flash loader
+                                      // reads it; the CMOS is lost on every core load, so the OSD sets it)
 );
     // ---------------------------------------------------------------- 32,768 Hz
     localparam [63:0] INC64 = (64'd32768 << 32) / CLK_HZ;
@@ -181,7 +183,8 @@ module isa_rtc #(
     wire [6:0] b_sec = from_bcd(rtc[7:0]),   b_min = from_bcd(rtc[15:8]),  b_hour = from_bcd(rtc[23:16]);
     wire [6:0] b_date = from_bcd(rtc[31:24]), b_mon = from_bcd(rtc[39:32]), b_year = from_bcd(rtc[47:40]);
     always @(posedge clk) begin
-        if (data_w && index >= 7'h0E) cram[index] <= io_din;
+        if (rst) cram[7'h3F] <= {7'd0, console_arc};
+        else if (data_w && index >= 7'h0E) cram[index] <= io_din;
     end
 
     always @(posedge clk) begin

@@ -53,6 +53,7 @@ assign BUTTONS = 0;
 //   12       J2 floppy boot
 //   13       J6 flash write      (0 enabled)
 //   15:14    TOY year            (0 from the MiSTer RTC, 1 1999)
+//   16       Console             (0 SRM, 1 ARC: the TOY CMOS 3Fh at reset)
 //   20       Halt button         (T: an action)
 // Settings take effect at reset (cfg below); "Changes pending" shows while
 // the OSD differs from what is running.
@@ -81,6 +82,7 @@ localparam CONF_STR = {
 	"P1-,AlphaStation 200 4/100;",
 	"P1-,DECchip 21064 (EV4);",
 	"P1-;",
+	"P1O[16],Console,SRM,ARC;",
 	"P1T[20],Halt button;",
 
 	"P2O[4:3],Display,Graphics,Serial console;",
@@ -242,7 +244,7 @@ wire m_reset = rst_cnt != 0;
 reg [127:0] cfg;
 always @(posedge clk_sys) if (reset_req) cfg <= status;
 // Input settings (10) and the Halt button (20) stay out
-assign cfg_pending = {status[9:1], status[15:11]} != {cfg[9:1], cfg[15:11]};
+assign cfg_pending = {status[9:1], status[16:11]} != {cfg[9:1], cfg[16:11]};
 
 // a saved 128MB with a smaller module falls back to 64MB
 wire [1:0] cfg_mem = (cfg[2:1] == 2'd2 && !sdram_128) ? 2'd0 : cfg[2:1];
@@ -308,6 +310,7 @@ as200_sys machine
 	.rtc(rtc),
 	.year_ovr_en(cfg[15:14] == 2'd1),      // OSD TOY year: 1999
 	.year_ovr(7'd99),
+	.console_arc(cfg[16]),
 	.speaker(),
 
 	.dbg_retire(), .dbg_pc(), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),

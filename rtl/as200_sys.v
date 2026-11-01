@@ -75,6 +75,7 @@ module as200_sys #(
     input  wire [64:0] rtc,
     input  wire        year_ovr_en,
     input  wire  [6:0] year_ovr,
+    input  wire        console_arc,     // OSD: boot the ARC console (TOY CMOS 3Fh = 1)
     output wire        speaker,
 
     // retire trace (simulation)
@@ -225,7 +226,7 @@ module as200_sys #(
         .com2_txd(com2_txd), .com2_rxd(com2_rxd), .com2_rts_n(), .com2_dtr_n(),
         .com2_cts_n(1'b0), .com2_dsr_n(1'b0), .com2_ri_n(1'b1), .com2_dcd_n(1'b0),
         .ps2_key(ps2_key), .ps2_mouse(ps2_mouse), .rtc(rtc),
-        .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .lpt_data()
+        .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_arc(console_arc), .lpt_data()
     );
 
     assign pt_claim = scsi_claim | sio_claim;

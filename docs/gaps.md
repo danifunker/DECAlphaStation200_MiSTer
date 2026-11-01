@@ -32,7 +32,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | The original SROM (XC1765D at E23) | open | P4 | Not dumped anywhere; our replacement runs. Drop-in as a bitstream |
 | SROM J1 mini-console, serial progress output, beep codes, flash fallback | open | P4 | srom.md S7 |
-| Console choice SRM/ARC (TOY CMOS byte 3Fh) lost on each core load | open | P2 | Needs CMOS save (below) or an OSD option that presets 3Fh |
+| Console choice SRM/ARC (TOY CMOS byte 3Fh) | **done** 2026-11-01 | P2 | OSD P1 "Console: SRM/ARC" presets 3Fh at reset; the rest of the CMOS is still volatile |
 | ARC 4.59 as a flash option | open | P4 | Update image only; chip check bytes unknown |
 
 ## 21071 core logic (`rtl/apecs/apecs.v`, `docs/design/pci.md`)
@@ -59,7 +59,8 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
-| CMOS/NVRAM persistence (TOY CMOS and the flashbus NVRAM) | open | P2 | Save to the SD card (like `IBMRS6K7248_nvsave`); NVRAM slot SC4 is reserved in the OSD |
+| Flashbus NVRAM persistence (SRM env vars, ISA table) | partial | P2 | `rtl/mister/nvsave.v` on OSD slot SC4 (8 KB file): load on mount, save 2 s after a change (2026-11-01); board test pending |
+| TOY CMOS persistence (beyond 3Fh) | open | P3 | |
 | Floppy controller (82077AA in the PC87332), drive A on an image | stub | P3 | Firmware updates, DROM floppy boot (J2) |
 | TOY year base for SRM vs ARC/NT | open | P3 | `year_ovr` gives OSD control meanwhile |
 | Parallel port EPP/ECP, interrupt | open | P4 | |
