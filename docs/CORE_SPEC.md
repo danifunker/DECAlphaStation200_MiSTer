@@ -13,10 +13,10 @@ This file is the authoritative feature set for the core. Change it deliberately 
 | Core logic | 21071-AA: 21071-CA cache/memory controller, 2× 21071-BA data path, 21071-DA PCI bridge (CSRs at `1.8000.0000` / `1.A000.0000`) | Includes the PCI scatter/gather TLB and sparse/dense spaces |
 | Bcache | Architecturally 512 KB, direct-mapped, 32-byte lines | Invisible to software except for diagnostics. The implementation may be smaller or omitted, as long as the 21071-CA and BIU_CTL behave consistently |
 | **Main memory** | **OSD option: 32 MB / 64 MB / 128 MB** (default 64 MB) | Bank layout below. 128 MB is the maximum this core supports (the real machine reaches 384 MB) |
-| Flash | 1 MB flashbus image, **default = the real board dump** (SRM v6.4-1 at 0x00000, ARC 4.49 at 0x80000, flash 3 blank) | `scratch/roms/flash/as200_flash_1MB.bin`. An option for SRM v7.0-9 + ARC 4.58 waits on the per-chip check-byte question (open items) |
-| DROM | `scratch/roms/flash/drom_v1.2.bin` (64 KB) | |
+| Flash | 1 MB flashbus image, **default = SRM v7.0-9 + ARC 4.58 as real programmed chips** (archive.org `alpha-station-200-roms`, E13/E19/E33/E46, 2026-11-01): they equal the update-package images byte for byte plus DEC's trailing check bytes, so the check-byte question no longer blocks them | The dumped board's SRM v6.4-1 + ARC 4.49 (`scratch/roms/flash/as200_flash_1MB.bin`) stays as an alternative ROM |
+| DROM | **V1.7** (`AVANTI_E47_DROM1.7.bin`, 64 KB) | Its speed table knows 100 and 133 MHz (V1.2 stops at 166), and anything below the 133 MHz window is a 4/100: 10000 ps |
 | NVRAM | 8 KB on the flashbus, persisted to SD | Holds console environment variables |
-| SROM | **The original SROM image if one can be found** (user, 2026-11-01: bake it into a file or the core); none is dumped publicly (searched 2026-11-01). Until then, **replacement init code** | Must do what the SROM does: CPU/BIU init, memory sizing, writing the 21071-CA bank registers, then jump to the DROM |
+| SROM | **The original SROM**: E23, a **Xilinx XC1765D** 64 Kbit serial PROM (PLCC-20; seen on the archive.org board photo). Not dumped anywhere public (searched 2026-11-01). It can be read with a microcontroller clocking CLK with CE active, or a programmer with XC17xx support; the core will load such a bitstream into the I-cache the way the 21064 does. Until one exists: **replacement init code** in the same bitstream format | User, 2026-11-01: bake the original into a file or the core's ROM |
 | PCI-ISA bridge | Intel 82378IB SIO (8259 ×2, 8237 ×2, 8254, NMI, PIRQ routing) | IDSEL AD18 |
 | Super I/O | National PC87332: COM1, COM2, parallel, FDC | |
 | Keyboard/mouse | 8242-compatible controller, PS/2 from MiSTer | |
@@ -56,5 +56,5 @@ TGA2/PowerStorm, S3/VGA cards, more PCI or ISA cards, a second PCI slot device, 
 
 ## Open items
 1. **SROM replacement:** write init code equivalent to the SROM. Reference: 21064 HRM SROM interface chapter, AS200 manual §8, the EB64+ guide (`scratch/refs/ec-n0640-72`), and what the DROM expects in low memory (early on it reads physical `0x70` and stores the measured cycle count at `0x110`).
-2. **Flash check bytes:** E19 and E46 each end in a single non-FF byte (0x81, 0x52) that is not a simple 8-bit sum or XOR. The update utility (`scratch/disasm/apu_v7.0_update_utility.dis.txt`) writes flash and should show whether a checksum is needed before using the v7.0 images.
+2. **Flash check bytes (resolved 2026-11-01 by the real v7.0 chip images):** E19 and E46 each end in a single non-FF byte (0x81, 0x52) that is not a simple 8-bit sum or XOR. The update utility (`scratch/disasm/apu_v7.0_update_utility.dis.txt`) writes flash and should show whether a checksum is needed before using the v7.0 images.
 3. Confirm the ZLXp-E1 RAMDAC and clock generator against the card manual (EK-T2424-OG) and Linux `tgafb`.

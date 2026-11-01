@@ -28,7 +28,7 @@ Facts that are unverified or come from secondary sources are marked **(unverifie
 | Function | Part | Bus | Notes |
 |---|---|---|---|
 | CPU | DECchip 21064 / 21064A | — | 64-bit Alpha, dual-issue, pipelined IEEE + VAX FP, 34-bit physical address, 6 IRQ inputs, PALcode |
-| Serial ROM (SROM) | 64 Kbit serial PROM (part not identified) | CPU SROM port | Loaded into the I-cache at reset: 65,536 bits, 7,136 bytes of code |
+| Serial ROM (SROM) | **Xilinx XC1765D** (E23, PLCC-20 socket, "SERIAL ROM" silkscreen; from the board photo in archive.org `alpha-station-200-roms`) | CPU SROM port | Loaded into the I-cache at reset: 65,536 bits, 7,136 bytes of code |
 | Core logic | **DECchip 21071-AA** chipset (also called APECS): | sysBus | |
 | ↳ Cache/memory controller | 1x **21071-CA** ("COMANCHE") | | Bcache control, DRAM banks 0–2, bank 8 = flashbus |
 | ↳ Data path | 2x **21071-BA** | | 64-bit memory path, read/merge/I/O/DMA buffers |
