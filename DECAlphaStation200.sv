@@ -1,9 +1,11 @@
 //============================================================================
 //
 //  DEC AlphaStation 200 4/100 for MiSTer: the emu top (from Template_MiSTer).
-//  The machine itself is rtl/as200.v; this file is the MiSTer side: hps_io
-//  and the OSD (docs/osd-standard.md layout), clocks, the settings latch,
-//  video and the UART.
+//  The machine is rtl/as200_sys.v (the 21064, the 21071, COM1); this file is
+//  the MiSTer side: hps_io and the OSD (docs/osd-standard.md layout), the
+//  100 MHz clock, the settings latch, the SDRAM (main memory), DDR3 and BRAM
+//  for the flashbus ROMs (rtl/mister/fbrom.v: boot0.rom = flash, boot1.rom =
+//  DROM), the on-screen terminal and the UART.
 //
 //  This program is free software; you can redistribute it and/or modify it
 //  under the terms of the GNU General Public License as published by the Free
@@ -21,8 +23,6 @@ assign ADC_BUS  = 'Z;
 assign USER_OUT = '1;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 assign {UART_RTS, UART_DTR} = 0;
-assign {SDRAM_DQ, SDRAM_A, SDRAM_BA, SDRAM_CLK, SDRAM_CKE, SDRAM_DQML, SDRAM_DQMH, SDRAM_nWE, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nCS} = 'Z;
-assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = '0;
 
 assign VGA_SL = 0;
 assign VGA_F1 = 0;
@@ -116,6 +116,11 @@ wire   [7:0] sd_buff_din[5];
 assign sd_lba      = '{default: 32'd0};
 assign sd_buff_din = '{default: 8'd0};
 
+wire         ioctl_download, ioctl_wr, ioctl_wait;
+wire  [15:0] ioctl_index;
+wire  [26:0] ioctl_addr;
+wire   [7:0] ioctl_dout;
+
 hps_io #(.CONF_STR(CONF_STR), .VDNUM(5)) hps_io
 (
 	.clk_sys(clk_sys),
@@ -135,19 +140,26 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(5)) hps_io
 	.sd_wr(sd_wr),
 	.sd_buff_din(sd_buff_din),
 
+	.ioctl_download(ioctl_download),
+	.ioctl_index(ioctl_index),
+	.ioctl_wr(ioctl_wr),
+	.ioctl_addr(ioctl_addr),
+	.ioctl_dout(ioctl_dout),
+	.ioctl_wait(ioctl_wait),
+
 	.ps2_key(ps2_key)
 );
 
 //////////////////////////////////////////////////////////////////
-// Clocks: 50 MHz system, 50 MHz shifted (the SDRAM's, later), 65 MHz pixels
+// Clocks: 100 MHz system (the CPU, the machine, the SDRAM, hps_io), 65 MHz pixels
 
-wire clk_sys, clk_sdram, clk_pix, pll_locked;
+wire clk_sys, clk_unused, clk_pix, pll_locked;
 pll pll
 (
 	.refclk(CLK_50M),
 	.rst(0),
 	.outclk_0(clk_sys),
-	.outclk_1(clk_sdram),
+	.outclk_1(clk_unused),
 	.outclk_2(clk_pix),
 	.locked(pll_locked)
 );
@@ -156,9 +168,15 @@ pll pll
 // Reset and the settings latch
 
 wire reset_req = RESET | status[0] | buttons[1] | ~pll_locked;
+// the machine also waits for the SDRAM and both ROMs (a download resets it)
+reg  [1:0] roms_seen;
+always @(posedge clk_sys) if (ioctl_download && ioctl_wr) begin
+	if (ioctl_index[7:0] == 8'h00) roms_seen[0] <= 1'b1;
+	if (ioctl_index[7:0] == 8'h40) roms_seen[1] <= 1'b1;
+end
 reg  [3:0] rst_cnt = 4'hF;
 always @(posedge clk_sys) begin
-	if (reset_req) rst_cnt <= 4'hF;
+	if (reset_req || ioctl_download || !sdram_ready || roms_seen != 2'b11) rst_cnt <= 4'hF;
 	else if (rst_cnt != 0) rst_cnt <= rst_cnt - 1'd1;
 end
 wire m_reset = rst_cnt != 0;
@@ -179,29 +197,83 @@ wire       com1_tx_stb;
 wire [7:0] com1_tx_byte;
 wire       kbd_stb;
 wire [7:0] kbd_ascii;
-wire       serial_console = cfg[4:3] == 2'd1;
+wire [7:0] leds;
+wire       srom_txd;
 
-as200 machine
+wire        d_req, d_we, d_ack;
+wire [26:3] d_addr;
+wire  [7:0] d_be;
+wire [63:0] d_wdata, d_rdata;
+wire        f_req, f_we, f_ack;
+wire [20:0] f_addr;
+wire  [7:0] f_wdata, f_rdata;
+
+as200_sys machine
 (
 	.clk(clk_sys),
 	.rst(m_reset),
 	.cfg_mem(cfg_mem),
+	.jumpers({6'b111111, ~cfg[12], ~cfg[11]}),   // bit 0 J1, bit 1 J2: 1 = normal (OSD On = jumper set)
+	.leds(leds),
+
+	.d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
+	.d_ack(d_ack), .d_rdata(d_rdata),
+	.f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata),
+	.f_ack(f_ack), .f_rdata(f_rdata),
+
+	.srom_txd(srom_txd),
+	.srom_rxd(1'b1),
 
 	.com1_txd(UART_TXD),
 	.com1_rxd(UART_RXD),
-	.com1_rts_n(),
-	.com1_dtr_n(),
-	.com1_cts_n(1'b0),
-	.com1_dsr_n(1'b0),
-	.com1_dcd_n(1'b0),
 	.com1_tx_stb(com1_tx_stb),
 	.com1_tx_byte(com1_tx_byte),
 	.com1_kbd_stb(kbd_stb),
-	.com1_kbd_byte(kbd_ascii)
+	.com1_kbd_byte(kbd_ascii),
+
+	.dbg_retire(), .dbg_pc(), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
+	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize()
 );
 
-// The MiSTer keyboard types into COM1. Until the 8242 and a graphics console
-// exist this holds for both Display settings; later only for Serial console.
+// main memory: the SDRAM module
+wire        sdram_ready;
+wire [15:0] sd_dq_out;
+wire        sd_dq_oe;
+assign SDRAM_DQ = sd_dq_oe ? sd_dq_out : 16'hZZZZ;
+
+sdram_ctl #(.CLK_MHZ(100)) sdram
+(
+	.clk(clk_sys), .init(~pll_locked), .ready(sdram_ready),
+	.req(d_req), .we(d_we), .addr(d_addr), .be(d_be), .wdata(d_wdata), .ack(d_ack), .rdata(d_rdata),
+	.SDRAM_A(SDRAM_A), .SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nRAS(SDRAM_nRAS),
+	.SDRAM_nCAS(SDRAM_nCAS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
+	.SDRAM_CKE(SDRAM_CKE), .dq_out(sd_dq_out), .dq_oe(sd_dq_oe), .dq_in(SDRAM_DQ)
+);
+
+// SDRAM_CLK: the system clock inverted, from a DDR output register (as the
+// user's other cores and Sorgelig's sdram.sv do)
+altddio_out #(
+	.extend_oe_disable("OFF"), .intended_device_family("Cyclone V"), .invert_output("OFF"),
+	.lpm_hint("UNUSED"), .lpm_type("altddio_out"), .oe_reg("UNREGISTERED"), .power_up_high("OFF"), .width(1)
+) sdramclk_ddr (
+	.datain_h(1'b0), .datain_l(1'b1), .outclock(clk_sys), .dataout(SDRAM_CLK),
+	.aclr(1'b0), .aset(1'b0), .oe(1'b1), .outclocken(1'b1), .sclr(1'b0), .sset(1'b0)
+);
+
+// the flashbus ROMs: DROM in BRAM, flash in DDR3
+assign DDRAM_CLK = clk_sys;
+fbrom fbrom
+(
+	.clk(clk_sys), .rst(~pll_locked),
+	.f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata), .f_ack(f_ack), .f_rdata(f_rdata),
+	.dl_wr(ioctl_download && ioctl_wr), .dl_index(ioctl_index[7:0]), .dl_addr(ioctl_addr[24:0]),
+	.dl_data(ioctl_dout), .dl_wait(ioctl_wait),
+	.DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
+	.DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD),
+	.DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE)
+);
+
+// The MiSTer keyboard types into COM1 until the 8242 and a graphics console exist.
 ps2_ascii ps2_ascii
 (
 	.clk(clk_sys),
@@ -209,6 +281,16 @@ ps2_ascii ps2_ascii
 	.ps2_key(ps2_key),
 	.strobe(kbd_stb),
 	.ascii(kbd_ascii)
+);
+
+// the terminal shows the SROM serial port (the DROM's console), COM1 and the LEDs
+wire       con_stb;
+wire [7:0] con_byte;
+con_mux #(.CLK_HZ(100000000)) con_mux
+(
+	.clk(clk_sys), .rst(m_reset),
+	.srom_txd(srom_txd), .com1_stb(com1_tx_stb), .com1_byte(com1_tx_byte), .leds(leds),
+	.out_stb(con_stb), .out_byte(con_byte)
 );
 
 //////////////////////////////////////////////////////////////////
@@ -222,8 +304,8 @@ vterm vterm
 (
 	.clk(clk_sys),
 	.rst(m_reset),
-	.in_stb(com1_tx_stb),
-	.in_byte(com1_tx_byte),
+	.in_stb(con_stb),
+	.in_byte(con_byte),
 
 	.clk_pix(clk_pix),
 	.hs(vt_hs), .vs(vt_vs), .de(vt_de), .hblank(vt_hb), .vblank(vt_vb),
@@ -259,7 +341,7 @@ assign VGA_B  = vt_b;
 
 reg [22:0] act_cnt;
 always @(posedge clk_sys) begin
-	if (com1_tx_stb | kbd_stb) act_cnt <= 23'h7FFFFF;
+	if (con_stb | kbd_stb) act_cnt <= 23'h7FFFFF;
 	else if (act_cnt != 0) act_cnt <= act_cnt - 1'd1;
 end
 assign LED_USER = act_cnt != 0;

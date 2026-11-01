@@ -1,8 +1,16 @@
-# The machine (rtl/as200.v and below)
+# The CPU (rtl/cpu, docs/design/pipeline.md)
+set_global_assignment -name VERILOG_FILE rtl/cpu/ev4_ram.v
+set_global_assignment -name VERILOG_FILE rtl/cpu/ev4_ialu.v
+set_global_assignment -name VERILOG_FILE rtl/cpu/ev4_imul.v
+set_global_assignment -name VERILOG_FILE rtl/cpu/ev4_core.v
+# The machine (rtl/as200_sys.v and below)
+set_global_assignment -name VERILOG_FILE rtl/apecs/apecs.v
 set_global_assignment -name VERILOG_FILE rtl/sio/ns16550.v
-set_global_assignment -name VERILOG_FILE rtl/bringup_stub.v
-set_global_assignment -name VERILOG_FILE rtl/as200.v
+set_global_assignment -name VERILOG_FILE rtl/as200_sys.v
 # MiSTer side
+set_global_assignment -name VERILOG_FILE rtl/mister/sdram_ctl.v
+set_global_assignment -name VERILOG_FILE rtl/mister/fbrom.v
+set_global_assignment -name VERILOG_FILE rtl/mister/con_mux.v
 set_global_assignment -name VERILOG_FILE rtl/mister/vterm.v
 set_global_assignment -name VERILOG_FILE rtl/mister/ps2_ascii.v
 set_global_assignment -name SDC_FILE DECAlphaStation200.sdc
