@@ -117,7 +117,7 @@ t3: obj_pipe/Vev4_core
 SIO_RTL = $(RTL)/sio/ns16550.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v \
 	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/sio82378.v
 SIM_FAST ?= 1
-SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/as200_sys.v
+SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/scsi/cd_audio.v $(JTOPL_RTL) $(AUDIO_RTL) $(RTL)/as200_sys.v
 FLASH   ?= ../scratch/roms/archive_alpha-station-200-roms/flash_v7.0_arc4.58.bin
 DROM    ?= ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E47_DROM1.7.bin
 
@@ -148,7 +148,7 @@ tb_sdram: obj_tb_sdram/Vtb_sdram_top
 # ---------------------------------------------------------------- the 53C810 and its SCSI targets
 # rtl/scsi: PCI header, the DROM's config test, registers through both BARs,
 # SCRIPTS against a disk and a CD-ROM (tb/tb_ncr810.cpp)
-SCSI_RTL = $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v tb/tb_ncr810_top.v
+SCSI_RTL = $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/scsi/cd_audio.v tb/tb_ncr810_top.v
 
 obj_tb_ncr810/Vtb_ncr810_top: $(SCSI_RTL) tb/tb_ncr810.cpp
 	$(TB_V) --Mdir obj_tb_ncr810 --top-module tb_ncr810_top -Wno-BLKSEQ $(NCR_FLAGS) $^

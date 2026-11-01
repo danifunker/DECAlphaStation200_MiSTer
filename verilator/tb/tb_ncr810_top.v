@@ -33,6 +33,10 @@ module tb_ncr810_top (
     input  wire  [7:0] sd_buff_dout,
     output wire  [7:0] sd_buff_din,
     input  wire        sd_buff_wr,
+    input  wire        cd_change,
+    output wire signed [15:0] cd_audio_l,
+    output wire signed [15:0] cd_audio_r,
+    output wire        cd_audio_stb,
     output wire        activity
 );
     wire       sel, sel_atn, sel_done, sel_fail, bsy, req, ack, ackhold, atn, brst;
@@ -51,7 +55,8 @@ module tb_ncr810_top (
         .sb_ack(ack), .sb_idata(idata), .sb_ackhold(ackhold), .sb_atn(atn), .sb_rst(brst)
     );
 
-    scsi_targets tgt (
+    // CLK_HZ: the bench's sample clock runs 44100 / 441000 = 10x faster than real time
+    scsi_targets #(.CLK_HZ(441000)) tgt (
         .clk(clk), .rst(reset),
         .sel(sel), .sel_id(sel_id), .sel_atn(sel_atn), .sel_done(sel_done), .sel_fail(sel_fail),
         .bsy(bsy), .req(req), .phase(phase), .tdata(tdata),
@@ -59,6 +64,7 @@ module tb_ncr810_top (
         .img_present(img_present), .img_blocks(img_blocks),
         .sd_lba(sd_lba), .sd_blk_cnt(sd_blk_cnt), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
         .sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din),
-        .sd_buff_wr(sd_buff_wr), .cd_change(1'b0), .activity(activity)
+        .sd_buff_wr(sd_buff_wr), .cd_change(cd_change),
+        .cd_audio_l(cd_audio_l), .cd_audio_r(cd_audio_r), .cd_audio_stb(cd_audio_stb), .activity(activity)
     );
 endmodule

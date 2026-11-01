@@ -9,7 +9,15 @@
 // access through both BARs, SRM's chip reset and bus reset, then runs SCRIPTS
 // programs against the targets: INQUIRY, TEST UNIT READY, READ CAPACITY,
 // READ(10), WRITE(10), a selection timeout, LOAD/STORE, memory moves, single
-// step, and the CD-ROM's block size through MODE SELECT.
+// step, and the CD-ROM's block size through MODE SELECT. Then the CD-ROM's
+// track table and audio (Main's windows on slot 2, docs/design/cdrom.md: a
+// made-up disc of a data track and two audio tracks in two sessions): the
+// table without Main's window, UNIT ATTENTION after a remount, READ TOC
+// formats 0/1/2 in LBA and M:S:F, PLAY AUDIO MSF / TRACK INDEX with every
+// sample checked on cd_audio_l/r/stb, READ SUB-CHANNEL, PAUSE/RESUME, STOP,
+// MODE SELECT/SENSE page 0E (volume, channel selection), READ CD, NOT READY
+// with no disc; and the disks' new commands (READ/WRITE(12), MODE SENSE
+// pages, DBD, FORMAT UNIT with a defect list, READ DEFECT DATA).
 #include "Vtb_ncr810_top.h"
 #include "verilated.h"
 #include <cstdio>
@@ -23,6 +31,43 @@ static uint64_t cyc;
 static int fails;
 static uint8_t mem[1 << 20];                    // DMA memory: PCI address = index
 static std::vector<uint8_t> img[3];             // the block devices
+
+// ---------------------------------------------------------------- the CD's windows (support/decalpha)
+// the disc: track 1 data at LBA 0 (8 sectors: img[2]), track 2 audio at 8,
+// track 3 audio at 12 (session 2), the lead-out at 16
+static bool win_on = false;                     // Main serves the windows (else zeros: the stock Main)
+static const int AUD_T2 = 8, AUD_T3 = 12, LEADOUT = 16;
+static int16_t smp_l(int f, int k) { return (int16_t)(0x1000 + f * 600 + k); }
+static int16_t smp_r(int f, int k) { return (int16_t)-(0x1000 + f * 600 + k); }
+static void toc_entry(uint8_t *e, int ctl, int trk, int lba) {
+    int a = lba + 150;
+    e[0] = ctl; e[1] = trk; e[2] = a / 4500; e[3] = a / 75 % 60; e[4] = a % 75;
+    e[5] = lba >> 16; e[6] = lba >> 8; e[7] = lba;
+}
+static uint8_t cd_byte(uint32_t lba, int pos) {
+    if (lba >= 0x80000000u && !win_on) return 0;
+    if (lba >= 0xC0000000u) {
+        uint8_t t[1024] = {};
+        t[0] = 1; t[1] = 3; t[2] = 4; t[3] = 1; t[4] = 3; t[5] = 2;
+        toc_entry(t + 8, 0x14, 1, 0); toc_entry(t + 16, 0x10, 2, AUD_T2); toc_entry(t + 24, 0x10, 3, AUD_T3);
+        toc_entry(t + 32, 0x10, 0xAA, LEADOUT);
+        return (lba == 0xC0000000u && pos < 1024) ? t[pos] : (lba == 0xC0000001u ? 0 : t[pos & 1023]);
+    }
+    if (lba >= 0x80000000u) {
+        uint64_t off = (uint64_t)(lba - 0x80000000u) * 512 + pos;
+        int f = off / 2560, fo = off % 2560;
+        if (fo >= 2352 || f < AUD_T2 || f >= LEADOUT) return 0;
+        int k = fo / 4;
+        int16_t v = (fo & 2) ? smp_r(f, k) : smp_l(f, k);
+        return (fo & 1) ? (uint8_t)((uint16_t)v >> 8) : (uint8_t)v;
+    }
+    size_t a = (size_t)lba * 512 + pos;
+    return a < img[2].size() ? img[2][a] : 0;
+}
+// the audio output, sampled at cd_audio_stb
+static bool cap_on = false;
+static std::vector<std::pair<int16_t, int16_t>> cap;
+static int stb_count;
 
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
@@ -65,7 +110,8 @@ static void models() {
             sd_pos++;
             if (sd_pos < sd_len) {
                 t->sd_buff_addr = sd_pos; t->sd_buff_wr = 1;
-                t->sd_buff_dout = base + sd_pos < img[sd_slot].size() ? img[sd_slot][base + sd_pos] : 0xEE;
+                if (sd_slot == 2) t->sd_buff_dout = cd_byte(sd_lba_q, sd_pos);
+                else t->sd_buff_dout = base + sd_pos < img[sd_slot].size() ? img[sd_slot][base + sd_pos] : 0xEE;
             } else { t->sd_ack = 0; sd_slot = -1; }
         } else {
             // the buffer's read port answers the cycle after the address
@@ -81,6 +127,7 @@ static void tick() {
     t->clk = 0; t->eval();
     t->clk = 1; t->eval();
     cyc++;
+    if (t->cd_audio_stb) { stb_count++; if (cap_on) cap.push_back({(int16_t)t->cd_audio_l, (int16_t)t->cd_audio_r}); }
     models();
     t->eval();
 }
@@ -399,6 +446,232 @@ int main(int argc, char **argv) {
     r = run_cmd(4, {0x28, 0, 0, 0, 0, 5, 0, 0, 1, 0}, P_DIN, 512, &sts, &msg);
     CHECK(r == 0x600D && sts == 0 && !memcmp(mem + DATA, &img[2][5 * 512], 512), "CD READ(10) 512");
     printf("CD-ROM dka400: 2048-byte blocks, 512 after MODE SELECT: %s\n", fails ? "see failures" : "ok");
+
+    // ================================================================ the CD's table and audio
+    auto run = [&](int id, std::vector<uint8_t> cdb, int ph, uint32_t len) -> uint8_t {
+        uint8_t st_ = 0xFF, m_ = 0xFF;
+        uint32_t rr = run_cmd(id, cdb, ph, len, &st_, &m_);
+        if (rr != 0x600D) { CHECK(false, "command %02X: dsps %X", cdb[0], rr); return 0xFF; }
+        return st_;
+    };
+    auto sense = [&](int id) -> int {      // REQUEST SENSE: key << 8 | ASC
+        if (run(id, {0x03, 0, 0, 0, 18, 0}, P_DIN, 18) != 0) return -1;
+        return mem[DATA + 2] << 8 | mem[DATA + 12];
+    };
+    auto pulse_change = [&]() { t->cd_change = 1; tick(); t->cd_change = 0; tick(); };
+    auto wait_cyc = [&](int n) { for (int k = 0; k < n; k++) tick(); };
+    // block length back to 2048 (the bus reset would also do it)
+    {
+        uint8_t ms[12] = {0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 8, 0};
+        memcpy(mem + DATA, ms, 12);
+        CHECK(run(4, {0x15, 0x10, 0, 0, 12, 0}, P_DOUT, 12) == 0, "CD MODE SELECT 2048");
+    }
+
+    // ---- no window (a stock Main): the made-up table, one data track on the image (8 sectors)
+    CHECK(run(4, {0x43, 0, 0, 0, 0, 0, 0, 0, 20, 0}, P_DIN, 20) == 0, "READ TOC (no window)");
+    CHECK(mem[DATA + 1] == 18 && mem[DATA + 2] == 1 && mem[DATA + 3] == 1 && mem[DATA + 5] == 0x14 &&
+          mem[DATA + 6] == 1 && mem[DATA + 14] == 0xAA && get32(DATA + 16) == 0x08000000,
+          "made-up TOC %02X %02X %02X / %02X %02X / %02X %08X", mem[DATA + 1], mem[DATA + 2], mem[DATA + 3],
+          mem[DATA + 5], mem[DATA + 6], mem[DATA + 14], get32(DATA + 16));
+    CHECK(run(4, {0x43, 2, 0, 0, 0, 0, 0, 0, 20, 0}, P_DIN, 20) == 0 &&
+          mem[DATA + 17] == 0 && mem[DATA + 18] == 2 && mem[DATA + 19] == 8, "made-up TOC lead-out M:S:F %02X:%02X:%02X",
+          mem[DATA + 17], mem[DATA + 18], mem[DATA + 19]);
+    printf("CD without Main's window: one data track, lead-out 00:02:08: %s\n", fails ? "see failures" : "ok");
+
+    // ---- a remount (Main with the windows): UNIT ATTENTION once, then the new table
+    win_on = true;
+    pulse_change();
+    CHECK(run(4, {0x12, 0, 0, 0, 36, 0}, P_DIN, 36) == 0, "INQUIRY with UNIT ATTENTION pending");
+    CHECK(run(4, {0x00, 0, 0, 0, 0, 0}, P_DIN, 0) == 2, "TUR after a remount: CHECK CONDITION");
+    CHECK(sense(4) == 0x0628, "UNIT ATTENTION sense %04X", sense(4));
+    CHECK(run(4, {0x00, 0, 0, 0, 0, 0}, P_DIN, 0) == 0, "TUR after the attention");
+    pulse_change();
+    CHECK(sense(4) == 0x0628, "REQUEST SENSE reports a pending attention");
+    CHECK(run(4, {0x00, 0, 0, 0, 0, 0}, P_DIN, 0) == 0, "TUR after REQUEST SENSE took the attention");
+
+    // ---- READ TOC format 0, LBA: tracks 1-3 and the lead-out
+    CHECK(run(4, {0x43, 0, 0, 0, 0, 0, 0, 0, 36, 0}, P_DIN, 36) == 0, "READ TOC 0");
+    CHECK(mem[DATA] == 0 && mem[DATA + 1] == 34 && mem[DATA + 2] == 1 && mem[DATA + 3] == 3, "TOC header");
+    {
+        const int trk[4] = {1, 2, 3, 0xAA}, ctl[4] = {0x14, 0x10, 0x10, 0x10}, lb[4] = {0, AUD_T2, AUD_T3, LEADOUT};
+        for (int e = 0; e < 4; e++) {
+            uint8_t *d = mem + DATA + 4 + 8 * e;
+            uint32_t a = (uint32_t)d[4] << 24 | d[5] << 16 | d[6] << 8 | d[7];
+            CHECK(d[1] == ctl[e] && d[2] == trk[e] && a == (uint32_t)lb[e], "TOC entry %d: %02X %02X %u", e, d[1], d[2], a);
+        }
+    }
+    // format 0, M:S:F, from track 2
+    CHECK(run(4, {0x43, 2, 0, 0, 0, 0, 2, 0, 28, 0}, P_DIN, 28) == 0, "READ TOC 0 MSF from track 2");
+    CHECK(mem[DATA + 1] == 26 && mem[DATA + 6] == 2 && mem[DATA + 9] == 0 && mem[DATA + 10] == 2 && mem[DATA + 11] == 8 &&
+          mem[DATA + 14] == 3 && mem[DATA + 19] == 12 && mem[DATA + 22] == 0xAA && mem[DATA + 27] == 16,
+          "TOC MSF %02X %02X %02X:%02X:%02X %02X %02X %02X", mem[DATA + 1], mem[DATA + 6], mem[DATA + 9], mem[DATA + 10],
+          mem[DATA + 11], mem[DATA + 14], mem[DATA + 22], mem[DATA + 27]);
+    CHECK(run(4, {0x43, 0, 0, 0, 0, 0, 4, 0, 12, 0}, P_DIN, 0) == 2 && sense(4) == 0x0524, "READ TOC past the last track");
+    // format 1: the last session's first track (3 at LBA 12), 2 sessions; also through byte 9's SCSI-2 bits
+    for (int form = 0; form < 2; form++) {
+        std::vector<uint8_t> c = {0x43, 0, (uint8_t)(form ? 0 : 1), 0, 0, 0, 0, 0, 12, (uint8_t)(form ? 0x40 : 0)};
+        CHECK(run(4, c, P_DIN, 12) == 0, "READ TOC 1");
+        CHECK(mem[DATA + 1] == 10 && mem[DATA + 2] == 1 && mem[DATA + 3] == 2 && mem[DATA + 5] == 0x10 &&
+              mem[DATA + 6] == 3 && get32(DATA + 8) == 0x0C000000, "TOC session %02X %02X %02X %02X %08X",
+              mem[DATA + 1], mem[DATA + 3], mem[DATA + 5], mem[DATA + 6], get32(DATA + 8));
+    }
+    // format 2: A0 A1 A2 and the three tracks, 11 bytes each
+    CHECK(run(4, {0x43, 2, 2, 0, 0, 0, 0, 0, 70, 0}, P_DIN, 70) == 0, "READ TOC 2");
+    {
+        uint8_t *d = mem + DATA + 4;
+        CHECK(mem[DATA + 1] == 68 && mem[DATA + 2] == 1 && mem[DATA + 3] == 1, "full TOC header %02X", mem[DATA + 1]);
+        CHECK(d[3] == 0xA0 && d[8] == 1 && d[1] == 0x14, "A0 %02X %02X %02X", d[3], d[8], d[1]);
+        CHECK(d[11 + 3] == 0xA1 && d[11 + 8] == 3, "A1 %02X %02X", d[11 + 3], d[11 + 8]);
+        CHECK(d[22 + 3] == 0xA2 && d[22 + 8] == 0 && d[22 + 9] == 2 && d[22 + 10] == 16, "A2 %02X %02X:%02X:%02X",
+              d[22 + 3], d[22 + 8], d[22 + 9], d[22 + 10]);
+        CHECK(d[33 + 0] == 1 && d[33 + 3] == 1 && d[44 + 3] == 2 && d[44 + 10] == 8 && d[55 + 3] == 3 && d[55 + 10] == 12,
+              "full TOC tracks %02X %02X %02X %02X %02X", d[33 + 3], d[44 + 3], d[44 + 10], d[55 + 3], d[55 + 10]);
+    }
+    printf("READ TOC formats 0 (LBA, M:S:F, start track), 1, 2: %s\n", fails ? "see failures" : "ok");
+
+    // ---- PLAY AUDIO MSF track 2 (00:02:08 to 00:02:12): every sample, in order, unity volume
+    auto check_play = [&](int f0, int f1, int vol_l, int vol_r, int mode, const char *what) {
+        // mode 0: L/R as recorded, 1: port 0 = right, port 1 = left
+        int first = -1;
+        for (size_t k = 0; k < cap.size(); k++) if (cap[k].first || cap[k].second) { first = (int)k; break; }
+        int n = (f1 - f0) * 588, bad = 0;
+        CHECK(first >= 0 && cap.size() >= (size_t)(first + n), "%s: %zu samples, first %d", what, cap.size(), first);
+        if (first < 0 || cap.size() < (size_t)(first + n)) return;
+        for (int j = 0; j < n && bad < 4; j++) {
+            int f = f0 + j / 588, k = j % 588;
+            int l = mode ? smp_r(f, k) : smp_l(f, k), r = mode ? smp_l(f, k) : smp_r(f, k);
+            int el = (int)(((int64_t)l * (vol_l + (vol_l >> 7))) >> 8), er = (int)(((int64_t)r * (vol_r + (vol_r >> 7))) >> 8);
+            if (cap[first + j].first != el || cap[first + j].second != er) {
+                bad++;
+                CHECK(false, "%s: sample %d (frame %d, %d) %d %d, expected %d %d", what, j, f, k,
+                      cap[first + j].first, cap[first + j].second, el, er);
+            }
+        }
+        for (size_t j = first + n; j < cap.size() && bad < 4; j++)
+            if (cap[j].first || cap[j].second) { bad++; CHECK(false, "%s: sound after the end (%zu)", what, j - first); }
+    };
+    cap.clear(); cap_on = true; stb_count = 0;
+    CHECK(run(4, {0x47, 0, 0, 0, 2, 8, 0, 2, 12, 0}, P_DIN, 0) == 0, "PLAY AUDIO MSF");
+    wait_cyc(3000);
+    CHECK(run(4, {0x42, 2, 0x40, 1, 0, 0, 0, 0, 16, 0}, P_DIN, 16) == 0, "READ SUB-CHANNEL");
+    CHECK(mem[DATA + 1] == 0x11 && mem[DATA + 3] == 12 && mem[DATA + 4] == 1 && mem[DATA + 5] == 0x10 &&
+          mem[DATA + 6] == 2 && mem[DATA + 9] == 0 && mem[DATA + 10] == 2 && mem[DATA + 11] >= 8 && mem[DATA + 11] < 12,
+          "sub-channel playing: %02X track %02X %02X:%02X:%02X", mem[DATA + 1], mem[DATA + 6], mem[DATA + 9],
+          mem[DATA + 10], mem[DATA + 11]);
+    wait_cyc(4 * 5880 + 4000);
+    cap_on = false;
+    check_play(AUD_T2, AUD_T3, 255, 255, 0, "PLAY MSF");
+    CHECK(stb_count > 4 * 588 && stb_count < 4 * 588 + 1200, "the strobe rate: %d strobes", stb_count);
+    CHECK(run(4, {0x42, 0, 0x40, 1, 0, 0, 0, 0, 16, 0}, P_DIN, 16) == 0 && mem[DATA + 1] == 0x13, "completed %02X", mem[DATA + 1]);
+    CHECK(run(4, {0x42, 0, 0x40, 1, 0, 0, 0, 0, 16, 0}, P_DIN, 16) == 0 && mem[DATA + 1] == 0x15, "then none %02X", mem[DATA + 1]);
+    CHECK(run(4, {0x42, 0, 0x00, 1, 0, 0, 0, 0, 4, 0}, P_DIN, 4) == 0 && mem[DATA + 3] == 0, "SUB-CHANNEL without SubQ");
+    CHECK(run(4, {0x42, 0, 0x40, 2, 0, 0, 0, 0, 24, 0}, P_DIN, 24) == 0 && mem[DATA + 3] == 20 && mem[DATA + 4] == 2 &&
+          mem[DATA + 8] == 0, "SUB-CHANNEL UPC");
+    CHECK(run(4, {0x4B, 0, 0, 0, 0, 0, 0, 0, 0, 0}, P_DIN, 0) == 2 && sense(4) == 0x052C, "PAUSE with no play");
+    printf("PLAY AUDIO MSF: %d samples checked, READ SUB-CHANNEL, completion: %s\n", 4 * 588, fails ? "see failures" : "ok");
+
+    // ---- MODE SELECT page 0E: port 0 = channel 1 (right) at 128, port 1 = channel 0 (left) at 255;
+    // then PLAY TRACK/INDEX 3 with a PAUSE and RESUME in the middle
+    {
+        uint8_t ms[20] = {0, 0, 0, 0, 0x0E, 14, 0x04, 0, 0, 0, 0, 0, 0x02, 128, 0x01, 255, 0, 0, 0, 0};
+        memcpy(mem + DATA, ms, 20);
+        CHECK(run(4, {0x15, 0x10, 0, 0, 20, 0}, P_DOUT, 20) == 0, "MODE SELECT page 0E");
+        CHECK(run(4, {0x1A, 0x08, 0x0E, 0, 255, 0}, P_DIN, 20) == 0, "MODE SENSE page 0E (DBD)");
+        CHECK(mem[DATA] == 19 && mem[DATA + 3] == 0 && mem[DATA + 4] == 0x0E && mem[DATA + 5] == 14 &&
+              mem[DATA + 12] == 2 && mem[DATA + 13] == 128 && mem[DATA + 14] == 1 && mem[DATA + 15] == 255,
+              "page 0E read back %02X %02X %02X %02X %02X %02X", mem[DATA], mem[DATA + 4], mem[DATA + 12], mem[DATA + 13],
+              mem[DATA + 14], mem[DATA + 15]);
+        CHECK(run(4, {0x1A, 0x08, 0x4E, 0, 255, 0}, P_DIN, 20) == 0 && mem[DATA + 12] == 0x0F && mem[DATA + 13] == 0xFF &&
+              mem[DATA + 6] == 0, "page 0E changeable");
+    }
+    cap.clear(); cap_on = true;
+    CHECK(run(4, {0x48, 0, 0, 0, 3, 1, 0, 3, 1, 0}, P_DIN, 0) == 0, "PLAY AUDIO TRACK/INDEX 3");
+    wait_cyc(3000);
+    CHECK(run(4, {0x4B, 0, 0, 0, 0, 0, 0, 0, 0, 0}, P_DIN, 0) == 0, "PAUSE");
+    CHECK(run(4, {0x42, 0, 0x40, 1, 0, 0, 0, 0, 16, 0}, P_DIN, 16) == 0 && mem[DATA + 1] == 0x12 && mem[DATA + 6] == 3,
+          "paused %02X track %02X", mem[DATA + 1], mem[DATA + 6]);
+    size_t at_pause = cap.size();
+    wait_cyc(5000);
+    {
+        bool quiet = true;
+        for (size_t k = at_pause + 2; k < cap.size(); k++) if (cap[k].first || cap[k].second) quiet = false;
+        CHECK(quiet, "sound while paused");
+    }
+    CHECK(run(4, {0x4B, 0, 0, 0, 0, 0, 0, 0, 1, 0}, P_DIN, 0) == 0, "RESUME");
+    wait_cyc(4 * 5880 + 6000);
+    cap_on = false;
+    {   // the paused stretch removed (zeros between two nonzero samples), the rest is track 3 in order
+        std::vector<std::pair<int16_t, int16_t>> c2;
+        for (auto &x : cap) if (x.first || x.second) c2.push_back(x);
+        cap.swap(c2);
+    }
+    check_play(AUD_T3, LEADOUT, 128, 255, 1, "PLAY TRACK/INDEX");
+    // STOP during a play
+    CHECK(run(4, {0x48, 0, 0, 0, 2, 1, 0, 3, 1, 0}, P_DIN, 0) == 0, "PLAY TRACK/INDEX 2-3");
+    wait_cyc(2000);
+    CHECK(run(4, {0x4E, 0, 0, 0, 0, 0, 0, 0, 0, 0}, P_DIN, 0) == 0, "STOP PLAY");
+    CHECK(run(4, {0x42, 0, 0x40, 1, 0, 0, 0, 0, 16, 0}, P_DIN, 16) == 0 && mem[DATA + 1] == 0x15, "stopped %02X", mem[DATA + 1]);
+    CHECK(run(4, {0x45, 0, 0, 0, 0, 40, 0, 0, 1, 0}, P_DIN, 0) == 2 && sense(4) == 0x0521, "PLAY past the lead-out");
+    printf("page 0E volume and channels, PLAY TRACK/INDEX, PAUSE/RESUME, STOP: %s\n", fails ? "see failures" : "ok");
+
+    // ---- READ CD (user data), MODE SENSE all pages on the CD
+    memset(mem + DATA, 0, 4096);
+    {
+        uint8_t st_ = run(4, {0xBE, 0, 0, 0, 0, 3, 0, 0, 2, 0x10, 0, 0}, P_DIN, 4096);
+        int diff = -1;
+        for (int k = 0; k < 4096; k++) if (mem[DATA + k] != img[2][3 * 2048 + k]) { diff = k; break; }
+        CHECK(st_ == 0 && diff < 0, "READ CD 2 sectors: status %02X, first difference at %d", st_, diff);
+    }
+    CHECK(run(4, {0x1A, 0, 0x3F, 0, 255, 0}, P_DIN, 64) == 0 && mem[DATA] == 63 && mem[DATA + 2] == 0x80 &&
+          mem[DATA + 12] == 0x01 && mem[DATA + 24] == 0x02 && mem[DATA + 40] == 0x0D && mem[DATA + 48] == 0x0E &&
+          mem[DATA + 9 + 1] == 0x08, "CD MODE SENSE 3F %02X %02X %02X %02X %02X", mem[DATA], mem[DATA + 12], mem[DATA + 24],
+          mem[DATA + 40], mem[DATA + 48]);
+    CHECK(run(4, {0x1A, 0, 0x04, 0, 255, 0}, P_DIN, 0) == 2 && sense(4) == 0x0524, "CD has no page 4");
+    // ---- no disc: NOT READY, MEDIUM NOT PRESENT; INQUIRY still answers
+    t->img_present = 0b001;
+    pulse_change();
+    CHECK(run(4, {0x12, 0, 0, 0, 36, 0}, P_DIN, 36) == 0 && mem[DATA] == 5, "INQUIRY with no disc");
+    CHECK(run(4, {0x00, 0, 0, 0, 0, 0}, P_DIN, 0) == 2 && sense(4) == 0x0628, "attention at the eject");
+    CHECK(run(4, {0x00, 0, 0, 0, 0, 0}, P_DIN, 0) == 2 && sense(4) == 0x023A, "TUR with no disc");
+    CHECK(run(4, {0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0}, P_DIN, 0) == 2 && sense(4) == 0x023A, "READ CAPACITY with no disc");
+    t->img_present = 0b101;
+    pulse_change();
+    CHECK(run(4, {0x00, 0, 0, 0, 0, 0}, P_DIN, 0) == 2 && run(4, {0x00, 0, 0, 0, 0, 0}, P_DIN, 0) == 0, "disc back");
+    printf("READ CD, CD mode pages, NOT READY without a disc: %s\n", fails ? "see failures" : "ok");
+
+    // ================================================================ the disks' commands
+    memset(mem + DATA, 0, 4096);
+    CHECK(run(0, {0xA8, 0, 0, 0, 0, 20, 0, 0, 0, 5, 0, 0}, P_DIN, 2560) == 0 && !memcmp(mem + DATA, &img[0][20 * 512], 2560),
+          "READ(12) 5 blocks");
+    for (int k = 0; k < 2560; k++) mem[DATA + k] = (uint8_t)(k * 13 + 1);
+    CHECK(run(0, {0xAA, 0, 0, 0, 0, 30, 0, 0, 0, 5, 0, 0}, P_DOUT, 2560) == 0 && !memcmp(&img[0][30 * 512], mem + DATA, 2560),
+          "WRITE(12) 5 blocks");
+    for (int k = 0; k < 1024; k++) mem[DATA + k] = (uint8_t)(k * 5 + 3);
+    CHECK(run(0, {0x0A, 0, 0, 40, 2, 0}, P_DOUT, 1024) == 0 && !memcmp(&img[0][40 * 512], mem + DATA, 1024), "WRITE(6)");
+    CHECK(run(0, {0x08, 0, 0, 40, 2, 0}, P_DIN, 1024) == 0 && !memcmp(&img[0][40 * 512], mem + DATA, 1024), "READ(6)");
+    CHECK(run(0, {0x28, 0, 0, 0, 0, 63, 0, 0, 2, 0}, P_DIN, 0) == 2 && sense(0) == 0x0521, "READ past the end");
+    CHECK(run(0, {0x1A, 0, 0x3F, 0, 255, 0}, P_DIN, 112) == 0 && mem[DATA] == 111 && mem[DATA + 3] == 8 &&
+          mem[DATA + 12] == 0x01 && mem[DATA + 24] == 0x02 && mem[DATA + 40] == 0x03 && mem[DATA + 64] == 0x04 &&
+          mem[DATA + 88] == 0x08 && mem[DATA + 100] == 0x0A && mem[DATA + 40 + 11] == 64 && mem[DATA + 64 + 5] == 16,
+          "disk MODE SENSE 3F %02X %02X %02X %02X %02X %02X %02X", mem[DATA], mem[DATA + 12], mem[DATA + 24], mem[DATA + 40],
+          mem[DATA + 64], mem[DATA + 88], mem[DATA + 100]);
+    CHECK(run(0, {0x5A, 0x08, 0x08, 0, 0, 0, 0, 0, 255, 0}, P_DIN, 20) == 0 && mem[DATA + 1] == 18 && mem[DATA + 7] == 0 &&
+          mem[DATA + 8] == 0x08 && mem[DATA + 9] == 10, "MODE SENSE(10) page 8 DBD %02X %02X", mem[DATA + 1], mem[DATA + 8]);
+    {
+        uint8_t fl[12] = {0, 0x02, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8};
+        memcpy(mem + DATA, fl, 12);
+        CHECK(run(0, {0x04, 0x18, 0, 0, 0, 0}, P_DOUT, 12) == 0, "FORMAT UNIT with a defect list");
+    }
+    CHECK(run(0, {0x04, 0, 0, 0, 0, 0}, P_DIN, 0) == 0, "FORMAT UNIT");
+    CHECK(run(0, {0x37, 0, 0x1C, 0, 0, 0, 0, 0, 4, 0}, P_DIN, 4) == 0 && mem[DATA + 1] == 0x1C && mem[DATA + 3] == 0,
+          "READ DEFECT DATA");
+    CHECK(run(0, {0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0}, P_DIN, 0) == 0, "SYNCHRONIZE CACHE");
+    CHECK(run(0, {0x2F, 0, 0, 0, 0, 0, 0, 0, 8, 0}, P_DIN, 0) == 0, "VERIFY");
+    CHECK(run(0, {0x1B, 0, 0, 0, 1, 0}, P_DIN, 0) == 0, "START STOP UNIT");
+    CHECK(run(0, {0x43, 0, 0, 0, 0, 0, 0, 0, 12, 0}, P_DIN, 0) == 2 && sense(0) == 0x0520, "READ TOC on a disk");
+    CHECK(run(0, {0x88, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0}, P_DIN, 0) == 2 && sense(0) == 0x0520,
+          "a 16-byte CDB is taken whole");
+    printf("disks: READ/WRITE(6/12), mode pages, DBD, FORMAT UNIT, READ DEFECT DATA: %s\n", fails ? "see failures" : "ok");
 
     printf("%s: %d failure(s), %llu cycles\n", fails ? "FAIL" : "PASS", fails, (unsigned long long)cyc);
     delete t;
