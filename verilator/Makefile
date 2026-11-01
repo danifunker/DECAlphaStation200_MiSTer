@@ -182,3 +182,16 @@ tb_sio_drom: obj_tb_sio_drom/Vsio82378 $(FLASH)
 	obj_tb_sio_drom/Vsio82378 $(DROM) --flash $(FLASH) $(DROMARGS)
 
 .PHONY: tb_sio_drom
+
+# ---------------------------------------------------------------- audio (the sound card and the mix)
+# rtl/audio on the SIO's xio bus (verilator/tb/tb_audio.cpp; docs/design/audio.md)
+JTOPL_RTL = $(addprefix $(RTL)/audio/jtopl/,$(shell grep '^set_global' $(RTL)/audio/jtopl/jtopl.qip | grep -o 'jtopl[a-z0-9_]*\.v'))
+AUDIO_RTL = $(RTL)/audio/wss_ad1848.v $(RTL)/audio/opl_isa.v $(RTL)/audio/audio_mix.v $(RTL)/audio/as200_audio.v
+
+obj_tb_audio/Vtb_audio_top: $(JTOPL_RTL) $(AUDIO_RTL) $(SIO_RTL) tb/tb_audio_top.v tb/tb_audio.cpp
+	$(TB_V) --Mdir obj_tb_audio --top-module tb_audio_top -Wno-BLKSEQ -Wno-PINCONNECTEMPTY $^
+
+tb_audio: obj_tb_audio/Vtb_audio_top
+	obj_tb_audio/Vtb_audio_top
+
+.PHONY: tb_audio
