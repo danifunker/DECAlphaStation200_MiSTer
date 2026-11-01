@@ -55,16 +55,24 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   verilator sromload` runs our replacement SROM up to its memory sizing). Timing probes and fits:
   `docs/design/cpu-timing.md` (scratch/cpu_fmax).
 - **Replacement SROM**: `srom/avanti_srom.S`, `docs/design/srom.md`, `tests/srom/`.
+- **System (2026-11-01):** `rtl/as200_sys.v` = ev4_core + `rtl/apecs/apecs.v` (21071: memory banks
+  with the aliasing the SROM's sizing needs, CSRs, flashbus, PCI target bus per `docs/design/pci.md`,
+  DMA windows) + COM1 behind a stand-in ISA bridge. **`make -C verilator system`: our SROM runs all
+  its steps and enters DEC's DROM V1.7, whose console (on the SROM serial port: SL_XMIT, 19200 baud)
+  prints POST Started / Epic Errors Cleared / NVRAM Test Passed / 53C810 Test Started, then fails the
+  53C810's PCI ID (no device yet) and beeps.** The MiSTer top now runs this machine at 100 MHz with
+  `rtl/mister/sdram_ctl.v` (SDRAM, unit-tested), `rtl/mister/fbrom.v` (boot0.rom flash in DDR3,
+  boot1.rom DROM in BRAM) and `rtl/mister/con_mux.v` (the HDMI terminal shows the SROM port, COM1 and
+  the LED codes). The board has boot0.rom = SRM 7.0-9 + ARC 4.58 chips, boot1.rom = DROM V1.7.
+  `rtl/as200.v` + `bringup_stub.v` remain only for the bring-up Verilator smoke test.
 
 ## Next (in order)
 
 1. The first whole-core timing fit of ev4_core at 10 ns (`scratch/cpu_fmax/core_top`), then fix
    its critical paths (`cpu-timing.md`).
-2. The system for the SROM -> DROM path: the 21071-CA model (memory banks over SDRAM with the
-   aliasing the SROM's sizing expects, `docs/design/srom.md`), the flashbus (flash, DROM,
-   NVRAM, LEDs, jumpers), the 21071-DA CSRs; ev4_core in `rtl/as200.v` in place of the stub;
-   a Verilator system run to the DROM's output. Then PCI, the 82378 SIO (COM1 for SRM), the
-   53C810 and the rest from the RS/6000 core (`docs/REUSE.md`), TGA.
+2. The DROM POST: the 53C810 (`rtl/scsi/`) and the 82378 SIO + ISA devices (`rtl/sio/`), ported
+   from the RS/6000 core (agents, 2026-11-01), into as200_sys; then the DROM loads SRM from flash;
+   SRM on COM1. The 28F020 flash command set (ID read, program/erase). Then TGA.
 3. CPU completeness: T3 privileged tests, ITB/DTB, interrupts, the FPU (T2); branch
    prediction and block bus transfers for speed.
 
