@@ -1,0 +1,9 @@
+# The machine (rtl/as200.v and below)
+set_global_assignment -name VERILOG_FILE rtl/sio/ns16550.v
+set_global_assignment -name VERILOG_FILE rtl/bringup_stub.v
+set_global_assignment -name VERILOG_FILE rtl/as200.v
+# MiSTer side
+set_global_assignment -name VERILOG_FILE rtl/mister/vterm.v
+set_global_assignment -name VERILOG_FILE rtl/mister/ps2_ascii.v
+set_global_assignment -name SDC_FILE DECAlphaStation200.sdc
+set_global_assignment -name SYSTEMVERILOG_FILE DECAlphaStation200.sv
