@@ -111,12 +111,40 @@ wire         cfg_pending;
 // 128 MB needs the 128 MB SDRAM module (sdram_sz[1:0]: 1 = 32 MB, 2 = 64 MB, 3 = 128 MB)
 wire         sdram_128 = sdram_sz[1:0] == 2'd3;
 
+// hps_io block devices: 0 disk ID 0, 1 disk ID 1, 2 CD-ROM ID 4 (the SCSI
+// targets), 3 floppy, 4 NVRAM (not yet)
 wire  [31:0] sd_lba[5];
-wire   [4:0] sd_rd = 0;
-wire   [4:0] sd_wr = 0;
+wire   [5:0] sd_blk_cnt[5];
+wire   [4:0] sd_rd, sd_wr, sd_ack;
 wire   [7:0] sd_buff_din[5];
-assign sd_lba      = '{default: 32'd0};
-assign sd_buff_din = '{default: 8'd0};
+wire  [13:0] sd_buff_addr;
+wire   [7:0] sd_buff_dout;
+wire         sd_buff_wr;
+wire   [4:0] img_mounted;
+wire  [63:0] img_size;
+wire  [95:0] scsi_lba;
+wire  [17:0] scsi_blk_cnt;
+wire   [2:0] scsi_rd, scsi_wr;
+wire   [7:0] scsi_buff_din;
+assign sd_lba[0] = scsi_lba[31:0];   assign sd_lba[1] = scsi_lba[63:32];   assign sd_lba[2] = scsi_lba[95:64];
+assign sd_lba[3] = 32'd0;            assign sd_lba[4] = 32'd0;
+assign sd_blk_cnt[0] = scsi_blk_cnt[5:0]; assign sd_blk_cnt[1] = scsi_blk_cnt[11:6]; assign sd_blk_cnt[2] = scsi_blk_cnt[17:12];
+assign sd_blk_cnt[3] = 6'd0;         assign sd_blk_cnt[4] = 6'd0;
+assign sd_rd = {2'b00, scsi_rd};
+assign sd_wr = {2'b00, scsi_wr};
+assign sd_buff_din[0] = scsi_buff_din; assign sd_buff_din[1] = scsi_buff_din; assign sd_buff_din[2] = scsi_buff_din;
+assign sd_buff_din[3] = 8'd0;        assign sd_buff_din[4] = 8'd0;
+
+// what is mounted in the three SCSI slots, and its size in 512-byte blocks
+reg    [2:0] img_present;
+reg   [95:0] img_blocks;
+always @(posedge clk_sys) begin
+	integer k;
+	for (k = 0; k < 3; k = k + 1) if (img_mounted[k]) begin
+		img_present[k] <= img_size != 64'd0;
+		img_blocks[32*k +: 32] <= img_size[40:9];
+	end
+end
 
 wire         ioctl_download, ioctl_wr, ioctl_wait;
 wire  [15:0] ioctl_index;
@@ -138,9 +166,17 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(5)) hps_io
 	.sdram_sz(sdram_sz),
 
 	.sd_lba(sd_lba),
+	.sd_blk_cnt(sd_blk_cnt),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
+	.sd_ack(sd_ack),
+	.sd_buff_addr(sd_buff_addr),
+	.sd_buff_dout(sd_buff_dout),
 	.sd_buff_din(sd_buff_din),
+	.sd_buff_wr(sd_buff_wr),
+	.img_mounted(img_mounted),
+	.img_readonly(),
+	.img_size(img_size),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),
@@ -236,6 +272,18 @@ as200_sys machine
 	.com1_kbd_byte(kbd_ascii),
 	.com2_txd(),
 	.com2_rxd(1'b1),
+
+	.img_present(img_present),
+	.img_blocks(img_blocks),
+	.sd_lba(scsi_lba),
+	.sd_blk_cnt(scsi_blk_cnt),
+	.sd_rd(scsi_rd),
+	.sd_wr(scsi_wr),
+	.sd_ack(sd_ack[2:0]),
+	.sd_buff_addr(sd_buff_addr),
+	.sd_buff_dout(sd_buff_dout),
+	.sd_buff_din(scsi_buff_din),
+	.sd_buff_wr(sd_buff_wr),
 
 	.ps2_key(ps2_key),
 	.ps2_mouse(ps2_mouse),

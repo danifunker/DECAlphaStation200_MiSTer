@@ -89,6 +89,10 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   Initializing table to defaults" and "TIMER_TPS environment variable invalid" (both from the blank
   NVRAM, as on a real machine), then **"V7.0-9, built on Mar 18 1999" and the `>>>` prompt at ~30 s
   of machine time**. Checkpoint past the prompt: `scratch/srm30s` (valid for this simulator build).
+- **2026-11-01: the same on the board (build 9, .143): SRM V7.0-9 at `>>>`, `show config` typed on
+  the MiSTer keyboard** (firmware, "DECchip 21064-3 100Mhz", 64 MB in 2 banks, the ISA devices).
+  Full fit: 23.0k ALMs (55%), -1.139 ns at 100 MHz (runs regardless). SRM's PCI list is empty
+  (`docs/gaps.md`).
 
 **`docs/gaps.md` is the list of missing hardware and features (user, 2026-11-01): keep it current
 when a gap is found or closed.**
