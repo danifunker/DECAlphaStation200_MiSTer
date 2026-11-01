@@ -98,6 +98,11 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   (RRD45)**: SCSI works end to end on the FPGA. Agents (2026-11-01) are doing the CD-ROM/CD audio/
   Main_MiSTer `support/decalpha` (worktree `../Main_MiSTer-decalpha`, branch `dec-alphastation`) and
   the audio (WSS, OPL, speaker, mixer).
+- **Board build 15 (2026-11-01, `cdf5d14`):** the FPU (all 292 FP codes), audio (WSS/OPL2/speaker/
+  mixer), the CD-ROM's full command set and CD audio, Main `support/decalpha` (board runs
+  `scsi-consolidated-2-decalpha`, local, with the backup `/media/fat/MiSTer.before-decalpha`), and
+  dInvReq (DMA writes invalidate the D-cache). `boot dka400` reads the CD cleanly. 28.4k ALMs (68%),
+  -1.327 ns at 100 MHz.
 - **Fits from a worktree** while agents edit the tree: `git worktree add --detach
   ../DECAlphaStation200_fit HEAD` (refresh with `git -C ../DECAlphaStation200_fit checkout --detach
   <commit>`), fit there; the .rbf is in its `output_files/`.
