@@ -99,6 +99,11 @@ module ev4_core (
 
     reg  [63:0] pal_temp [0:31];
 
+    // the interrupt pins, registered (HIRR shows "delayed copies" of the pins, cpu.md 4.2;
+    // the request logic outside is long)
+    reg   [5:0] irq_q;
+    always @(posedge clk) irq_q <= irq_h;
+
     // ---------------------------------------------------------------- TBs (cpu.md 4.2, 4.3, 6)
     reg  [42:13] tb_tag;                // TB_TAG: VA of the next PTE write
     reg   [1:0] tb_gh;                  // TB_CTL[6:5]
@@ -443,7 +448,7 @@ module ev4_core (
             5'd3:  ipr_rd = {29'd0, itb_temp};                             // ITB_PTE_TEMP
             5'd4:  ipr_rd = exc_addr;
             5'd5:  ipr_rd = {60'd0, sl_rcv, 3'b000};                       // SL_RCV
-            5'd12: ipr_rd = {51'd0, irq_h[2:0], 2'b00, irq_h[5:3], 3'b000, |irq_h, 1'b0};   // HIRR [12:10] [7:5], HWR
+            5'd12: ipr_rd = {51'd0, irq_q[2:0], 2'b00, irq_q[5:3], 3'b000, |irq_q, 1'b0};   // HIRR [12:10] [7:5], HWR
             5'd9:  ipr_rd = {29'd0, ps_cm[1], 32'd0, ps_cm[0], 1'b0};
             5'd11: ipr_rd = {30'd0, pal_base, 14'd0};
             default: ipr_rd = 64'd0;
