@@ -107,6 +107,7 @@ t3: obj_pipe/Vev4_core
 	$(MAKE) -C ../tests/cpu t3 >/dev/null
 	obj_pipe/Vev4_core $(T0)/t3_tlb.bin --trace $(T0)/t3_tlb.pipe.trace
 	obj_pipe/Vev4_core $(T0)/t3_intr.bin --trace $(T0)/t3_intr.pipe.trace
+	obj_pipe/Vev4_core $(T0)/t3_fp.bin --trace $(T0)/t3_fp.pipe.trace
 
 .PHONY: cputest cputest-pipe sromload t3
 

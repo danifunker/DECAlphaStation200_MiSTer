@@ -152,7 +152,7 @@ module ev4_core (
 
     // ================================================================ forward declarations
     reg         w_v;  reg [63:0] w_pc; reg [31:0] w_ir; reg [3:0] w_cls; reg [3:0] w_exc;
-    reg  [63:0] w_res; reg [4:0] w_dst; reg w_dst_v;
+    reg  [63:0] w_res; reg [5:0] w_dst; reg w_dst_v;
     reg  [63:0] w_va; reg w_cmf;   // *_cmf: a CMOV whose condition was false (rewrites Rc, not traced)
     reg         w_st;  reg [63:0] w_sdata; reg [3:0] w_ssize;
     wire        w_redir;
@@ -275,22 +275,34 @@ module ev4_core (
 
     // register file: three read ports (A = Ra, B = Rb, C = Rc for CMOV)
     wire [63:0] rf_a, rf_b, rf_c;
-    wire  [4:0] rfa_addr = f_hold ? d_ir[25:21] : f2_insn[25:21];
-    wire  [4:0] rfb_addr = f_hold ? d_ir[20:16] : f2_insn[20:16];
-    wire  [4:0] rfc_addr = f_hold ? d_ir[4:0]   : f2_insn[4:0];
+    // one register file for both banks: R0-R31 at 0-31, F0-F31 at 32-63
+    // (bit 5 = FP); which bank each field reads is predecoded from the opcode
+    function fpa_op;                    // Ra is an FP register
+        input [5:0] op;
+        fpa_op = op == 6'h15 || op == 6'h16 || op == 6'h17 || (op >= 6'h20 && op <= 6'h27) ||
+                 op == 6'h31 || op == 6'h32 || op == 6'h33 || op == 6'h35 || op == 6'h36 || op == 6'h37;
+    endfunction
+    function fpb_op;                    // Rb / Rc are FP registers
+        input [5:0] op;
+        fpb_op = op == 6'h15 || op == 6'h16 || op == 6'h17;
+    endfunction
+    wire [31:0] rd_ir    = f_hold ? d_ir : f2_insn;
+    wire  [5:0] rfa_addr = {fpa_op(rd_ir[31:26]), rd_ir[25:21]};
+    wire  [5:0] rfb_addr = {fpb_op(rd_ir[31:26]), rd_ir[20:16]};
+    wire  [5:0] rfc_addr = {fpb_op(rd_ir[31:26]), rd_ir[4:0]};
     wire        rf_we = w_v && w_dst_v && (w_exc == E_NONE || w_exc == E_ARITH);
-    ev4_ram #(.AW(5), .DW(64), .BE(1)) rf0 (.clk(clk), .raddr(rfa_addr), .rdata(rf_a),
+    ev4_ram #(.AW(6), .DW(64), .BE(1)) rf0 (.clk(clk), .raddr(rfa_addr), .rdata(rf_a),
         .we(rf_we), .waddr(w_dst), .wdata(w_res), .wbe(1'b1));
-    ev4_ram #(.AW(5), .DW(64), .BE(1)) rf1 (.clk(clk), .raddr(rfb_addr), .rdata(rf_b),
+    ev4_ram #(.AW(6), .DW(64), .BE(1)) rf1 (.clk(clk), .raddr(rfb_addr), .rdata(rf_b),
         .we(rf_we), .waddr(w_dst), .wdata(w_res), .wbe(1'b1));
-    ev4_ram #(.AW(5), .DW(64), .BE(1)) rf2 (.clk(clk), .raddr(rfc_addr), .rdata(rf_c),
+    ev4_ram #(.AW(6), .DW(64), .BE(1)) rf2 (.clk(clk), .raddr(rfc_addr), .rdata(rf_c),
         .we(rf_we), .waddr(w_dst), .wdata(w_res), .wbe(1'b1));
 
     // decode
     wire  [5:0] d_op   = d_ir[31:26];
-    wire  [4:0] d_ra   = d_ir[25:21];
-    wire  [4:0] d_rb   = d_ir[20:16];
-    wire  [4:0] d_rc   = d_ir[4:0];
+    wire  [5:0] d_ra   = {fpa_op(d_ir[31:26]), d_ir[25:21]};
+    wire  [5:0] d_rb   = {fpb_op(d_ir[31:26]), d_ir[20:16]};
+    wire  [5:0] d_rc   = {fpb_op(d_ir[31:26]), d_ir[4:0]};
     wire  [6:0] d_func = d_ir[11:5];
     wire        d_lit  = d_ir[12];
     wire        alu_ill_d, mul_ill_d;
@@ -303,7 +315,7 @@ module ev4_core (
                          d_func == 7'h64 || d_func == 7'h66);
 
     reg  [3:0] dc_cls;
-    reg  [4:0] dc_dst; reg dc_dst_v;
+    reg  [5:0] dc_dst; reg dc_dst_v;
     reg        dc_ua, dc_ub;           // reads Ra, Rb
     reg        dc_fast, dc_ldlat;      // result forwardable from X / only from W
     reg        dc_ser;
@@ -315,7 +327,7 @@ module ev4_core (
         6'h00: begin dc_cls = C_CPAL; dc_ser = 1'b1; end
         6'h08, 6'h09: begin dc_cls = C_LDA; dc_dst_v = 1'b1; dc_ub = 1'b1; dc_fast = 1'b1; end
         6'h0B, 6'h28, 6'h29, 6'h2A, 6'h2B: begin
-            if (d_ra == 5'd31 && d_op != 6'h2A && d_op != 6'h2B) dc_cls = C_NOP;   // load to R31: no-op
+            if (d_ra[4:0] == 5'd31 && d_op != 6'h2A && d_op != 6'h2B) dc_cls = C_NOP;   // load to R31: no-op
             else begin dc_cls = C_LD; dc_dst_v = 1'b1; dc_ub = 1'b1; dc_ldlat = 1'b1; end
         end
         6'h0F, 6'h2C, 6'h2D: begin dc_cls = C_ST; dc_ua = 1'b1; dc_ub = 1'b1; end
@@ -333,9 +345,35 @@ module ev4_core (
             dc_cls = C_MUL; dc_dst = d_rc; dc_dst_v = 1'b1; dc_ua = 1'b1; dc_ub = !d_lit;
             if (mul_ill_d) dc_exc = E_OPCDEC;
         end
-        6'h14, 6'h15, 6'h16, 6'h17, 6'h20, 6'h21, 6'h22, 6'h23, 6'h24, 6'h25, 6'h26, 6'h27,
-        6'h31, 6'h32, 6'h33, 6'h35, 6'h36, 6'h37:
-            dc_exc = (d_op == 6'h14 || iccsr_fpe) ? E_OPCDEC : E_FEN;      // no FPU yet
+        // ---- floating point (cpu.md 8): FEN when ICCSR[FPE] = 0
+        6'h20, 6'h21, 6'h22, 6'h23: begin                                 // LDF LDG LDS LDT
+            dc_cls = C_LD; dc_dst_v = 1'b1; dc_ub = 1'b1; dc_ldlat = 1'b1;
+            if (!iccsr_fpe) dc_exc = E_FEN;
+        end
+        6'h24, 6'h25, 6'h26, 6'h27: begin                                 // STF STG STS STT
+            dc_cls = C_ST; dc_ua = 1'b1; dc_ub = 1'b1;
+            if (!iccsr_fpe) dc_exc = E_FEN;
+        end
+        6'h31, 6'h32, 6'h33, 6'h35, 6'h36, 6'h37: begin                   // FBxx
+            dc_cls = C_CBR; dc_ua = 1'b1;
+            if (!iccsr_fpe) dc_exc = E_FEN;
+        end
+        6'h17: begin                                                      // FP operate, no arithmetic
+            dc_cls = C_ALU; dc_dst = d_rc; dc_dst_v = 1'b1; dc_ua = 1'b1; dc_ub = 1'b1; dc_fast = 1'b0;
+            case (d_ir[15:5])
+            11'h010, 11'h020, 11'h021, 11'h022,
+            11'h030, 11'h130, 11'h530: ;                                  // CVTLQ CPYS CPYSN CPYSE CVTQL
+            11'h02A, 11'h02B, 11'h02C, 11'h02D, 11'h02E, 11'h02F: ;       // FCMOVxx (reads Fc too)
+            11'h024: begin dc_dst_v = 1'b0; dc_ub = 1'b0; dc_ser = 1'b1; end   // MT_FPCR (Fa)
+            11'h025: begin dc_dst = d_ra; dc_ua = 1'b0; dc_ub = 1'b0; dc_ser = 1'b1; end   // MF_FPCR -> Fa
+            default: dc_exc = E_OPCDEC;
+            endcase
+            if (!iccsr_fpe) dc_exc = E_FEN;
+        end
+        6'h15, 6'h16:                                                     // FP arithmetic: no FPU yet (docs/gaps.md)
+            dc_exc = iccsr_fpe ? E_OPCDEC : E_FEN;
+        6'h14:                                                            // ITFP (EV6 FIX): not on the 21064
+            dc_exc = E_OPCDEC;
         6'h18: begin
             dc_cls = C_MISC;
             if (d_ir[15:0] == 16'hC000) dc_dst_v = 1'b1;                     // RPCC
@@ -360,14 +398,15 @@ module ev4_core (
             dc_exc = d_exc; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0; dc_ser = 1'b0;
         end
         if (dc_exc != E_NONE) begin dc_dst_v = 1'b0; dc_ser = 1'b1; end   // faults retire alone
-        if (dc_dst == 5'd31) dc_dst_v = 1'b0;
+        if (dc_dst[4:0] == 5'd31) dc_dst_v = 1'b0;
     end
-    wire dc_uc = d_cmov;
+    wire d_fcmov = d_op == 6'h17 && d_ir[15:5] >= 11'h02A && d_ir[15:5] <= 11'h02F;
+    wire dc_uc = d_cmov || d_fcmov;
 
     // ================================================================ X stage registers
     reg         x_v;  reg [63:0] x_pc; reg [31:0] x_ir; reg [3:0] x_cls; reg [3:0] x_exc;
     reg  [63:0] x_a, x_b, x_c;
-    reg   [4:0] x_dst; reg x_dst_v; reg x_fast; reg x_ldlat; reg x_ser;
+    reg   [5:0] x_dst; reg x_dst_v; reg x_fast; reg x_ldlat; reg x_ser;
     reg  [63:0] x_btarget;
     reg  [63:0] x_link;                 // PC + 4, computed in D
     reg  [63:0] x_ipr;                  // HW_MFPR's IPR value, read in D (serialized)
@@ -378,13 +417,13 @@ module ev4_core (
     reg         m1_v;  reg [63:0] m1_pc; reg [31:0] m1_ir; reg [3:0] m1_cls; reg [3:0] m1_exc;
     reg  [63:0] m1_rf, m1_rs, m1_va, m1_sd; reg m1_cmf; reg m1_isf;
     wire [63:0] m1_res = m1_isf ? m1_rf : m1_rs;    // fast and slow results come from separate flops
-    reg   [4:0] m1_dst; reg m1_dst_v; reg m1_ldlat;
+    reg   [5:0] m1_dst; reg m1_dst_v; reg m1_ldlat;
     reg         m2_v;  reg [63:0] m2_pc; reg [31:0] m2_ir; reg [3:0] m2_cls; reg [3:0] m2_exc;
     reg  [63:0] m2_res, m2_va, m2_sd; reg m2_cmf;
     reg  [33:0] m2_pa;
     reg   [2:0] m2_fb, w_fb;            // D_FAULT reason: {FOW, FOR, ACV}
-    reg   [4:0] m2_dst; reg m2_dst_v; reg m2_ldlat;
-    reg         r_v; reg [4:0] r_dst; reg [63:0] r_res;      // retired last cycle
+    reg   [5:0] m2_dst; reg m2_dst_v; reg m2_ldlat;
+    reg         r_v; reg [5:0] r_dst; reg [63:0] r_res;      // retired last cycle
 
     // ---------------------------------------------------------------- X execute (needed by forwarding)
     wire [63:0] fa_res, sh_res;
@@ -407,19 +446,19 @@ module ev4_core (
 
     // ---------------------------------------------------------------- hazards and forwarding (D)
     function hit_src;
-        input v; input dv; input [4:0] dst; input [4:0] src;
-        hit_src = v && dv && dst == src && src != 5'd31;
+        input v; input dv; input [5:0] dst; input [5:0] src;
+        hit_src = v && dv && dst == src && src[4:0] != 5'd31;
     endfunction
 
     reg        haz;
     reg [63:0] fwd_a, fwd_b, fwd_c;
     reg        loop_a, loop_b, loop_c;
     task fwd;
-        input [4:0] src; input used; input [63:0] rfv;
+        input [5:0] src; input used; input [63:0] rfv;
         output [63:0] val; output loop; output stall;
         begin
             val = rfv; loop = 1'b0; stall = 1'b0;
-            if (used && src != 5'd31) begin
+            if (used && src[4:0] != 5'd31) begin
                 if (hit_src(x_v, x_dst_v, x_dst, src)) begin
                     if (x_fast) loop = 1'b1; else stall = 1'b1;
                 end else if (hit_src(m1_v, m1_dst_v, m1_dst, src)) begin
@@ -487,6 +526,8 @@ module ev4_core (
     // branch resolution
     reg x_cond;
     always @* begin
+        if (!x_ir[29]) x_cond = ftest(x_ir[28:26], x_a);                 // FBxx (opcodes 31-37)
+        else
         case (x_ir[28:26])
         3'd0: x_cond = !x_a[0];
         3'd1: x_cond = x_a == 64'd0;
@@ -504,8 +545,59 @@ module ev4_core (
     assign x_target_r = x_cls == C_JMP ? {x_b[63:2], 2'b00} : x_btarget;
 
     // the slow X results (into M1's second result flop)
+    // FP operate (opcode 17), FPCR (cpu.md 8.2, 8.5)
+    reg   [5:0] fpcr_f;                 // INV DZE OVF UNF INE IOV = FPCR[57:52] (bit 0 = INV)
+    reg   [1:0] fpcr_dyn;               // FPCR[59:58]
+    wire [63:0] fpcr_rd = {|fpcr_f, 3'b000, fpcr_dyn, fpcr_f[5], fpcr_f[4], fpcr_f[3], fpcr_f[2], fpcr_f[1], fpcr_f[0], 52'd0};
+    function ftest;                     // the FBxx / FCMOVxx condition on Fa ({ir[28:26]} or func[2:0])
+        input [2:0] c; input [63:0] f;
+        reg z, n;
+        begin
+            z = f[62:0] == 63'd0; n = f[63] && !z;
+            case (c)
+            3'd1: ftest = z;            // EQ (FBEQ 31, FCMOVEQ 2A -> 2)
+            3'd2: ftest = n;            // LT
+            3'd3: ftest = n || z;       // LE
+            3'd5: ftest = !z;           // NE
+            3'd6: ftest = !n;           // GE
+            3'd7: ftest = !(n || z);    // GT
+            default: ftest = 1'b0;
+            endcase
+        end
+    endfunction
+    reg [63:0] fpx_res;
+    always @* begin
+        case (x_ir[15:5])
+        11'h010: fpx_res = {{32{x_b[63]}}, x_b[63:62], x_b[58:29]};                      // CVTLQ
+        11'h020: fpx_res = {x_a[63], x_b[62:0]};                                          // CPYS
+        11'h021: fpx_res = {~x_a[63], x_b[62:0]};                                         // CPYSN
+        11'h022: fpx_res = {x_a[63:52], x_b[51:0]};                                       // CPYSE
+        11'h024: fpx_res = x_a;                                                           // MT_FPCR (into W)
+        11'h025: fpx_res = fpcr_rd;                                                       // MF_FPCR
+        11'h02A: fpx_res = ftest(3'd1, x_a) ? x_b : x_c;                                  // FCMOVEQ
+        11'h02B: fpx_res = ftest(3'd5, x_a) ? x_b : x_c;                                  // FCMOVNE
+        11'h02C: fpx_res = ftest(3'd2, x_a) ? x_b : x_c;                                  // FCMOVLT
+        11'h02D: fpx_res = ftest(3'd6, x_a) ? x_b : x_c;                                  // FCMOVGE
+        11'h02E: fpx_res = ftest(3'd3, x_a) ? x_b : x_c;                                  // FCMOVLE
+        11'h02F: fpx_res = ftest(3'd7, x_a) ? x_b : x_c;                                  // FCMOVGT
+        default: fpx_res = {x_b[31:30], 3'b000, x_b[29:0], 29'd0};                        // CVTQL (/V, /SV)
+        endcase
+    end
+    wire x_fpop = x_ir[31:26] == 6'h17;
+    // FP store data in memory format (cpu.md 8.3)
+    reg [63:0] x_sdata;
+    always @* begin
+        case (x_ir[31:26])
+        6'h24: x_sdata = {32'd0, x_a[44:29], x_a[63:62], x_a[58:45]};                    // STF
+        6'h25: x_sdata = {x_a[15:0], x_a[31:16], x_a[47:32], x_a[63:48]};                // STG
+        6'h26: x_sdata = {32'd0, x_a[63:62], x_a[58:29]};                                 // STS
+        default: x_sdata = x_a;                                                           // integer, STT
+        endcase
+    end
+
     reg [63:0] x_slow;
     always @* begin
+        if (x_fpop) x_slow = fpx_res; else
         case (x_cmov ? C_CMOVX : x_cls)
         C_CMOVX: x_slow = fa_wr ? fa_res : x_c;                // a false CMOV keeps Rc
         C_SHF:  x_slow = sh_res;
@@ -516,8 +608,8 @@ module ev4_core (
         default: x_slow = 64'd0;
         endcase
     end
-    wire x_isf = (x_cls == C_ALU && !x_cmov) || x_cls == C_LDA || x_cls == C_BR || x_cls == C_JMP;
-    wire x_ovf = (x_cls == C_ALU && fa_ovf) || (x_cls == C_MUL && mul_ovf);
+    wire x_isf = (x_cls == C_ALU && !x_cmov && !x_fpop) || x_cls == C_LDA || x_cls == C_BR || x_cls == C_JMP;
+    wire x_ovf = (x_cls == C_ALU && !x_fpop && fa_ovf) || (x_cls == C_MUL && mul_ovf);
 
     // ================================================================ M1
     // D-stream translation of the registered VA
@@ -526,7 +618,8 @@ module ev4_core (
     wire  [1:0] m1_cm   = (m1_hw && m1_ir[14]) ? alt_cm : ps_cm;
     wire        m1_quad = m1_hw ? m1_ir[12] :
                           (m1_ir[31:26] == 6'h0B || m1_ir[31:26] == 6'h0F || m1_ir[31:26] == 6'h29 ||
-                           m1_ir[31:26] == 6'h2B || m1_ir[31:26] == 6'h2D || m1_ir[31:26] == 6'h2F);
+                           m1_ir[31:26] == 6'h2B || m1_ir[31:26] == 6'h2D || m1_ir[31:26] == 6'h2F ||
+                           m1_ir[31:26] == 6'h21 || m1_ir[31:26] == 6'h23 || m1_ir[31:26] == 6'h25 || m1_ir[31:26] == 6'h27);
     wire        m1_sp2  = spe2 && m1_cm == 2'd0 && m1_va[42:41] == 2'b10;
     wire        m1_sp1  = spe1 && m1_cm == 2'd0 && m1_va[42:30] == 13'h1FFE;
     // the DTB (all entries compared at once; at most one matches)
@@ -603,7 +696,8 @@ module ev4_core (
     wire        m2_hw    = m2_ir[31:26] == 6'h1B || m2_ir[31:26] == 6'h1F;
     wire        m2_quad  = m2_hw ? m2_ir[12] :
                            (m2_ir[31:26] == 6'h0B || m2_ir[31:26] == 6'h0F || m2_ir[31:26] == 6'h29 ||
-                            m2_ir[31:26] == 6'h2B || m2_ir[31:26] == 6'h2D || m2_ir[31:26] == 6'h2F);
+                            m2_ir[31:26] == 6'h2B || m2_ir[31:26] == 6'h2D || m2_ir[31:26] == 6'h2F ||
+                            m2_ir[31:26] == 6'h21 || m2_ir[31:26] == 6'h23 || m2_ir[31:26] == 6'h25 || m2_ir[31:26] == 6'h27);
     wire        m2_load  = m2_cls == C_LD;
     wire        m2_store = m2_cls == C_ST;
     wire        m2_stc   = m2_ir[31:26] == 6'h2E || m2_ir[31:26] == 6'h2F;
@@ -646,10 +740,22 @@ module ev4_core (
 
     reg [63:0] m2_lq;
     always @* m2_lq = m2_hit ? m2_dqm : m2_ldata;
+    // FP loads in register format (cpu.md 8.3): the exponent maps of S and F
+    function [10:0] map_exp;
+        input [7:0] e; input s_fmt;
+        map_exp = (s_fmt && e == 8'hFF) ? 11'h7FF : e == 8'd0 ? 11'd0 :
+                  e[7] ? {4'b1000, e[6:0]} : {4'b0111, e[6:0]};
+    endfunction
     reg [63:0] m2_lres;
+    reg [31:0] m2_lw;
     always @* begin
-        if (!m2_quad) m2_lres = m2_pa[2] ? {{32{m2_lq[63]}}, m2_lq[63:32]} : {{32{m2_lq[31]}}, m2_lq[31:0]};
-        else          m2_lres = m2_lq;
+        m2_lw = m2_pa[2] ? m2_lq[63:32] : m2_lq[31:0];
+        case (m2_ir[31:26])
+        6'h20: m2_lres = {m2_lw[15], map_exp(m2_lw[14:7], 1'b0), m2_lw[6:0], m2_lw[31:16], 29'd0};   // LDF
+        6'h21: m2_lres = {m2_lq[15:0], m2_lq[31:16], m2_lq[47:32], m2_lq[63:48]};                 // LDG
+        6'h22: m2_lres = {m2_lw[31], map_exp(m2_lw[30:23], 1'b1), m2_lw[22:0], 29'd0};             // LDS
+        default: m2_lres = m2_quad ? m2_lq : {{32{m2_lw[31]}}, m2_lw};
+        endcase
     end
 
     // ================================================================ bus (one transaction at a time)
@@ -704,6 +810,7 @@ module ev4_core (
             pal <= 1'b1; iccsr_fpe <= 1'b0; iccsr_map <= 1'b0; iccsr_hwe <= 1'b0;
             pal_base <= 20'd0; abox_ctl <= 16'd0; ps_cm <= 2'd0; alt_cm <= 2'd0;
             itb_v <= 12'd0; dtb_v <= 32'd0; itb_sp <= 3'd0; itb_lp <= 2'd0; dtb_p <= 5'd0;
+            fpcr_f <= 6'd0; fpcr_dyn <= 2'b10;
             hier <= 6'd0; hier_pc0 <= 1'b0; hier_pc1 <= 1'b0; hier_cre <= 1'b0; hier_sle <= 1'b0;
             sier <= 15'd0; sirr <= 15'd0; aster <= 4'd0; astrr <= 4'd0;
             mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0; cc_hi <= 32'd0; cc_en <= 1'b0;
@@ -827,7 +934,7 @@ module ev4_core (
                 m1_v <= x_v && !x_mul_wait;
                 m1_pc <= x_pc; m1_ir <= x_ir; m1_cls <= x_cls;
                 m1_exc <= (x_exc == E_NONE && x_ovf) ? E_ARITH : x_exc;
-                m1_rf <= fast_res; m1_rs <= x_slow; m1_isf <= x_isf; m1_va <= x_va; m1_sd <= x_a; m1_cmf <= x_cls == C_ALU && !fa_wr;
+                m1_rf <= fast_res; m1_rs <= x_slow; m1_isf <= x_isf; m1_va <= x_va; m1_sd <= x_sdata; m1_cmf <= x_cls == C_ALU && !x_fpop && !fa_wr;
                 m1_dst <= x_dst; m1_dst_v <= x_dst_v; m1_ldlat <= x_ldlat;
             end
 
@@ -875,7 +982,8 @@ module ev4_core (
                 w_sdata <= m2_quad ? m2_sd : {32'd0, m2_sd[31:0]};
                 w_ssize <= m2_quad ? 4'd8 : 4'd4;
                 w_ser <= m2_cls == C_CPAL || m2_cls == C_MFPR || m2_cls == C_MTPR || m2_cls == C_REI ||
-                         m2_hw || (m2_cls == C_MISC && (m2_ir[15:0] == 16'hE000 || m2_ir[15:0] == 16'hF000));
+                         m2_hw || (m2_cls == C_MISC && (m2_ir[15:0] == 16'hE000 || m2_ir[15:0] == 16'hF000)) ||
+                         (m2_ir[31:26] == 6'h17 && (m2_ir[15:5] == 11'h024 || m2_ir[15:5] == 11'h025));   // MT/MF_FPCR
             end
 
             // ------------------------------------------------ W: retire
@@ -884,7 +992,7 @@ module ev4_core (
                 if (w_exc == E_NONE || w_exc == E_ARITH) begin
                     dbg_retire <= w_cls != C_CPAL;      // CALL_PAL enters PALcode, it does not retire
                     dbg_pc <= w_pc; dbg_insn <= w_ir;
-                    dbg_rwr <= rf_we && !w_cmf; dbg_rnum <= w_dst; dbg_rval <= w_res;
+                    dbg_rwr <= rf_we && !w_cmf && !w_dst[5]; dbg_rnum <= w_dst[4:0]; dbg_rval <= w_res;
                     dbg_mwr <= w_st; dbg_maddr <= w_va; dbg_mval <= w_sdata; dbg_msize <= w_ssize;
                     // IPR writes
                     if (w_cls == C_MTPR) begin
@@ -970,6 +1078,10 @@ module ev4_core (
                     if (w_cls == C_MISC && w_ir[15:0] == 16'hE000) intr_flag <= 1'b0;
                     if (w_cls == C_MISC && w_ir[15:0] == 16'hF000) intr_flag <= 1'b1;
                     if (w_cls == C_REI) pal <= exc_addr[0];
+                    if (w_ir[31:26] == 6'h17 && w_ir[15:5] == 11'h024) begin            // MT_FPCR
+                        fpcr_f <= {w_res[57], w_res[56], w_res[55], w_res[54], w_res[53], w_res[52]};
+                        fpcr_dyn <= w_res[59:58];
+                    end
                 end
                 if (w_exc == E_UNAL || w_exc == E_DTBM || w_exc == E_DFAULT) begin
                     if (!mm_lock) begin

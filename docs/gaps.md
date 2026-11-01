@@ -12,8 +12,8 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
-| FPU: FP register file, LDS/LDT/STS/STT, LDF/LDG/STF/STG | open | P1 | SRM's PALcode state save (`STT $f0..` at 0xF2F4) traps OPCDEC and loops (2026-11-01) |
-| FPU: CPYS/CPYSN/CPYSE, FCMOVxx, MT_FPCR/MF_FPCR, FP branches | open | P1 | Cheap, used by PALcode and the console |
+| ~~FPU: FP register file, LDS/LDT/STS/STT, LDF/LDG/STF/STG~~ | **done** 2026-11-01 | P1 | One 64-entry register file (F = 32-63); T3 `t3_fp`. Found as: SRM's PALcode state save (`STT $f0..` at 0xF2F4) trapped OPCDEC and looped |
+| ~~FPU: CPYS/CPYSN/CPYSE, FCMOVxx, MT_FPCR/MF_FPCR, FP branches, CVTLQ/CVTQL~~ | **done** 2026-11-01 | P1 | T3 `t3_fp`; CVTQL/V's IOV flag not yet set |
 | FPU: IEEE add/sub/mul/div/compare/convert (S, T), traps, FPCR, EXC_SUM | open | P1/P2 | Pipelined per `pipeline.md` 6; reference: AXPbox `AlphaCPU_ieeefloat.cpp` |
 | FPU: VAX F/G/D arithmetic | open | P2 | OpenVMS; AXPbox `AlphaCPU_vaxfloat.cpp` |
 | Machine checks: BIU_STAT/BIU_ADDR/FILL_* latching, MCHK entry, irq_h[0] (21071 errors) | stub | P2 | Error registers read 0; no MCHK is ever raised |
