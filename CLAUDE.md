@@ -93,6 +93,14 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   the MiSTer keyboard** (firmware, "DECchip 21064-3 100Mhz", 64 MB in 2 banks, the ISA devices).
   Full fit: 23.0k ALMs (55%), -1.139 ns at 100 MHz (runs regardless). SRM's PCI list is empty
   (`docs/gaps.md`).
+- **Board build 11 (2026-11-01):** SRM lists the PCI bus (NCR 810 = pka0, Intel SIO 82378) after the
+  21071-DA pass-2 bit fix, and with an ISO on the OSD's CD-ROM slot `show device` finds **dka400
+  (RRD45)**: SCSI works end to end on the FPGA. Agents (2026-11-01) are doing the CD-ROM/CD audio/
+  Main_MiSTer `support/decalpha` (worktree `../Main_MiSTer-decalpha`, branch `dec-alphastation`) and
+  the audio (WSS, OPL, speaker, mixer).
+- **Fits from a worktree** while agents edit the tree: `git worktree add --detach
+  ../DECAlphaStation200_fit HEAD` (refresh with `git -C ../DECAlphaStation200_fit checkout --detach
+  <commit>`), fit there; the .rbf is in its `output_files/`.
 
 **`docs/gaps.md` is the list of missing hardware and features (user, 2026-11-01): keep it current
 when a gap is found or closed.**
