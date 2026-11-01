@@ -119,7 +119,7 @@ FLASH   ?= ../scratch/roms/archive_alpha-station-200-roms/flash_v7.0_arc4.58.bin
 DROM    ?= ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E47_DROM1.7.bin
 
 obj_sys/Vas200_sys: $(SYS_RTL) system/tb_sys.cpp
-	$(TB_V) --Mdir obj_sys --top-module as200_sys -Wno-BLKSEQ \
+	$(TB_V) --Mdir obj_sys --top-module as200_sys -Wno-BLKSEQ --savable \
 		-GSROM_HEX='"../srom/build/avanti_srom.bitstream.hex"' $^
 
 $(FLASH):

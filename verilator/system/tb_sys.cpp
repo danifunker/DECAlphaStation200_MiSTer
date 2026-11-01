@@ -8,12 +8,17 @@
 //     --trace FILE     retire trace (alphaemu -T format)
 //     --trace-from N   start the trace at retired instruction N
 //     --jumpers XX     flashbus jumper byte (default 03: J1, J2 normal)
+//     --save-at N      at cycle N write a checkpoint (FILE.v: the RTL; FILE.mem: DRAM,
+//                      flashbus, the cycle and instruction counts) to --ckpt FILE
+//     --save-led XX    write the checkpoint when the LEDs first show XX
+//     --restore FILE   start from a checkpoint instead of reset
 //
 // Prints every LED change (with the TI Table 8-1 meaning of the SROM codes),
 // the SROM serial port's output (the DROM's console: SL_XMIT decoded as a
 // 19200-baud line, the DROM's own timing at 100 MHz) and COM1's output.
 #include "Vas200_sys.h"
 #include "verilated.h"
+#include "verilated_save.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -56,7 +61,9 @@ int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
     const char *flash = nullptr, *drom = nullptr, *trace = nullptr;
     uint64_t cycles = 200000000, trace_from = 0;
-    int mem = 0, until_led = -1, jumpers = 0x03;
+    int mem = 0, until_led = -1, jumpers = 0x03, save_led = -1;
+    uint64_t save_at = 0;
+    std::string ckpt = "../scratch/sys.ckpt", restore;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() { if (i + 1 >= argc) { fprintf(stderr, "%s needs a value\n", a.c_str()); exit(2); } return argv[++i]; };
@@ -68,6 +75,10 @@ int main(int argc, char **argv) {
         else if (a == "--trace") trace = next();
         else if (a == "--trace-from") trace_from = strtoull(next(), 0, 0);
         else if (a == "--jumpers") jumpers = strtol(next(), 0, 16);
+        else if (a == "--save-at") save_at = strtoull(next(), 0, 0);
+        else if (a == "--save-led") save_led = strtol(next(), 0, 16);
+        else if (a == "--ckpt") ckpt = next();
+        else if (a == "--restore") restore = next();
         else if (a[0] == '+') ;
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
@@ -98,9 +109,27 @@ int main(int argc, char **argv) {
     int s_last = 1, s_nbit = -1; double s_t0 = 0; int s_byte = 0;
     std::string sline;
     auto tick = [&]() { t->clk = 0; t->eval(); t->clk = 1; t->eval(); };
-    t->rst = 1; for (int i = 0; i < 8; i++) tick(); t->rst = 0;
-
     uint64_t cyc = 0, retired = 0;
+    if (restore.empty()) {
+        t->rst = 1; for (int i = 0; i < 8; i++) tick(); t->rst = 0;
+    } else {
+        VerilatedRestore rs; rs.open((restore + ".v").c_str()); rs >> *t; rs.close();
+        FILE *f = fopen((restore + ".mem").c_str(), "rb");
+        if (!f || fread(&cyc, 8, 1, f) != 1 || fread(&retired, 8, 1, f) != 1 ||
+            fread(dram.data(), 1, dram.size(), f) != dram.size() || fread(fb.data(), 1, fb.size(), f) != fb.size()) {
+            fprintf(stderr, "cannot restore %s\n", restore.c_str()); return 2;
+        }
+        fclose(f);
+        cycles += cyc;
+        fprintf(stderr, "restored %s at cycle %" PRIu64 ", %" PRIu64 " instructions\n", restore.c_str(), cyc, retired);
+    }
+    auto save = [&]() {
+        VerilatedSave os; os.open((ckpt + ".v").c_str()); os << *t; os.close();
+        FILE *f = fopen((ckpt + ".mem").c_str(), "wb");
+        fwrite(&cyc, 8, 1, f); fwrite(&retired, 8, 1, f);
+        fwrite(dram.data(), 1, dram.size(), f); fwrite(fb.data(), 1, fb.size(), f); fclose(f);
+        fprintf(stderr, "checkpoint %s at cycle %" PRIu64 ", %" PRIu64 " instructions\n", ckpt.c_str(), cyc, retired);
+    };
     int last_led = -1;
     bool dpend = false, fpend = false;
     std::string line;
@@ -129,6 +158,8 @@ int main(int argc, char **argv) {
         }
         tick();
         cyc++;
+        if (save_at && cyc == save_at) save();
+        if (t->leds != last_led && (int)t->leds == save_led) { save(); save_led = -1; }
         if (t->leds != last_led) {
             fprintf(stderr, "[%10" PRIu64 " cyc, %9" PRIu64 " insns] LED %02X %s\n", cyc, retired, t->leds, led_name(t->leds));
             last_led = t->leds;
