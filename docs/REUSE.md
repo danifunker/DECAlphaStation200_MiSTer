@@ -34,6 +34,15 @@ and it boots AIX on the board. Its local checkout is 132 commits behind
 | Debug | hp715 `rtl/mister/trace_ddr3.sv` + `tools/mister/trace_dump.py`, `ddr3_port.sv`, `tools/mister/board.sh` | Directly reusable |
 | Simulation | hp715 `verilator/romsim/tb_rom.cpp` (`--until/--type/--disk/--cd/--snapshot`), RS6K `sim/` (`tb_main.cpp`, `sdram_chip.h`, per-device benches), Sun-3 `tb/verilator/hps_io_model.sv` | Grow `verilator/sim_main.cpp` along these lines |
 
+## DEC's own sources (reference only, `scratch/ebsdk`)
+
+The Alpha evaluation-board SDK (github.com/jramstedt/ebsdk) has DEC's SRM V5.8 reference sources
+for this platform's devices. They are DEC-licensed, so they stay in `scratch/`: read them for
+behaviour and register usage, never copy them into the core. `sw/apisrm/ref/`: `avanti.sdl`,
+`apecs_def.sdl` (21071 CSRs), `i82378_def.h`, `n810_driver.c` + `n810_script*.mar` (what SRM asks of
+the 53C810: the SCRIPTS it runs), `tga_driver*.c` + `tga_sfbp_485.h` (what SRM asks of the TGA and
+Bt485), `pal_ev4.mar` (EV4 PALcode), `srom_def.h`; `ebfw/`: the EB64+/AlphaPC64 APECS memory setup.
+
 ## Main_MiSTer
 
 Branch `dec-alphastation` (off `master`). Clone the family support code as
