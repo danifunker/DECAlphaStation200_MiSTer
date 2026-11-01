@@ -134,7 +134,7 @@ int main(int argc, char **argv) {
     t->sd_ack = 0; t->sd_buff_wr = 0; t->cd_change = 0;
     t->nvb_addr = 0; t->nvb_we = 0; t->nvb_wdata = 0;
     int sd_slot = -1, sd_dir = 0, sd_pos = 0, sd_len = 0; uint32_t sd_lba_q = 0;
-    t->ps2_key = 0; t->ps2_mouse = 0; t->console_arc = 0; t->year_ovr_en = 0; t->year_ovr = 0;
+    t->ps2_key = 0; t->ps2_mouse = 0; t->console_arc = 0; t->halt = 0; t->year_ovr_en = 0; t->year_ovr = 0;
     {   // the TOY's time from the host clock, in hps_io's RTC layout (BCD:
         // sec, min, hour, day, month, year, weekday; bit 64 toggles on update)
         time_t now = time(nullptr); struct tm *tm = localtime(&now);

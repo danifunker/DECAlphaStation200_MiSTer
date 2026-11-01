@@ -14,7 +14,8 @@ module as200_sys #(
 ) (
     input  wire        clk,
     input  wire        rst,
-    input  wire  [1:0] cfg_mem,         // Memory: 0 = 64 MB, 1 = 32 MB, 2 = 128 MB
+    input  wire  [1:0] cfg_mem,
+    input  wire        halt,            // the HALT button (CPU IRQ5, with the 8242's KBRST)         // Memory: 0 = 64 MB, 1 = 32 MB, 2 = 128 MB
     input  wire  [7:0] jumpers,
     output wire  [7:0] leds,
 
@@ -109,7 +110,7 @@ module as200_sys #(
     wire        dinv;                   // DMA write -> D-cache invalidate (dInvReq)
     wire  [7:0] dinv_idx;
     wire        sio_intr, sio_nmi, sio_toy, sio_kbrst;
-    assign irq_h = {sio_kbrst, sio_toy, sio_nmi, sio_intr, 2'b00};
+    assign irq_h = {sio_kbrst | halt, sio_toy, sio_nmi, sio_intr, 2'b00};
     wire        c_req, c_we, c_ist, c_ack;
     wire [33:3] c_addr;
     wire  [7:0] c_be;

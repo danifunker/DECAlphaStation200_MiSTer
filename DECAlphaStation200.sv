@@ -258,6 +258,13 @@ wire       kbd_stb;
 wire [7:0] kbd_ascii;
 wire [7:0] leds;
 wire       srom_txd;
+// the OSD's Halt button (a trigger bit), stretched to 50 ms on CPU IRQ5
+reg [22:0] halt_cnt;
+wire       halt_btn = halt_cnt != 0;
+always @(posedge clk_sys) begin
+	if (status[20]) halt_cnt <= 23'd5000000;
+	else if (halt_cnt != 0) halt_cnt <= halt_cnt - 1'd1;
+end
 wire [15:0] aud_l, aud_r;
 wire       aud_tgl;
 
@@ -274,6 +281,7 @@ as200_sys machine
 	.clk(clk_sys),
 	.rst(m_reset),
 	.cfg_mem(cfg_mem),
+	.halt(halt_btn),
 	.jumpers({6'b111111, ~cfg[12], ~cfg[11]}),   // bit 0 J1, bit 1 J2: 1 = normal (OSD On = jumper set)
 	.leds(leds),
 	.nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
