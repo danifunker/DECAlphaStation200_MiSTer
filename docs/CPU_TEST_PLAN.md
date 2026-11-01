@@ -62,5 +62,14 @@ So FP results must be compared against EV4 rules, not raw IEEE: "trap expected" 
   complaint; `tests/cpu/check_ev4.py` rejects them. The assembler does accept the EV4 PAL instructions
   (`hw_ldq/p`, `hw_stq/p`, `hw_mtpr`, `hw_mfpr`, `hw_rei`).
 
+### Real DEC SROM code as a test (2026-11-01)
+No AS200 SROM is dumped (the part is a Xilinx XC1765D at E23), but the **DEC 3000 M800 SROM V6.1** is
+(`scratch/roms/dec3000_m800_srom6.1`, from cetus.sh/Alpha/ch8): eight 21064 bitstreams in the HRM's SROM
+format (per 32-byte block, LSB first: LW0, LW2, LW4, LW6, TAG 21, ASN 6, ASM, V, LW1, LW3, LW5, LW7, BHT 8;
+293 bits). Uses: (1) the bitstream decoder and the core's I-cache SROM loader are checked against it;
+(2) image 0 (power-up) runs DEC's own PALmode init (BIU_CTL, ABOX_CTL + PAL_TEMP14, MCHK handler) on the
+CPU until it touches DEC 3000 hardware; (3) images 1/2 (mini-console) bit-bang SL_XMIT at 19200/9600 baud,
+a test of the SROM serial port and its timing.
+
 Simulation first, FPGA second: build T0–T3 into a Verilator testbench so failures are reproducible and
 trace-diffable before anything goes on the DE10-Nano.
