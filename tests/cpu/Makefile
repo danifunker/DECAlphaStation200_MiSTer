@@ -57,6 +57,15 @@ $(B)/pal/%.bin: $(B)/pal/%.elf
 
 pal: $(SUITES:%=$(B)/pal/%.bin)
 
+# T3 privileged tests: hand-written PALmode images (no T0 harness)
+$(B)/pal/t3_%.o: t3_%.S
+	@mkdir -p $(B)/pal
+	$(CPP) $< > $(B)/pal/t3_$*.s
+	@python3 -I check_ev4.py $(B)/pal/t3_$*.s
+	$(AS) -o $@ $(B)/pal/t3_$*.s
+
+t3: $(B)/pal/t3_tlb.bin
+
 TOHOST = 0x800000
 pal-emu: $(EMU) pal
 	@fails=0; for s in $(SUITES); do \

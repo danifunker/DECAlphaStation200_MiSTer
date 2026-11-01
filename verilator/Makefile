@@ -102,7 +102,12 @@ sromload: obj_pipe/Vev4_core
 	obj_pipe/Vev4_core --srom ../srom/build/avanti_srom.bitstream --iosink --max 300000 --trace sromload.trace > /dev/null || true
 	python3 -I ../tests/srom/check_sromload.py ../srom/build/avanti_srom.bin sromload.trace
 
-.PHONY: cputest cputest-pipe sromload
+# T3 privileged tests on the pipelined core (tests/cpu/t3_*.S)
+t3: obj_pipe/Vev4_core
+	$(MAKE) -C ../tests/cpu t3 >/dev/null
+	obj_pipe/Vev4_core $(T0)/t3_tlb.bin --trace $(T0)/t3_tlb.pipe.trace
+
+.PHONY: cputest cputest-pipe sromload t3
 
 # ---------------------------------------------------------------- system simulation
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the

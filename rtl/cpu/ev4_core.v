@@ -846,7 +846,7 @@ module ev4_core (
                                 dtb_pr[dtb_p] <= {w_res[2], w_res[1], w_res[15:12], w_res[11:8]};
                                 dtb_p <= dtb_p + 5'd1;
                             end
-                            5'd6: dtb_v <= 32'd0;                                       // DTBZAP
+                            5'd6: begin dtb_v <= 32'd0; dtb_p <= 5'd0; end             // DTBZAP (and its pointer)
                             5'd7: dtb_v <= dtb_v & dtb_asm;                             // DTBASM
                             5'd8: begin : dtbis                                         // DTBIS
                                 integer q;
