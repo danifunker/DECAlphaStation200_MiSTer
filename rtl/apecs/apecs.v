@@ -154,29 +154,60 @@ module apecs (
 
     // ------------------------------------------------------------ sequencer
     localparam S_IDLE = 4'd0, S_DRAM = 4'd1, S_FB = 4'd2, S_PCI = 4'd3, S_LR1 = 4'd4, S_LR2 = 4'd5,
-               S_PCIW = 4'd6, S_DMA = 4'd7, S_PCI2 = 4'd8;
+               S_PCIW = 4'd6, S_DMA = 4'd7, S_PCI2 = 4'd8, S_SGR = 4'd9;
     reg [3:0] st;
     reg       pci_hi;                   // dense quadword: the second longword is pending
     reg [31:0] pci_lo;                  // dense quadword read: the first longword
 
     // window registers (21071-DA; shadows of the DA CSRs at 0xC0..0x1C0)
     reg [31:0] tbr1, tbr2, pbr1, pbr2, pmr1, pmr2, haxr1, haxr2;
-    // DMA translation
-    function [34:0] dma_xlate;          // {hit, PA[33:0]}
+    // DMA translation (21071 10.1.1.x, Tables 10-7/10-8). TBR<31:9> holds
+    // address bits <32:10>. A window is direct mapped, or (PBR<18> SGEN)
+    // scatter/gather: 8 KB pages through quadword map entries in memory
+    // (bit 0 valid, bits <20:1> = PA<32:13>), cached in an 8-entry TLB
+    // (round robin, cleared by a write to TBIA at 1.A000.0400)
+    function [36:0] dma_xlate;          // {wh, sg, window 2, PA[33:0] or the map entry's address}
         input [31:0] a;
-        reg   [31:0] m1, m2;
+        reg   [31:0] m;
+        reg   [33:0] tb;
+        reg          w2, wh, sg;
         begin
-            m1 = {pmr1[31:20], 20'hFFFFF};
-            m2 = {pmr2[31:20], 20'hFFFFF};
-            if (pbr1[19] && (a & ~m1) == ({pbr1[31:20], 20'd0} & ~m1))
-                dma_xlate = {1'b1, (({tbr1[31:9], 11'd0} & {2'b11, ~m1}) | {2'b00, a & m1})};
-            else if (pbr2[19] && (a & ~m2) == ({pbr2[31:20], 20'd0} & ~m2))
-                dma_xlate = {1'b1, (({tbr2[31:9], 11'd0} & {2'b11, ~m2}) | {2'b00, a & m2})};
-            else
-                dma_xlate = {1'b0, 34'd0};
+            wh = 1'b0; w2 = 1'b0; sg = 1'b0; m = 32'd0; tb = 34'd0;
+            if (pbr1[19] && (a & ~{pmr1[31:20], 20'hFFFFF}) == ({pbr1[31:20], 20'd0} & ~{pmr1[31:20], 20'hFFFFF})) begin
+                wh = 1'b1; sg = pbr1[18]; m = {pmr1[31:20], 20'hFFFFF}; tb = {1'b0, tbr1[31:9], 10'd0};
+            end else if (pbr2[19] && (a & ~{pmr2[31:20], 20'hFFFFF}) == ({pbr2[31:20], 20'd0} & ~{pmr2[31:20], 20'hFFFFF})) begin
+                wh = 1'b1; sg = pbr2[18]; w2 = 1'b1; m = {pmr2[31:20], 20'hFFFFF}; tb = {1'b0, tbr2[31:9], 10'd0};
+            end
+            if (!sg)
+                dma_xlate = {wh, 1'b0, w2, (tb & {2'b11, ~m}) | {2'b00, a & m}};
+            else                        // the map entry: base with the page index in place of its low bits
+                dma_xlate = {wh, 1'b1, w2, (tb & ~({12'd0, m[31:13], 3'b000} | 34'h7)) |
+                                             {12'd0, a[31:13] & m[31:13], 3'b000}};
         end
     endfunction
-    wire [34:0] dmx = dma_xlate(dm_addr);
+    wire [36:0] dmx_raw = dma_xlate(dm_addr);
+    // the S/G TLB
+    reg  [7:0]  sg_v;
+    reg [31:13] sg_tag [0:7];
+    reg [32:13] sg_pfn [0:7];
+    reg  [2:0]  sg_rr;
+    reg  [7:0]  sg_hitv;
+    reg [32:13] sg_hpfn;
+    integer si;
+    always @* begin
+        sg_hpfn = 20'd0;
+        for (si = 0; si < 8; si = si + 1) begin
+            sg_hitv[si] = sg_v[si] && sg_tag[si] == dm_addr[31:13];
+            if (sg_hitv[si]) sg_hpfn = sg_hpfn | sg_pfn[si];
+        end
+    end
+    // {hit, PA}: direct, or an S/G TLB hit; dmx_miss: an S/G window without a TLB entry
+    wire        dmx_sg   = dmx_raw[36] && dmx_raw[35];
+    wire        dmx_miss = dmx_sg && sg_hitv == 8'd0;
+    wire [34:0] dmx = !dmx_raw[36] ? 35'd0 :
+                      !dmx_raw[35] ? {1'b1, dmx_raw[33:0]} :
+                      {sg_hitv != 8'd0, 1'b0, sg_hpfn, dm_addr[12:0]};
+    reg  [31:13] sgf_tag;               // the S/G entry being fetched
     reg         dma_lane;               // the longword lane of the DMA access in the DRAM quadword
 
     // PCI byte enables from a sparse access: length PA<4:3>, lane PCIaddr<1:0>
@@ -232,11 +263,17 @@ module apecs (
             st <= S_IDLE; d_req <= 1'b0; f_req <= 1'b0; pt_req <= 1'b0; dm_ack <= 1'b0; leds <= 8'hFF;
             tbr1 <= 32'd0; tbr2 <= 32'd0; pbr1 <= 32'd0; pbr2 <= 32'd0; pmr1 <= 32'd0; pmr2 <= 32'd0;
             haxr1 <= 32'd0; haxr2 <= 32'd0;
+            sg_v <= 8'd0; sg_rr <= 3'd0;
             for (k = 0; k < 3; k = k + 1) begin bcnfg[k] <= 9'd0; bbase[k] <= 16'd0; end
         end else case (st)
         S_IDLE: if (dm_req && !dm_ack) begin
             // ---------------------------------------- DMA first
-            if (dmx[34]) begin
+            if (dmx_miss) begin
+                // read the scatter/gather map entry, then retry the DMA (a TLB hit)
+                d_req <= 1'b1; d_we <= 1'b0; d_addr <= dmx_raw[26:3]; d_be <= 8'hFF;
+                sgf_tag <= dm_addr[31:13];
+                st <= S_SGR;
+            end else if (dmx[34]) begin
                 d_req <= 1'b1; d_we <= dm_we; d_addr <= dmx[26:3];
                 d_be <= dmx[2] ? {dm_be, 4'd0} : {4'd0, dm_be};
                 d_wdata <= {dm_wdata, dm_wdata};
@@ -298,6 +335,7 @@ module apecs (
                     7'h08: pbr1 <= wlw;  7'h09: pbr2 <= wlw;
                     7'h0A: pmr1 <= wlw;  7'h0B: pmr2 <= wlw;
                     7'h0D: haxr1 <= wlw; 7'h0E: haxr2 <= wlw;
+                    7'h20: sg_v <= 8'd0;                 // TBIA
                     default: ;
                 endcase
                 da_a <= pa[11:5]; da_we <= c_we;
@@ -386,6 +424,16 @@ module apecs (
             end
         end
         S_PCI2: begin pt_req <= 1'b1; st <= S_PCI; end
+        S_SGR: if (d_ack) begin
+            d_req <= 1'b0;
+            if (d_rdata[0]) begin                       // valid: load the TLB (round robin)
+                sg_v[sg_rr] <= 1'b1; sg_tag[sg_rr] <= sgf_tag; sg_pfn[sg_rr] <= d_rdata[20:1];
+                sg_rr <= sg_rr + 3'd1;
+                st <= S_IDLE;
+            end else begin                              // invalid entry: master abort (STUB: error bits)
+                dm_rdata <= 32'hFFFFFFFF; dm_ack <= 1'b1; st <= S_IDLE;
+            end
+        end
         S_DMA: if (d_ack) begin
             d_req <= 1'b0;
             dm_rdata <= dma_lane ? d_rdata[63:32] : d_rdata[31:0];

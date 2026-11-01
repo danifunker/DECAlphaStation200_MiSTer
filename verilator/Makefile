@@ -222,3 +222,12 @@ tb_fpu_dec: obj_tb_fpu_dec/Vev4_fpu_dec
 		 for ir in [(opc << 26) | (31 << 21) | (31 << 16) | (fn << 5) | 31]]' | obj_tb_fpu_dec/Vev4_fpu_dec
 
 .PHONY: tb_fpu tb_fpu_dec
+
+# the 21071 model's DMA translation: direct and scatter/gather windows, the S/G TLB, TBIA
+obj_tb_apecs/Vapecs: $(RTL)/apecs/apecs.v tb/tb_apecs.cpp
+	$(TB_V) --Mdir obj_tb_apecs --top-module apecs -Wno-BLKSEQ $^
+
+tb_apecs: obj_tb_apecs/Vapecs
+	obj_tb_apecs/Vapecs
+
+.PHONY: tb_apecs
