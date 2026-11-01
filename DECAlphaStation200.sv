@@ -154,6 +154,8 @@ nvsave #(.CLK_HZ(100000000)) nvsave
 
 // what is mounted in the three SCSI slots, and its size in 512-byte blocks
 reg    [2:0] img_present;
+reg          cd_change;                  // a pulse after a CD mount, aligned with img_present
+always @(posedge clk_sys) cd_change <= img_mounted[2];
 reg   [95:0] img_blocks;
 always @(posedge clk_sys) begin
 	integer k;
@@ -304,6 +306,7 @@ as200_sys machine
 	.sd_buff_dout(sd_buff_dout),
 	.sd_buff_din(scsi_buff_din),
 	.sd_buff_wr(sd_buff_wr),
+	.cd_change(cd_change),
 
 	.ps2_key(ps2_key),
 	.ps2_mouse(ps2_mouse),

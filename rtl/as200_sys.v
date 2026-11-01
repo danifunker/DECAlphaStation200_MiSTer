@@ -68,6 +68,7 @@ module as200_sys #(
     input  wire  [7:0] sd_buff_dout,
     output wire  [7:0] sd_buff_din,
     input  wire        sd_buff_wr,
+    input  wire        cd_change,       // the CD slot's image was (re)mounted (a pulse)
 
     // keyboard and mouse (hps_io), the TOY's time (hps_io RTC) and year override
     input  wire [10:0] ps2_key,
@@ -164,7 +165,8 @@ module as200_sys #(
         .img_present(img_present), .img_blocks(img_blocks),
         .sd_lba(sd_lba), .sd_blk_cnt(sd_blk_cnt), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
         .sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din),
-        .sd_buff_wr(sd_buff_wr)
+        .sd_buff_wr(sd_buff_wr),
+        .cd_change(cd_change), .cd_audio_l(cd_audio_l), .cd_audio_r(cd_audio_r), .cd_audio_stb(cd_audio_stb)
     );
     // DMA masters: the 53C810 and the SIO's 8237s, fixed priority, the owner
     // kept until its transfer is acknowledged
@@ -235,8 +237,8 @@ module as200_sys #(
     );
 
     // CD audio (the CD-ROM target's player): not yet
-    wire [15:0] cd_audio_l = 16'd0, cd_audio_r = 16'd0;
-    wire        cd_audio_stb = 1'b0;
+    wire signed [15:0] cd_audio_l, cd_audio_r;
+    wire        cd_audio_stb;
 
     // the AS200 sound card (WSS AD1848 at 530h, OPL at 388h; rtl/audio) on the SIO's ISA expansion bus
     wire [15:0] xio_addr, xio_irq, xio_dack_data, xio_dev_data;
