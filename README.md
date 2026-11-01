@@ -4,11 +4,17 @@ An FPGA core for the MiSTer (DE10-Nano) recreating a **DEC AlphaStation 200 4/16
 21071 "APECS" chipset, a ZLXp-E1 TGA graphics card, NCR 53C810 SCSI, and the 82378 SIO with standard PC peripherals.
 Target OSes: the SRM and ARC consoles, NetBSD/Linux, Digital UNIX 4.0x, OpenVMS, Windows NT 3.51/4.0 and the Windows 2000 RC1 Alpha build.
 
-Status: **research and specification done; no RTL yet.** The next step is the CPU test suite and a Verilator scaffold.
+Status: **initial bring-up.** The MiSTer project (`DECAlphaStation200`), the OSD, COM1 with a bring-up stub in place of the CPU, the
+on-screen serial terminal and a Verilator simulation exist; the 21064 is next. Working notes: `CLAUDE.md`.
 
 ## Repository layout
 | Path | Contents |
 |---|---|
+| `DECAlphaStation200.{qpf,qsf,sdc,srf,sv}`, `files.qip` | Quartus project (from Template_MiSTer); `DECAlphaStation200.sv` is the MiSTer `emu` top with the OSD |
+| `sys/` | MiSTer framework, as-is from Template_MiSTer |
+| `rtl/` | The core: `as200.v` (the machine), `sio/` (PC peripherals), `mister/` (board side: terminal, keyboard), `pll*` |
+| `verilator/` | Headless simulation: `make -C verilator smoke` |
+| `docs/REUSE.md` | What comes from the user's other MiSTer cores (53C810, SIO devices, SDRAM, Main support) |
 | `docs/CORE_SPEC.md` | **The locked hardware configuration** (what the core implements) |
 | `docs/HARDWARE.md` | The real machine: chip list, address map, interrupts, boot flow, memory, video |
 | `docs/CPU_TEST_PLAN.md` | 21064 functional blocks, reference models, and the test-suite plan |
@@ -28,6 +34,7 @@ sudo apt install build-essential python3 binutils-alpha-linux-gnu gcc-alpha-linu
                  qemu-user cabextract ghostscript poppler-utils verilator
 unzip scratch.zip            # restores ./scratch next to this README
 cc -O2 -Wall -o build/alphaemu tools/alphaemu/alphaemu.c
+make -C verilator smoke          # the bring-up simulation
 python3 -I tools/disasm_all.py   # regenerates scratch/disasm (optional; it ships in the zip)
 ```
 On macOS, use `brew install binutils ghostscript poppler cabextract` instead (`tools/*.py` find Homebrew's objdump automatically).
