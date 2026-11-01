@@ -147,3 +147,28 @@ tb_ncr810: obj_tb_ncr810/Vtb_ncr810_top
 	obj_tb_ncr810/Vtb_ncr810_top
 
 .PHONY: tb_ncr810
+
+# ---------------------------------------------------------------- SIO (82378 and the ISA devices)
+# rtl/sio/sio82378.v on its PCI target bus (verilator/tb/tb_sio.cpp; docs/design/sio.md);
+# RTC_FAST: the TOY second is 512 ticks of its 32 kHz (the periodic rates unchanged)
+SIO_RTL = $(RTL)/sio/sio82378.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v \
+	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/ns16550.v
+SIO_V   = $(TB_V) --top-module sio82378 -Wno-BLKSEQ -Wno-PINCONNECTEMPTY -GRTC_FAST=1
+
+obj_tb_sio/Vsio82378: $(SIO_RTL) tb/tb_sio.cpp
+	$(SIO_V) --Mdir obj_tb_sio $^
+
+tb_sio: obj_tb_sio/Vsio82378
+	obj_tb_sio/Vsio82378
+
+.PHONY: tb_sio
+
+# DEC's DROM V1.7 POST (an EV4 interpreter in the bench) against the SIO: the 82378,
+# TOY, 8242, 87332 and interrupts tests must pass (the DROM image from scratch/)
+obj_tb_sio_drom/Vsio82378: $(SIO_RTL) tb/tb_sio_drom.cpp
+	$(TB_V) --top-module sio82378 -Wno-BLKSEQ -Wno-PINCONNECTEMPTY --Mdir obj_tb_sio_drom $^
+
+tb_sio_drom: obj_tb_sio_drom/Vsio82378 $(FLASH)
+	obj_tb_sio_drom/Vsio82378 $(DROM) --flash $(FLASH) $(DROMARGS)
+
+.PHONY: tb_sio_drom
