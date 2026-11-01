@@ -54,3 +54,4 @@ verilator/obj_dir/
 verilator/*.png
 fit.log
 tests/cpu/build/
+verilator/obj_tb_*/

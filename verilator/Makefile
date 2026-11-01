@@ -29,6 +29,23 @@ smoke: $(EXE)
 		--screenshot smoke.png
 
 clean:
-	rm -rf obj_dir smoke.png
+	rm -rf obj_dir obj_tb_* smoke.png
 
 .PHONY: all smoke clean
+
+# ---------------------------------------------------------------- CPU unit benches
+# vectors from tests/cpu/unit_vectors.py (gen_int.py's model)
+TB_V = $(V) --cc --exe --build -j 3 -O3 -Wall -Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDSIGNAL
+VEC  = ../tests/cpu/build/vec
+
+$(VEC)/ialu.vec: ../tests/cpu/unit_vectors.py ../tests/cpu/gen_int.py
+	@mkdir -p $(VEC)
+	python3 -I ../tests/cpu/unit_vectors.py ialu $@
+
+obj_tb_ialu/Vev4_ialu: $(RTL)/cpu/ev4_ialu.v tb/tb_ialu.cpp
+	$(TB_V) --Mdir obj_tb_ialu --top-module ev4_ialu $^
+
+tb_ialu: obj_tb_ialu/Vev4_ialu $(VEC)/ialu.vec
+	obj_tb_ialu/Vev4_ialu $(VEC)/ialu.vec
+
+.PHONY: tb_ialu
