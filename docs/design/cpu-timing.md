@@ -13,6 +13,8 @@ virtual pins, `quartus_sh --flow compile`; the number is the slow 100C model.
 | Date | Probe | Fmax / slack at 10 ns | ALMs | Notes |
 |---|---|---|---|---|
 | 2026-11-01 | `ev4_ialu` (add/sub/scaled, compares, CMPBGE, logic, CMOV, shifts, byte ops, /V), registered in and out | **slack +0.909 ns (~110 MHz)** | 887 | The whole opcode 10/11/12 unit fits one cycle, with nothing in front of it |
+| 2026-11-01 | the same with its result forwarded into its own operand flops (3:1 mux: new operand, own result, older result) | **slack -0.770 ns (~93 MHz)** | 1058 | Full single-cycle forwarding for every integer op does not make 100 MHz |
+| 2026-11-01 | the forwarding loop with only opcodes 10 and 11 (adds, compares, CMPBGE, logic, CMOV) | **slack +1.338 ns (~115 MHz)** | 517 | **Decision: the 21064's own latencies.** Adds/logic/compares/CMOV 1 cycle with back-to-back forwarding; shifts and byte ops (opcode 12) 2 cycles; loads 3 |
 
 ## Consequences for the pipeline (cpu.md 11)
 
