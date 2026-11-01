@@ -336,7 +336,12 @@ module apecs (
         // read (old data for a write, which software does not rely on) arrives in S_LR2
         S_LR1: st <= S_LR2;
         S_LR2: begin
-            c_rdata <= lsel == 2'd0 ? lw2q(ca_q) : lsel == 2'd1 ? lw2q(da_q) : lw2q({24'd0, nv_q});
+            // pass-2 chips (read only): 21071-CA EDSR<13>, 21071-DA DCSR<31>. SRM's PALcode
+            // picks the PCI configuration address form from DCSR<31>: pass 2 decodes the
+            // device number in PA<20:16> into IDSEL itself (21071 Table 10-4)
+            c_rdata <= lsel == 2'd0 ? lw2q(ca_q | (ca_a == 7'h02 ? 32'h0000_2000 : 32'd0)) :
+                       lsel == 2'd1 ? lw2q(da_q | (da_a == 7'h00 ? 32'h8000_0000 : 32'd0)) :
+                       lw2q({24'd0, nv_q});
             c_ack <= 1'b1; st <= S_IDLE;
         end
         S_DRAM: if (d_ack) begin
