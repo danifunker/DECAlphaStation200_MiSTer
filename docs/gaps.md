@@ -39,6 +39,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
+| **SRM's `show config` lists no PCI devices** (the DROM sees the 53C810 and SIO) | open | P1 | Found 2026-11-01: SRM's configuration accesses differ from the DROM's; the SIM_PCILOG run will show how |
 | DMA scatter/gather (TLB, TBIA) | stub | P2 | Direct-mapped windows only; Digital UNIX and others use S/G |
 | Error reporting (EDSR/PEAR/SEAR, master-abort bits, error interrupt to irq_h[0]) | stub | P2 | |
 | D-cache invalidation on DMA writes (dInvReq) | open | P2 | Required once disks DMA into memory the CPU has cached |
@@ -49,7 +50,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
-| Targets (disk ID 0/1, CD ID 4) not wired to hps_io block devices in the top | open | P1/P2 | `scsi_targets.v` exists and is bench-tested |
+| Targets (disk ID 0/1, CD ID 4) on hps_io block devices | partial | P1/P2 | Wired in `as200_sys` and the top (2026-11-01); the system sim serves images. First board test pending; the CD track table (block C000_0000) needs Main support |
 | Main_MiSTer support (write buffering, CD layer) on branch `dec-alphastation` | open | P2 | Like `support/hp9k`, `support/ibmrs6k` |
 | Disconnect/reselect, target mode, parity, DMA FIFO, SEL/RSL/CMP interrupts | open | P3 | scsi.md 4 |
 | CD audio | open | P4 | `hp9000-715/rtl/scsi/cd_audio.sv` |
