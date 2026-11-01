@@ -56,3 +56,4 @@ fit.log
 tests/cpu/build/
 verilator/obj_tb_*/
 verilator/obj_cpu/
+verilator/obj_pipe/

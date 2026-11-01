@@ -29,7 +29,7 @@ smoke: $(EXE)
 		--screenshot smoke.png
 
 clean:
-	rm -rf obj_dir obj_tb_* obj_cpu smoke.png
+	rm -rf obj_dir obj_tb_* obj_cpu obj_pipe smoke.png
 
 .PHONY: all smoke clean
 
@@ -81,4 +81,19 @@ cputest: obj_cpu/Vev4_seq
 		echo "$$r $$s: $$(cat $(T0)/$$s.rtl.log | tr -d '\n'); $$t"; \
 	done; exit $$fails
 
-.PHONY: cputest
+# the pipelined core (rtl/cpu/ev4_core.v) on the same images
+PIPE_RTL = $(RTL)/cpu/ev4_ram.v $(RTL)/cpu/ev4_ialu.v $(RTL)/cpu/ev4_imul.v $(RTL)/cpu/ev4_core.v
+
+obj_pipe/Vev4_core: $(PIPE_RTL) cputest/tb_cpu.cpp
+	$(TB_V) --Mdir obj_pipe --top-module ev4_core -Wno-BLKSEQ -CFLAGS -DCPU_TOP=Vev4_core $^
+
+cputest-pipe: obj_pipe/Vev4_core
+	$(MAKE) -C ../tests/cpu pal-emu >/dev/null
+	@fails=0; for s in $(SUITES); do \
+		if obj_pipe/Vev4_core $(T0)/$$s.bin --trace $(T0)/$$s.pipe.trace > $(T0)/$$s.pipe.log; then r=PASS; else r=FAIL; fails=1; fi; \
+		if cmp -s $(T0)/$$s.trace $(T0)/$$s.pipe.trace; then t="trace = alphaemu"; \
+		else t="trace differs: $$(diff $(T0)/$$s.trace $(T0)/$$s.pipe.trace | head -3 | tr '\n' ' ')"; fails=1; fi; \
+		echo "$$r $$s: $$(cat $(T0)/$$s.pipe.log | tr -d '\n'); $$t"; \
+	done; exit $$fails
+
+.PHONY: cputest cputest-pipe
