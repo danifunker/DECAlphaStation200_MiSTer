@@ -18,6 +18,13 @@ module as200_sys #(
     input  wire  [7:0] jumpers,
     output wire  [7:0] leds,
 
+    // the flashbus NVRAM's save port (rtl/mister/nvsave.v)
+    input  wire [12:0] nvb_addr,
+    input  wire        nvb_we,
+    input  wire  [7:0] nvb_wdata,
+    output wire  [7:0] nvb_rdata,
+    output wire        nv_dirty,
+
     // DRAM (128 MB)
     output wire        d_req,
     output wire        d_we,
@@ -123,6 +130,7 @@ module as200_sys #(
 
     apecs core_logic (
         .clk(clk), .rst(rst), .cfg_mem(cfg_mem), .jumpers(jumpers), .leds(leds),
+        .nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
         .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_be(c_be), .c_wdata(c_wdata),
         .c_ack(c_ack), .c_rdata(c_rdata),
         .d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),

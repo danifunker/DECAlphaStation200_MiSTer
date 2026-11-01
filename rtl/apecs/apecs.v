@@ -43,6 +43,14 @@ module apecs (
     input  wire  [7:0] jumpers,         // flashbus 1C.0000 (bit 0 = J1, bit 1 = J2; 1 = normal)
     output reg   [7:0] leds,
 
+    // the flashbus NVRAM's second port (rtl/mister/nvsave.v: load and save
+    // the 8 KB through the SD card); nv_dirty pulses on every CPU write
+    input  wire [12:0] nvb_addr,
+    input  wire        nvb_we,
+    input  wire  [7:0] nvb_wdata,
+    output reg   [7:0] nvb_rdata,
+    output reg         nv_dirty,
+
     // CPU
     input  wire        c_req,
     input  wire        c_we,
@@ -175,10 +183,15 @@ module apecs (
     endfunction
     reg [7:0] nvram [0:8191];
     reg [7:0] nv_q;
+    always @(posedge clk) begin                 // port B (true dual-port M10K)
+        nvb_rdata <= nvram[nvb_addr];
+        if (nvb_we) nvram[nvb_addr] <= nvb_wdata;
+    end
     always @(posedge clk) begin
         ca_q <= ca[ca_a]; if (ca_we) ca[ca_a] <= ca_wd;
         da_q <= da[da_a]; if (da_we) da[da_a] <= da_wd;
         nv_q <= nvram[nv_a]; if (nv_we) nvram[nv_a] <= nv_wd;
+        nv_dirty <= nv_we;
     end
 
     // the longword lane of this access, for 32-bit registers

@@ -127,13 +127,30 @@ wire  [17:0] scsi_blk_cnt;
 wire   [2:0] scsi_rd, scsi_wr;
 wire   [7:0] scsi_buff_din;
 assign sd_lba[0] = scsi_lba[31:0];   assign sd_lba[1] = scsi_lba[63:32];   assign sd_lba[2] = scsi_lba[95:64];
-assign sd_lba[3] = 32'd0;            assign sd_lba[4] = 32'd0;
+assign sd_lba[3] = 32'd0;            assign sd_lba[4] = nv_lba;
 assign sd_blk_cnt[0] = scsi_blk_cnt[5:0]; assign sd_blk_cnt[1] = scsi_blk_cnt[11:6]; assign sd_blk_cnt[2] = scsi_blk_cnt[17:12];
-assign sd_blk_cnt[3] = 6'd0;         assign sd_blk_cnt[4] = 6'd0;
-assign sd_rd = {2'b00, scsi_rd};
-assign sd_wr = {2'b00, scsi_wr};
+assign sd_blk_cnt[3] = 6'd0;         assign sd_blk_cnt[4] = nv_blk_cnt;
+assign sd_rd = {nv_rd, 1'b0, scsi_rd};
+assign sd_wr = {nv_wr, 1'b0, scsi_wr};
 assign sd_buff_din[0] = scsi_buff_din; assign sd_buff_din[1] = scsi_buff_din; assign sd_buff_din[2] = scsi_buff_din;
-assign sd_buff_din[3] = 8'd0;        assign sd_buff_din[4] = 8'd0;
+assign sd_buff_din[3] = 8'd0;        assign sd_buff_din[4] = nv_buff_din;
+
+// slot 4: the flashbus NVRAM image (rtl/mister/nvsave.v)
+wire  [31:0] nv_lba;
+wire   [5:0] nv_blk_cnt;
+wire         nv_rd, nv_wr;
+wire   [7:0] nv_buff_din;
+wire  [12:0] nvb_addr;
+wire         nvb_we, nv_dirty;
+wire   [7:0] nvb_wdata, nvb_rdata;
+nvsave #(.CLK_HZ(100000000)) nvsave
+(
+	.clk(clk_sys), .rst(~pll_locked),
+	.img_mounted(img_mounted[4]), .img_size(img_size),
+	.sd_lba(nv_lba), .sd_blk_cnt(nv_blk_cnt), .sd_rd(nv_rd), .sd_wr(nv_wr), .sd_ack(sd_ack[4]),
+	.sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(nv_buff_din), .sd_buff_wr(sd_buff_wr),
+	.nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty)
+);
 
 // what is mounted in the three SCSI slots, and its size in 512-byte blocks
 reg    [2:0] img_present;
@@ -255,6 +272,7 @@ as200_sys machine
 	.cfg_mem(cfg_mem),
 	.jumpers({6'b111111, ~cfg[12], ~cfg[11]}),   // bit 0 J1, bit 1 J2: 1 = normal (OSD On = jumper set)
 	.leds(leds),
+	.nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
 
 	.d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
 	.d_ack(d_ack), .d_rdata(d_rdata),
