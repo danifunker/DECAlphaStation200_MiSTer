@@ -182,23 +182,29 @@ module ev4_core (
 
     reg  [63:0] q2; reg [20:0] t2; reg v2;    // F2 copies of the RAM outputs
 
-    // F2: translation (PALmode physical, the superpage, the ITB) and hit
+    // I-stream translation (PALmode physical, the superpage, the ITB) is done
+    // in F1 on the registered pc_f1 and registered into F2 with the RAM
+    // outputs (cpu-timing.md: the ITB lookup in F2 failed by 2.4 ns); ITB
+    // writes are serialized and refetched, so this is never stale
     reg  [11:0] itb_m;
-    reg  [33:13] itb_spfn;
-    reg   [3:0] itb_sre;
-    reg         itb_large;
+    reg  [33:13] itb_spfn1;
+    reg   [3:0] itb_sre1;
+    reg         itb_large1;
     integer ii;
     always @* begin
-        itb_spfn = 21'd0; itb_sre = 4'd0; itb_large = 1'b0;
+        itb_spfn1 = 21'd0; itb_sre1 = 4'd0; itb_large1 = 1'b0;
         for (ii = 0; ii < 12; ii = ii + 1) begin
-            itb_m[ii] = itb_v[ii] && pc_f2[42:22] == itb_tag[ii][42:22] &&
-                        (ii >= 8 || pc_f2[21:13] == itb_tag[ii][21:13]);
-            if (itb_m[ii]) begin itb_spfn = itb_spfn | itb_pfn[ii]; itb_sre = itb_sre | itb_re[ii]; end
-            if (itb_m[ii] && ii >= 8) itb_large = 1'b1;
+            itb_m[ii] = itb_v[ii] && pc_f1[42:22] == itb_tag[ii][42:22] &&
+                        (ii >= 8 || pc_f1[21:13] == itb_tag[ii][21:13]);
+            if (itb_m[ii]) begin itb_spfn1 = itb_spfn1 | itb_pfn[ii]; itb_sre1 = itb_sre1 | itb_re[ii]; end
+            if (itb_m[ii] && ii >= 8) itb_large1 = 1'b1;
         end
     end
-    wire        f2_phys  = pal || (iccsr_map && kern && pc_f2[42:41] == 2'b10);
-    wire        f2_itbm  = !f2_phys && itb_m == 12'd0;
+    wire        f1_phys  = pal || (iccsr_map && kern && pc_f1[42:41] == 2'b10);
+    reg         f2_phys, itb_large, f2_itbany;
+    reg  [33:13] itb_spfn;
+    reg   [3:0] itb_sre;
+    wire        f2_itbm  = !f2_phys && !f2_itbany;
     wire        f2_acv   = !f2_phys && !f2_itbm && !itb_sre[ps_cm];
     wire        f2_tr_ok = !f2_itbm && !f2_acv;
     wire [33:0] f2_pa    = f2_phys ? pc_f2[33:0] :
@@ -724,6 +730,8 @@ module ev4_core (
             if (kill_f2) v_f2 <= 1'b0;
             else if (!f_hold) begin
                 pc_f2 <= pc_f1; v_f2 <= v_f1; q2 <= ic_q; t2 <= ict_q; v2 <= icv_q;
+                f2_phys <= f1_phys; f2_itbany <= itb_m != 12'd0;
+                itb_spfn <= itb_spfn1; itb_sre <= itb_sre1; itb_large <= itb_large1;
             end
 
             // ------------------------------------------------ D
