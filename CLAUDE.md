@@ -87,7 +87,8 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 - **2026-11-01: SRM V7.0 runs and prints on COM1 in the system simulation** (after the FP
   loads/stores and the large-ITB PFN fix): its progress codes ff..e6, "ISA table corrupt /
   Initializing table to defaults" and "TIMER_TPS environment variable invalid" (both from the blank
-  NVRAM, as on a real machine), still initialising at 15 s of machine time.
+  NVRAM, as on a real machine), then **"V7.0-9, built on Mar 18 1999" and the `>>>` prompt at ~30 s
+  of machine time**. Checkpoint past the prompt: `scratch/srm30s` (valid for this simulator build).
 
 **`docs/gaps.md` is the list of missing hardware and features (user, 2026-11-01): keep it current
 when a gap is found or closed.**
