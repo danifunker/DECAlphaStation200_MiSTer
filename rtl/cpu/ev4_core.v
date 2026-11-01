@@ -526,12 +526,29 @@ module ev4_core (
                            dtb_sgh[1]      ? m1_va[18:16] : dtb_spfn[18:16],
                            dtb_sgh != 2'd0 ? m1_va[15:13] : dtb_spfn[15:13], m1_va[12:0]};
     wire [33:0] m1_pa   = (m1_phys || m1_sp2) ? m1_va[33:0] : m1_sp1 ? {4'd0, m1_va[29:0]} : m1_dpa;
-    // protection (DTB hits only; superpages are kernel-only by construction)
+    // protection (DTB hits only; superpages are kernel-only by construction),
+    // and the D-cache tag compare, both per entry and ORed (no serial select
+    // of the matching entry first: cpu-timing.md)
     wire        m1_wr   = m1_cls == C_ST;
-    wire        m1_acv  = !m1_phys && !m1_sp2 && !m1_sp1 && m1_dtbhit &&
-                          (m1_wr ? !dtb_spr[4 + m1_cm] : !dtb_spr[m1_cm]);
-    wire        m1_for  = !m1_phys && !m1_sp2 && !m1_sp1 && m1_dtbhit && !m1_wr && dtb_spr[8];
-    wire        m1_fow  = !m1_phys && !m1_sp2 && !m1_sp1 && m1_dtbhit &&  m1_wr && dtb_spr[9];
+    wire        m1_spx  = m1_phys || m1_sp2 || m1_sp1;
+    reg  [31:0] dtb_acv, dtb_for, dtb_fow, dtb_teq;
+    integer dj;
+    always @* begin
+        for (dj = 0; dj < 32; dj = dj + 1) begin : pe
+            reg [33:13] p;
+            p = {dtb_pfn[dj][33:22],
+                 dtb_gh[dj] == 2'd3 ? m1_va[21:19] : dtb_pfn[dj][21:19],
+                 dtb_gh[dj][1]      ? m1_va[18:16] : dtb_pfn[dj][18:16],
+                 dtb_gh[dj] != 2'd0 ? m1_va[15:13] : dtb_pfn[dj][15:13]};
+            dtb_teq[dj] = dtb_m[dj] && p == dct_q && p[33:32] == 2'd0;
+            dtb_acv[dj] = dtb_m[dj] && (m1_wr ? !dtb_pr[dj][4 + m1_cm] : !dtb_pr[dj][m1_cm]);
+            dtb_for[dj] = dtb_m[dj] && !m1_wr && dtb_pr[dj][8];
+            dtb_fow[dj] = dtb_m[dj] &&  m1_wr && dtb_pr[dj][9];
+        end
+    end
+    wire        m1_acv  = !m1_spx && |dtb_acv;
+    wire        m1_for  = !m1_spx && |dtb_for;
+    wire        m1_fow  = !m1_spx && |dtb_fow;
     wire        m1_unal = !m1_hw && (m1_quad ? m1_va[2:0] != 3'd0 : m1_va[1:0] != 2'd0);
     wire        m1_mem  = m1_cls == C_LD || m1_cls == C_ST;
 
@@ -555,7 +572,9 @@ module ev4_core (
     reg         m2_hitq;                                 // the hit, compared in M1 (timing)
     // M1 compares the tag it just read (M1 re-reads while stalled, so this
     // stays current through fills)
-    wire        m1_hit = m1_pa[33:32] == 2'd0 && dc_ena && !dsweep && dcv_q && dct_q == m1_pa[33:13];
+    wire        m1_sptag = (m1_phys || m1_sp2) ? (m1_va[33:32] == 2'd0 && dct_q == m1_va[33:13])
+                                               : (dct_q == {4'd0, m1_va[29:13]});
+    wire        m1_hit = dc_ena && !dsweep && dcv_q && (m1_spx ? m1_sptag : |dtb_teq);
 
     // ================================================================ M2
     wire        m2_hw    = m2_ir[31:26] == 6'h1B || m2_ir[31:26] == 6'h1F;

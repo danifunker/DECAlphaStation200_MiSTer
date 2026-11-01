@@ -140,19 +140,33 @@ module isa_rtc #(
 
     assign irq = |(flags & reg_b[6:4]);
 
+    // the time registers as register B shows them, registered every cycle
+    // (the BCD conversion was a 1.5 ns timing failure into the SIO's read
+    // data; ISA accesses are at least 3 clocks apart, so a one-cycle-old view
+    // is never seen)
+    reg [7:0] v_sec, v_min, v_hour, v_date, v_mon, v_year;
+    always @(posedge clk) begin
+        v_sec  <= show({1'b0, sec}, bin);
+        v_min  <= show({1'b0, min}, bin);
+        v_hour <= show_hour(hour, bin, h24);
+        v_date <= show({2'd0, date}, bin);
+        v_mon  <= show({3'd0, month}, bin);
+        v_year <= show(year, bin);
+    end
+
     reg [7:0] rd71;
     always @* begin
         case (index)
-        7'h00: rd71 = show({1'b0, sec}, bin);
+        7'h00: rd71 = v_sec;
         7'h01: rd71 = sec_a_raw;
-        7'h02: rd71 = show({1'b0, min}, bin);
+        7'h02: rd71 = v_min;
         7'h03: rd71 = min_a_raw;
-        7'h04: rd71 = show_hour(hour, bin, h24);
+        7'h04: rd71 = v_hour;
         7'h05: rd71 = hour_a_raw;
         7'h06: rd71 = {5'd0, dow};
-        7'h07: rd71 = show({2'd0, date}, bin);
-        7'h08: rd71 = show({3'd0, month}, bin);
-        7'h09: rd71 = show(year, bin);
+        7'h07: rd71 = v_date;
+        7'h08: rd71 = v_mon;
+        7'h09: rd71 = v_year;
         7'h0A: rd71 = {uip, reg_a};
         7'h0B: rd71 = reg_b;
         7'h0C: rd71 = {irq, flags[2], flags[1], flags[0], 4'd0};
