@@ -26,7 +26,7 @@ and it boots AIX on the board. Its local checkout is 132 commits behind
 | COM1/COM2 | `rtl/sio/ns16550.v` (ours, done) | -- |
 | FDC (82077-class) + image | `IBMRS6K7248_fdc.sv` + `rtl/IBMRS6K7248_fdimg.sv` | 1.44 MB drive A |
 | PC87332 config, LPT | `IBMRS6K7248_sio.sv` (written for the PC87312) | 87332 register differences |
-| AD1848 WSS + OPL3 | `IBMRS6K7248_cs4232.sv` (CS4231 is an AD1848 superset), `IBMRS6K7248_opl.sv` + jtopl (`.v`, OPL2 only) | Low priority |
+| AD1848 WSS + OPL3 | `IBMRS6K7248_cs4232.sv` (CS4231 is an AD1848 superset), `IBMRS6K7248_opl.sv` + jtopl (`.v`, OPL2 only) | **Ported 2026-11-01**: `rtl/audio/wss_ad1848.v`, `opl_isa.v` (audio.md). jtopl copied unchanged to `rtl/audio/jtopl/` from the RS6K's `rtl/jtopl` (origin/master c0bc296; jotego, from openfpga-PCXT f2c011d), **GPL-3** (its LICENSE kept there) |
 | PCI config / host bridge | RS6K `_mpc105.sv`, `_firecoral.sv`, CF8/CFC decode; `MacPPC7300_MiSTer/rtl/machine/MacPPC7300_pcicfg.sv` | Templates only: the 21071-DA (sparse/dense spaces, S/G TLB, IACK) is new work |
 | 21040 Tulip | none exists | New. The Main-side bridge: RS6K `_enetbox.sv` + `_ddrarb.sv`, or SS20 `rtl/mister/eth_hps.sv`; `support/*_enet.cpp` |
 | SDRAM | RS6K `IBMRS6K7248_sdram.sv` (99 MHz BL8 CL2, board-tested); `hp9000-715/rtl/mister/sdram64.sv`; SS20 `rtl/mister/sdram64.sv` (two ranks) | Little-endian byte lanes; two ranks for 128 MB |

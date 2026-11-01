@@ -53,7 +53,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | Targets (disk ID 0/1, CD ID 4) on hps_io block devices | partial | P1/P2 | Wired in `as200_sys` and the top (2026-11-01); the system sim serves images. First board test pending; the CD track table (block C000_0000) needs Main support |
 | Main_MiSTer support (write buffering, CD layer) on branch `dec-alphastation` | open | P2 | Like `support/hp9k`, `support/ibmrs6k` |
 | Disconnect/reselect, target mode, parity, DMA FIFO, SEL/RSL/CMP interrupts | open | P3 | scsi.md 4 |
-| CD audio | open | P4 | `hp9000-715/rtl/scsi/cd_audio.sv` |
+| CD audio | open | P4 | `hp9000-715/rtl/scsi/cd_audio.sv`; the mix takes `cd_audio_l/r` + `cd_audio_stb` (audio.md 4) |
 
 ## SIO and ISA (`rtl/sio/`, `docs/design/sio.md`)
 
@@ -79,8 +79,10 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | **TGA graphics** (ZLXp-E1: DECchip 21030, 2 MB VRAM in DDR3, Bt485 RAMDAC, PCI slot 1) | open | P2 | The chosen video card; SRM console on the screen, NT/X11. Confirm the RAMDAC (CORE_SPEC open item 3) |
 | DECchip 21040 Ethernet (+ Ethernet ID ROM) | open | P3 | May start as present-but-no-link; AXPbox `DEC21143.cpp` as reference |
-| Sound: AD1848 (WSS 530h) + OPL3 (388h) | open | P4 | |
-| Speaker (8254 counter 2) to the audio mix | partial | P4 | `speaker` output exists, not mixed |
+| Sound: AD1848 (WSS 530h, IRQ/DMA by its command register; SRM's PCXBJ: IRQ 9, DMA 0/1) | partial | P4 | `rtl/audio/wss_ad1848.v`, `docs/design/audio.md` (2026-11-01): registers, playback by DMA, IRQ, capture as silence; unit bench `tb_audio`. Not yet wired into `as200_sys` / the top |
+| FM at 388h: an OPL2 (jtopl2) in place of the OPL3 | partial | P4 | `rtl/audio/opl_isa.v`: bank 1 (38Ah/38Bh) dropped, OPL2 status, so OPL3 detection finds an OPL2. A real OPL3 when jtopl's YMF262 exists |
+| Speaker (8254 counter 2) to the audio mix | partial | P4 | `rtl/audio/audio_mix.v` averages it per 48 kHz period; not yet wired |
+| Audio mix to the MiSTer (WSS + FM + CD + speaker, `audio_cdc.v` into CLK_AUDIO) | partial | P4 | Built and bench-tested; integration steps in audio.md 5; no OSD volume/mute page yet (`mute[3:0]` is ready) |
 | COM2 on a MiSTer pin | open | P4 | |
 | PS/2 keyboard and mouse into the 8242 from hps_io | partial | P2 | Wired into the SIO; the top still also types the keyboard into COM1 |
 
