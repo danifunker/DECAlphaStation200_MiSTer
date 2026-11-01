@@ -41,6 +41,10 @@ module ev4_core (
     output reg         sl_xmit,
     input  wire        sl_rcv,
 
+    // the six interrupt pins, irq_h[5:0] (level; AS200 wiring HARDWARE.md 3).
+    // Read through HIRR; interrupt delivery is a STUB (to come with HIER)
+    input  wire  [5:0] irq_h,
+
     output reg         mem_req,
     output reg         mem_we,
     output reg         mem_istream,
@@ -387,6 +391,7 @@ module ev4_core (
             5'd2:  ipr_rd = {40'd0, iccsr_fpe, iccsr_map, iccsr_hwe, 21'd0};
             5'd4:  ipr_rd = exc_addr;
             5'd5:  ipr_rd = {60'd0, sl_rcv, 3'b000};                       // SL_RCV
+            5'd12: ipr_rd = {51'd0, irq_h[2:0], 2'b00, irq_h[5:3], 3'b000, |irq_h, 1'b0};   // HIRR [12:10] [7:5], HWR
             5'd9:  ipr_rd = {29'd0, ps_cm[1], 32'd0, ps_cm[0], 1'b0};
             5'd11: ipr_rd = {30'd0, pal_base, 14'd0};
             default: ipr_rd = 64'd0;

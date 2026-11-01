@@ -104,6 +104,8 @@ wire         forced_scandoubler;
 wire   [1:0] buttons;
 wire [127:0] status;
 wire  [10:0] ps2_key;
+wire  [24:0] ps2_mouse;
+wire  [64:0] rtc;
 wire  [15:0] sdram_sz;
 wire         cfg_pending;
 // 128 MB needs the 128 MB SDRAM module (sdram_sz[1:0]: 1 = 32 MB, 2 = 64 MB, 3 = 128 MB)
@@ -147,7 +149,9 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(5)) hps_io
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wait(ioctl_wait),
 
-	.ps2_key(ps2_key)
+	.ps2_key(ps2_key),
+	.ps2_mouse(ps2_mouse),
+	.RTC(rtc)
 );
 
 //////////////////////////////////////////////////////////////////
@@ -230,6 +234,15 @@ as200_sys machine
 	.com1_tx_byte(com1_tx_byte),
 	.com1_kbd_stb(kbd_stb),
 	.com1_kbd_byte(kbd_ascii),
+	.com2_txd(),
+	.com2_rxd(1'b1),
+
+	.ps2_key(ps2_key),
+	.ps2_mouse(ps2_mouse),
+	.rtc(rtc),
+	.year_ovr_en(cfg[15:14] == 2'd1),      // OSD TOY year: 1999
+	.year_ovr(7'd99),
+	.speaker(),
 
 	.dbg_retire(), .dbg_pc(), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
 	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize()

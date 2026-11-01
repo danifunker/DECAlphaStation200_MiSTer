@@ -15,6 +15,7 @@
 //   1.0010.0000                flashbus data register (TI Table 4-2)
 //   1.8000.0000 - 1.8000.0FFF  21071-CA CSRs (one longword every 0x20)
 //   1.A000.0000 - 1.A000.0FFF  21071-DA CSRs
+//   1.B000.0000 - 1.BFFF.FFFF  PCI interrupt acknowledge (read: the vector)
 //   1.C000.0000 - 1.DFFF.FFFF  PCI sparse I/O     } on the internal PCI
 //   1.E000.0000 - 1.FFFF.FFFF  PCI configuration } target bus
 //   2.0000.0000 - 2.FFFF.FFFF  PCI sparse memory } (docs/design/pci.md):
@@ -278,6 +279,11 @@ module apecs (
                 da_a <= pa[11:5]; da_we <= c_we;
                 da_wd <= pa[11:5] == 7'h00 ? (wlw & 32'hFFFF00FF & ~32'h00000060) : wlw;   // DCSR: error bits RW1C
                 lsel <= 2'd1; st <= S_LR1;
+            end else if (pa[33:28] == 6'h1B) begin
+                // ---------------------------------------- PCI interrupt acknowledge (1.B000.0000, read)
+                pt_req <= 1'b1; pt_cmd <= 2'd3; pt_dev <= 5'd0; pt_we <= 1'b0;
+                pt_addr <= 32'd0; pt_be <= 4'hF; pt_wdata <= 32'd0; pci_hi <= 1'b0;
+                st <= S_PCI;
             end else if (pa[33:29] == 5'b01110) begin
                 // ---------------------------------------- PCI sparse I/O
                 pt_req <= 1'b1; pt_cmd <= 2'd1; pt_dev <= 5'd0; pt_we <= c_we;

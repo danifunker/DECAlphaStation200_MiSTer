@@ -6,6 +6,14 @@ set_global_assignment -name VERILOG_FILE rtl/cpu/ev4_core.v
 # The machine (rtl/as200_sys.v and below)
 set_global_assignment -name VERILOG_FILE rtl/apecs/apecs.v
 set_global_assignment -name VERILOG_FILE rtl/sio/ns16550.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_pic.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_pit.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_dma.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_rtc.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_kbc.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_superio.v
+set_global_assignment -name VERILOG_FILE rtl/sio/sio82378.v
+set_global_assignment -name VERILOG_FILE rtl/scsi/ncr53c810.v
 set_global_assignment -name VERILOG_FILE rtl/as200_sys.v
 # MiSTer side
 set_global_assignment -name VERILOG_FILE rtl/mister/sdram_ctl.v

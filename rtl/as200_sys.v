@@ -1,6 +1,8 @@
 // The AlphaStation 200 4/100 with its CPU: the 21064 (rtl/cpu/ev4_core.v)
-// loading the SROM into its I-cache, the 21071 (rtl/apecs/apecs.v), and on
-// the ISA side COM1 (rtl/sio/ns16550.v at 3F8h). DRAM and the flash/DROM
+// loading the SROM into its I-cache, the 21071 (rtl/apecs/apecs.v), the
+// 53C810 (rtl/scsi/ncr53c810.v, PCI device 6) and the 82378 SIO with the ISA
+// devices (rtl/sio/sio82378.v, device 7: 8259s, 8254, 8237s, TOY, 8242,
+// PC87332, COM1/COM2). DRAM and the flash/DROM
 // bytes are ports: the MiSTer top puts them in SDRAM and DDR3, the Verilator
 // system simulation (verilator/system) in C++ models.
 //
@@ -43,6 +45,16 @@ module as200_sys #(
     output wire  [7:0] com1_tx_byte,
     input  wire        com1_kbd_stb,
     input  wire  [7:0] com1_kbd_byte,
+    output wire        com2_txd,
+    input  wire        com2_rxd,
+
+    // keyboard and mouse (hps_io), the TOY's time (hps_io RTC) and year override
+    input  wire [10:0] ps2_key,
+    input  wire [24:0] ps2_mouse,
+    input  wire [64:0] rtc,
+    input  wire        year_ovr_en,
+    input  wire  [6:0] year_ovr,
+    output wire        speaker,
 
     // retire trace (simulation)
     output wire        dbg_retire,
@@ -64,6 +76,11 @@ module as200_sys #(
     always @(posedge clk) srom_q <= srom[srom_addr];
 
     // ------------------------------------------------------------ CPU
+    // irq_h (HARDWARE.md 3): 0 errors (STUB), 1 unused, 2 the 8259s, 3 NMI,
+    // 4 the TOY's periodic interrupt, 5 HALT | 8242 KBRST
+    wire  [5:0] irq_h;
+    wire        sio_intr, sio_nmi, sio_toy, sio_kbrst;
+    assign irq_h = {sio_kbrst, sio_toy, sio_nmi, sio_intr, 2'b00};
     wire        c_req, c_we, c_ist, c_ack;
     wire [33:3] c_addr;
     wire  [7:0] c_be;
@@ -73,6 +90,7 @@ module as200_sys #(
         .clk(clk), .rst(rst),
         .icmode(1'b0), .srom_addr(srom_addr), .srom_data(srom_q),
         .sl_xmit(srom_txd), .sl_rcv(srom_rxd),
+        .irq_h(irq_h),
         .mem_req(c_req), .mem_we(c_we), .mem_istream(c_ist), .mem_addr(c_addr),
         .mem_be(c_be), .mem_wdata(c_wdata), .mem_ack(c_ack), .mem_rdata(c_rdata),
         .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(dbg_insn), .dbg_rwr(dbg_rwr),
@@ -109,70 +127,74 @@ module as200_sys #(
 
     // the 53C810 (device 6, IDSEL AD17, PIRQ3); its SCSI bus is not connected
     // yet (the targets join with the hps_io block devices): selection times out
+    // DMA masters: the 53C810 and the SIO's 8237s, fixed priority, the owner
+    // kept until its transfer is acknowledged
     wire        dm_req, dm_we, dm_ack;
     wire [31:0] dm_addr, dm_wdata, dm_rdata;
     wire  [3:0] dm_be;
+    wire        scsi_dm_req, scsi_dm_we;
+    wire [31:0] scsi_dm_addr, scsi_dm_wdata;
+    wire  [3:0] scsi_dm_be;
+    reg         dm_own;                 // 0 the 53C810, 1 the SIO
+    reg         dm_busy;
+    always @(posedge clk) begin
+        if (rst) begin dm_busy <= 1'b0; dm_own <= 1'b0; end
+        else if (!dm_busy) begin
+            if (scsi_dm_req) begin dm_own <= 1'b0; dm_busy <= 1'b1; end
+            else if (sio_dm_req) begin dm_own <= 1'b1; dm_busy <= 1'b1; end
+        end else if (dm_ack) dm_busy <= 1'b0;
+    end
+    assign dm_req   = dm_busy && (dm_own ? sio_dm_req : scsi_dm_req) && !dm_ack;
+    assign dm_we    = dm_own ? sio_dm_we    : scsi_dm_we;
+    assign dm_addr  = dm_own ? sio_dm_addr  : scsi_dm_addr;
+    assign dm_be    = dm_own ? sio_dm_be    : scsi_dm_be;
+    assign dm_wdata = dm_own ? sio_dm_wdata : scsi_dm_wdata;
+    wire        scsi_dm_ack = dm_ack && !dm_own;
+    wire        sio_dm_ack  = dm_ack && dm_own;
     wire        scsi_claim, scsi_ack, scsi_inta_n;
     wire [31:0] scsi_rdata;
     ncr53c810 #(.DEVNUM(6)) scsi (
         .clk(clk), .reset(rst),
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
         .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(scsi_claim), .pt_ack(scsi_ack), .pt_rdata(scsi_rdata),
-        .dm_req(dm_req), .dm_we(dm_we), .dm_addr(dm_addr), .dm_be(dm_be), .dm_wdata(dm_wdata),
-        .dm_ack(dm_ack), .dm_rdata(dm_rdata),
+        .dm_req(scsi_dm_req), .dm_we(scsi_dm_we), .dm_addr(scsi_dm_addr), .dm_be(scsi_dm_be),
+        .dm_wdata(scsi_dm_wdata), .dm_ack(scsi_dm_ack), .dm_rdata(dm_rdata),
         .inta_n(scsi_inta_n),
         .sb_sel(), .sb_sel_id(), .sb_sel_atn(), .sb_sel_done(1'b0), .sb_sel_fail(1'b1),
         .sb_bsy(1'b0), .sb_req(1'b0), .sb_phase(3'd0), .sb_tdata(8'd0),
         .sb_ack(), .sb_idata(), .sb_ackhold(), .sb_atn(), .sb_rst()
     );
 
-    wire        other_claim = scsi_claim;         // the SIO's own registers: to come
-    wire        isa_claim   = pt_req && pt_cmd == 2'd1 && !other_claim;
-    assign pt_claim = other_claim || isa_claim;
-
-    // ------------------------------------------------------------ ISA (stand-in until rtl/sio/sio82378.v)
-    // 1.8432 MHz for the UARTs, from the system clock (an accumulator)
-    localparam [31:0] SYS_HZ = 32'd100000000;
-    reg [31:0] baud_acc;
-    reg        ce_1m8;
-    always @(posedge clk) begin
-        if (baud_acc + 32'd1843200 >= SYS_HZ) begin
-            baud_acc <= baud_acc + 32'd1843200 - SYS_HZ; ce_1m8 <= 1'b1;
-        end else begin
-            baud_acc <= baud_acc + 32'd1843200; ce_1m8 <= 1'b0;
-        end
-    end
-
-    // the ISA byte: the lowest enabled lane
-    wire  [1:0] isa_lane = pt_be[0] ? 2'd0 : pt_be[1] ? 2'd1 : pt_be[2] ? 2'd2 : 2'd3;
-    wire [15:0] isa_port = {pt_addr[15:2], isa_lane};
-    wire  [7:0] isa_wd   = pt_wdata[8*isa_lane +: 8];
-    wire        com1_sel = isa_port[15:3] == 13'h007F;          // 3F8-3FF
-    reg         isa_busy;
-    wire        io_strobe = isa_claim && !isa_busy;
-    wire  [7:0] com1_dout;
-    reg         isa_ack;
-    reg  [31:0] isa_rd;
-
-    ns16550 com1 (
-        .clk(clk), .rst(rst), .ce_1m8(ce_1m8),
-        .io_addr(isa_port[2:0]), .io_rd(io_strobe && !pt_we && com1_sel), .io_wr(io_strobe && pt_we && com1_sel),
-        .io_din(isa_wd), .io_dout(com1_dout), .irq(),
-        .txd(com1_txd), .rxd(com1_rxd), .rts_n(), .dtr_n(), .out1_n(), .out2_n(),
-        .cts_n(1'b0), .dsr_n(1'b0), .ri_n(1'b1), .dcd_n(1'b0),
-        .tx_stb(com1_tx_stb), .tx_byte(com1_tx_byte),
-        .rx_inj_stb(com1_kbd_stb), .rx_inj_byte(com1_kbd_byte)
+    // the 82378 SIO (device 7) and everything on ISA: I/O no other device
+    // claims is its (subtractive decode)
+    wire        sio_claim, sio_ack;
+    wire [31:0] sio_rdata;
+    wire        sio_dm_req, sio_dm_we;
+    wire [31:0] sio_dm_addr, sio_dm_wdata;
+    wire  [3:0] sio_dm_be;
+    sio82378 #(.CLK_HZ(100000000), .DEVNUM(5'd7)) sio (
+        .clk(clk), .rst(rst),
+        .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
+        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_sub(pt_req && pt_cmd == 2'd1 && !scsi_claim),
+        .pt_claim(sio_claim), .pt_ack(sio_ack), .pt_rdata(sio_rdata),
+        .dm_req(sio_dm_req), .dm_we(sio_dm_we), .dm_addr(sio_dm_addr), .dm_be(sio_dm_be),
+        .dm_wdata(sio_dm_wdata), .dm_ack(sio_dm_ack), .dm_rdata(dm_rdata),
+        .pirq_n({scsi_inta_n, 3'b111}), .serr(1'b0), .iochk(1'b0),
+        .intr(sio_intr), .nmi(sio_nmi), .toy_irq(sio_toy), .kbrst(sio_kbrst), .spk(speaker),
+        .xio_addr(), .xio_rd(), .xio_wr(), .xio_wdata(), .xio_claim(1'b0), .xio_rdata(8'hFF),
+        .xio_irq(16'd0), .xio_dreq(8'd0), .xio_dack(), .xio_dack_ch(), .xio_dack_data(),
+        .xio_dev_data(16'd0), .xio_dma_ch(), .xio_tc(),
+        .com1_txd(com1_txd), .com1_rxd(com1_rxd), .com1_rts_n(), .com1_dtr_n(),
+        .com1_cts_n(1'b0), .com1_dsr_n(1'b0), .com1_ri_n(1'b1), .com1_dcd_n(1'b0),
+        .com1_tx_stb(com1_tx_stb), .com1_tx_byte(com1_tx_byte),
+        .com1_rx_inj_stb(com1_kbd_stb), .com1_rx_inj_byte(com1_kbd_byte),
+        .com2_txd(com2_txd), .com2_rxd(com2_rxd), .com2_rts_n(), .com2_dtr_n(),
+        .com2_cts_n(1'b0), .com2_dsr_n(1'b0), .com2_ri_n(1'b1), .com2_dcd_n(1'b0),
+        .ps2_key(ps2_key), .ps2_mouse(ps2_mouse), .rtc(rtc),
+        .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .lpt_data()
     );
 
-    always @(posedge clk) begin
-        isa_ack <= 1'b0;
-        if (rst) isa_busy <= 1'b0;
-        else if (io_strobe) begin
-            isa_rd  <= {4{com1_sel ? com1_dout : 8'hFF}};    // nothing else on ISA yet
-            isa_ack <= 1'b1;
-            isa_busy <= 1'b1;
-        end else if (!pt_req) isa_busy <= 1'b0;
-    end
-    assign pt_ack   = isa_ack | scsi_ack;
-    assign pt_rdata = (isa_ack ? isa_rd : 32'd0) | scsi_rdata;
+    assign pt_claim = scsi_claim | sio_claim;
+    assign pt_ack   = scsi_ack | sio_ack;
+    assign pt_rdata = scsi_rdata | (sio_ack ? sio_rdata : 32'd0);
 endmodule

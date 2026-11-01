@@ -20,6 +20,7 @@
 #include <cinttypes>
 #include <vector>
 #include <string>
+#include <ctime>
 
 static const char *led_name(int v) {
     switch (v) {
@@ -81,7 +82,17 @@ int main(int argc, char **argv) {
     t->cfg_mem = mem;
     t->jumpers = jumpers;
     t->com1_rxd = 1;
+    t->com2_rxd = 1;
     t->srom_rxd = 1;
+    t->ps2_key = 0; t->ps2_mouse = 0; t->year_ovr_en = 0; t->year_ovr = 0;
+    {   // the TOY's time from the host clock, in hps_io's RTC layout (BCD:
+        // sec, min, hour, day, month, year, weekday; bit 64 toggles on update)
+        time_t now = time(nullptr); struct tm *tm = localtime(&now);
+        auto bcd = [](int v) { return (uint64_t)(((v / 10) << 4) | (v % 10)); };
+        uint64_t r = bcd(tm->tm_sec) | bcd(tm->tm_min) << 8 | bcd(tm->tm_hour) << 16 | bcd(tm->tm_mday) << 24 |
+                     bcd(tm->tm_mon + 1) << 32 | bcd(tm->tm_year % 100) << 40 | bcd(tm->tm_wday + 1) << 48;
+        t->rtc[0] = (uint32_t)r; t->rtc[1] = (uint32_t)(r >> 32); t->rtc[2] = 1;
+    }
     // SROM port decoder: 8N1 at 19200 baud = 5208.33 cycles a bit
     const double SBIT = 100e6 / 19200.0;
     int s_last = 1, s_nbit = -1; double s_t0 = 0; int s_byte = 0;
