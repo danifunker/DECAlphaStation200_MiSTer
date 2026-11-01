@@ -99,6 +99,11 @@ module ev4_core (
     wire        dc_ena = abox_ctl[10];
 
     reg  [63:0] pal_temp [0:31];
+    reg   [5:0] fpcr_f;                 // INV DZE OVF UNF INE IOV = FPCR[57:52] (bit 0 = INV)
+    reg   [1:0] fpcr_dyn;               // FPCR[59:58]
+    reg   [6:0] exc_sum_r;              // EXC_SUM[8:2]: IOV INE UNF FOV DZE INV SWC
+    reg  [63:0] exc_mask;               // the register write mask: bit n = Rn, 32+n = Fn
+    reg   [5:0] msk_ptr;
 
     // the interrupt pins, registered (HIRR shows "delayed copies" of the pins, cpu.md 4.2;
     // the request logic outside is long)
@@ -315,12 +320,16 @@ module ev4_core (
                          d_func == 7'h64 || d_func == 7'h66);
 
     reg  [3:0] dc_cls;
+    reg        dc_fpu;                 // an FP arithmetic instruction (opcodes 15, 16)
+    wire       fd_fen, fd_legal, fd_div, fd_rd_fa, fd_rd_fb;
+    ev4_fpu_dec fdec (.ir(d_ir), .fen(fd_fen), .legal(fd_legal), .div(fd_div), .rd_fa(fd_rd_fa), .rd_fb(fd_rd_fb));
     reg  [5:0] dc_dst; reg dc_dst_v;
     reg        dc_ua, dc_ub;           // reads Ra, Rb
     reg        dc_fast, dc_ldlat;      // result forwardable from X / only from W
     reg        dc_ser;
     reg  [3:0] dc_exc;
     always @* begin
+        dc_fpu = 1'b0;
         dc_cls = C_NOP; dc_dst = d_ra; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0;
         dc_fast = 1'b0; dc_ldlat = 1'b0; dc_ser = 1'b0; dc_exc = E_NONE;
         case (d_op)
@@ -370,8 +379,12 @@ module ev4_core (
             endcase
             if (!iccsr_fpe) dc_exc = E_FEN;
         end
-        6'h15, 6'h16:                                                     // FP arithmetic: no FPU yet (docs/gaps.md)
-            dc_exc = iccsr_fpe ? E_OPCDEC : E_FEN;
+        6'h15, 6'h16: begin                                               // FP arithmetic (rtl/cpu/ev4_fpu.v)
+            dc_cls = C_SHF; dc_fpu = 1'b1;                                // slow result path; X waits for the FPU
+            dc_dst = d_rc; dc_dst_v = 1'b1; dc_ua = fd_rd_fa; dc_ub = 1'b1;
+            if (fd_fen || !iccsr_fpe) dc_exc = E_FEN;
+            else if (!fd_legal) dc_exc = E_OPCDEC;
+        end
         6'h14:                                                            // ITFP (EV6 FIX): not on the 21064
             dc_exc = E_OPCDEC;
         6'h18: begin
@@ -395,9 +408,9 @@ module ev4_core (
             dc_exc = E_INTR; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0;
         end
         if (d_exc != E_NONE) begin                    // fetch fault: nothing else happens
-            dc_exc = d_exc; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0; dc_ser = 1'b0;
+            dc_exc = d_exc; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0; dc_ser = 1'b0; dc_fpu = 1'b0;
         end
-        if (dc_exc != E_NONE) begin dc_dst_v = 1'b0; dc_ser = 1'b1; end   // faults retire alone
+        if (dc_exc != E_NONE) begin dc_dst_v = 1'b0; dc_ser = 1'b1; dc_fpu = 1'b0; end   // faults retire alone
         if (dc_dst[4:0] == 5'd31) dc_dst_v = 1'b0;
     end
     wire d_fcmov = d_op == 6'h17 && d_ir[15:5] >= 11'h02A && d_ir[15:5] <= 11'h02F;
@@ -416,6 +429,8 @@ module ev4_core (
     // M1 / M2 registers (declared here for forwarding)
     reg         m1_v;  reg [63:0] m1_pc; reg [31:0] m1_ir; reg [3:0] m1_cls; reg [3:0] m1_exc;
     reg  [63:0] m1_rf, m1_rs, m1_va, m1_sd; reg m1_cmf; reg m1_isf;
+    reg   [5:0] m1_fs, m2_fs, w_fs;      // FPCR flags to OR in (FP arithmetic)
+    reg   [6:0] m1_es, m2_es, w_es;      // EXC_SUM[8:2] of an FP trap
     wire [63:0] m1_res = m1_isf ? m1_rf : m1_rs;    // fast and slow results come from separate flops
     reg   [5:0] m1_dst; reg m1_dst_v; reg m1_ldlat;
     reg         m2_v;  reg [63:0] m2_pc; reg [31:0] m2_ir; reg [3:0] m2_cls;
@@ -505,7 +520,24 @@ module ev4_core (
     ev4_imul xmul (.clk(clk), .rst(rst), .start(mul_go), .func(x_ir[11:5]), .a(x_a), .b(x_b),
                    .busy(mul_busy), .done(mul_done), .res(mul_res), .ovf(mul_ovf), .illegal());
     wire x_mul_wait = x_v && x_cls == C_MUL && x_exc == E_NONE && !mul_fin;
-    assign stall_x = stall_m1 || x_mul_wait;
+
+    // the FP arithmetic unit (docs/design/fpu.md 4): X holds the instruction
+    // until done; the result goes on the slow result path
+    reg         x_fpu;
+    reg         fpu_go, fpu_live, fpu_fin;
+    reg  [63:0] fpu_r;
+    reg   [5:0] fpu_fs;
+    reg   [6:0] fpu_es;
+    reg         fpu_tr;
+    wire        fpu_busy, fpu_done, fpu_trap;
+    wire [63:0] fpu_result;
+    wire  [5:0] fpu_fset;
+    wire  [6:0] fpu_esum;
+    ev4_fpu #(.TAG_W(1)) fpu (.clk(clk), .rst(rst), .kill(w_redir), .start(fpu_go), .ir(x_ir), .fa(x_a), .fb(x_b),
+        .fpcr_dyn(fpcr_dyn), .tag(1'b0), .busy(fpu_busy), .done(fpu_done), .done_tag(),
+        .result(fpu_result), .fpcr_set(fpu_fset), .exc_sum(fpu_esum), .trap(fpu_trap));
+    wire x_fpu_wait = x_v && x_fpu && x_exc == E_NONE && !fpu_fin;
+    assign stall_x = stall_m1 || x_mul_wait || x_fpu_wait;
 
     // IPR read, in D (HW_MFPR issues serialized, so the state is current)
     reg [63:0] ipr_rd;
@@ -523,6 +555,7 @@ module ev4_core (
             5'd2:  ipr_rd = {40'd0, iccsr_fpe, iccsr_map, iccsr_hwe, 21'd0};
             5'd3:  ipr_rd = {29'd0, itb_temp};                             // ITB_PTE_TEMP
             5'd4:  ipr_rd = exc_addr;
+            5'd10: ipr_rd = {30'd0, exc_mask[6'd63 - msk_ptr], 24'd0, exc_sum_r, 2'b00};   // EXC_SUM, MSK
             5'd5:  ipr_rd = {60'd0, sl_rcv, 3'b000};                       // SL_RCV
             5'd12, 5'd13, 5'd14: ipr_rd = hirr_rd;                        // HIRR (SIRR, ASTRR read the same)
             5'd16, 5'd17, 5'd18: ipr_rd = hier_rd;                        // HIER (SIER, ASTER read the same)
@@ -566,8 +599,6 @@ module ev4_core (
 
     // the slow X results (into M1's second result flop)
     // FP operate (opcode 17), FPCR (cpu.md 8.2, 8.5)
-    reg   [5:0] fpcr_f;                 // INV DZE OVF UNF INE IOV = FPCR[57:52] (bit 0 = INV)
-    reg   [1:0] fpcr_dyn;               // FPCR[59:58]
     wire [63:0] fpcr_rd = {|fpcr_f, 3'b000, fpcr_dyn, fpcr_f[5], fpcr_f[4], fpcr_f[3], fpcr_f[2], fpcr_f[1], fpcr_f[0], 52'd0};
     function ftest;                     // the FBxx / FCMOVxx condition on Fa ({ir[28:26]} or func[2:0])
         input [2:0] c; input [63:0] f;
@@ -617,6 +648,7 @@ module ev4_core (
 
     reg [63:0] x_slow;
     always @* begin
+        if (x_fpu) x_slow = fpu_r; else
         if (x_fpop) x_slow = fpx_res; else
         case (x_cmov ? C_CMOVX : x_cls)
         C_CMOVX: x_slow = fa_wr ? fa_res : x_c;                // a false CMOV keeps Rc
@@ -629,7 +661,7 @@ module ev4_core (
         endcase
     end
     wire x_isf = (x_cls == C_ALU && !x_cmov && !x_fpop) || x_cls == C_LDA || x_cls == C_BR || x_cls == C_JMP;
-    wire x_ovf = (x_cls == C_ALU && !x_fpop && fa_ovf) || (x_cls == C_MUL && mul_ovf);
+    wire x_ovf = (x_cls == C_ALU && !x_fpop && fa_ovf) || (x_cls == C_MUL && mul_ovf) || (x_fpu && fpu_tr);
 
     // ================================================================ M1
     // D-stream translation of the registered VA
@@ -841,6 +873,7 @@ module ev4_core (
             sl_xmit <= 1'b1;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
+            fpu_go <= 1'b0; fpu_live <= 1'b0; fpu_fin <= 1'b0; exc_sum_r <= 7'd0; exc_mask <= 64'd0; msk_ptr <= 6'd0;
             wb_v <= 1'b0; bown <= B_NONE; mem_req <= 1'b0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
@@ -931,7 +964,7 @@ module ev4_core (
                     x_az63 <= loop_a ? fast_res[62:0] == 63'd0 : fwd_a[62:0] == 63'd0;
                     x_as   <= loop_a ? fast_res[63] : fwd_a[63];
                     x_al   <= loop_a ? fast_res[0] : fwd_a[0];
-                    x_b <= d_lit && (dc_cls == C_ALU || dc_cls == C_SHF || dc_cls == C_MUL)
+                    x_b <= d_lit && d_op[5:2] == 4'b0100      // the literal form: integer operate (10-13) only
                            ? {56'd0, d_ir[20:13]} : (loop_b ? fast_res : fwd_b);
                     x_c <= fwd_c;                       // CMOV's Rc: never from the loop (stalls instead)
                     x_btarget <= d_pc + 64'd4 + {{41{d_ir[20]}}, d_ir[20:0], 2'b00};
@@ -940,6 +973,7 @@ module ev4_core (
                     x_sel_lda <= dc_cls == C_LDA;
                     x_sel_link <= dc_cls == C_BR || dc_cls == C_JMP;
                     x_cmov <= d_cmov;
+                    x_fpu <= dc_fpu;
                     if (dc_ser) ser_pending <= 1'b1;
                 end
             end
@@ -951,6 +985,17 @@ module ev4_core (
             if (mul_done && mul_live) begin mul_fin <= 1'b1; mul_live <= 1'b0; end
             if (x_fire) mul_fin <= 1'b0;
             if (w_redir) begin mul_fin <= 1'b0; mul_live <= 1'b0; end
+            // the FPU
+            fpu_go <= 1'b0;
+            if (x_v && x_fpu && x_exc == E_NONE && !fpu_fin && !fpu_live && !fpu_go && !w_redir) begin
+                fpu_go <= 1'b1; fpu_live <= 1'b1;
+            end
+            if (fpu_done && fpu_live) begin
+                fpu_fin <= 1'b1; fpu_live <= 1'b0;
+                fpu_r <= fpu_result; fpu_fs <= fpu_fset; fpu_es <= fpu_esum; fpu_tr <= fpu_trap;
+            end
+            if (x_fire) fpu_fin <= 1'b0;
+            if (w_redir) begin fpu_fin <= 1'b0; fpu_live <= 1'b0; end
 
             // ------------------------------------------------ X -> M1
             if (w_redir) m1_v <= 1'b0;
@@ -958,6 +1003,7 @@ module ev4_core (
                 m1_v <= x_v && !x_mul_wait;
                 m1_pc <= x_pc; m1_ir <= x_ir; m1_cls <= x_cls;
                 m1_exc <= (x_exc == E_NONE && x_ovf) ? E_ARITH : x_exc;
+                m1_fs <= x_fpu ? fpu_fs : 6'd0; m1_es <= (x_fpu && fpu_tr) ? fpu_es : 7'd0;
                 m1_rf <= fast_res; m1_rs <= x_slow; m1_isf <= x_isf; m1_va <= x_va; m1_sd <= x_sdata; m1_cmf <= x_cls == C_ALU && !x_fpop && !fa_wr;
                 m1_dst <= x_dst; m1_dst_v <= x_dst_v; m1_ldlat <= x_ldlat;
             end
@@ -967,7 +1013,7 @@ module ev4_core (
             else if (!stall_m2) begin
                 m2_v <= m1_v;
                 m2_pc <= m1_pc; m2_ir <= m1_ir; m2_cls <= m1_cls; m2_res <= m1_res;
-                m2_va <= m1_va; m2_sd <= m1_sd; m2_pa <= m1_pa; m2_cmf <= m1_cmf;
+                m2_va <= m1_va; m2_sd <= m1_sd; m2_pa <= m1_pa; m2_cmf <= m1_cmf; m2_fs <= m1_fs; m2_es <= m1_es;
                 m2_dst <= m1_dst; m2_dst_v <= m1_dst_v; m2_ldlat <= m1_ldlat;
                 // translation faults are formed in M2 from registered vectors (timing)
                 m2_exc0 <= (m1_exc != E_NONE || !m1_mem) ? m1_exc : m1_unal ? E_UNAL : E_NONE;
@@ -1000,7 +1046,7 @@ module ev4_core (
             else begin
                 w_v <= m2_v && !stall_m2;
                 w_pc <= m2_pc; w_ir <= m2_ir; w_cls <= m2_cls; w_exc <= m2_exc;
-                w_dst <= m2_dst; w_dst_v <= m2_dst_v; w_va <= m2_va; w_cmf <= m2_cmf; w_fb <= m2_fb;
+                w_dst <= m2_dst; w_dst_v <= m2_dst_v; w_va <= m2_va; w_cmf <= m2_cmf; w_fb <= m2_fb; w_fs <= m2_fs; w_es <= m2_es;
                 w_res <= m2_load ? m2_lres : (m2_store && m2_stc) ? {63'd0, m2_stc_ok} : m2_res;
                 w_st <= m2_store && m2_exc == E_NONE && !(m2_stc && !m2_stc_ok);
                 w_sdata <= m2_quad ? m2_sd : {32'd0, m2_sd[31:0]};
@@ -1014,6 +1060,15 @@ module ev4_core (
             r_v <= rf_we; r_dst <= w_dst; r_res <= w_res;
             if (w_v) begin
                 if (w_exc == E_NONE || w_exc == E_ARITH) begin
+                    fpcr_f <= fpcr_f | w_fs;            // FP arithmetic flags, trap or not
+                    if (w_exc == E_ARITH && w_es != 7'd0) begin
+                        // EXC_SUM[8:3] accumulate; SWC stays set only while every trap had /S
+                        exc_sum_r <= {exc_sum_r[6:1] | w_es[6:1], (exc_sum_r[6:1] == 6'd0 ? 1'b1 : exc_sum_r[0]) & w_es[0]};
+                        if (w_dst_v) exc_mask[w_dst] <= 1'b1;
+                    end else if (w_exc == E_ARITH) begin
+                        exc_sum_r[6] <= 1'b1;                                     // integer /V: IOV
+                        if (w_dst_v) exc_mask[w_dst] <= 1'b1;
+                    end
                     dbg_retire <= w_cls != C_CPAL;      // CALL_PAL enters PALcode, it does not retire
                     dbg_pc <= w_pc; dbg_insn <= w_ir;
                     dbg_rwr <= rf_we && !w_cmf && !w_dst[5]; dbg_rnum <= w_dst[4:0]; dbg_rval <= w_res;
@@ -1055,6 +1110,7 @@ module ev4_core (
                             5'd11: pal_base <= w_res[33:14];
                             5'd22: sl_xmit <= w_res[4];               // SL_XMIT
                             5'd13: sirr <= w_res[47:33];                               // SIRR
+                            5'd10: begin exc_sum_r <= 7'd0; msk_ptr <= 6'd0; end      // EXC_SUM: any write clears
                             5'd14: astrr <= w_res[51:48];                              // ASTRR {U, S, E, K}
                             5'd16: begin hier <= w_res[14:9]; hier_pc0 <= w_res[8]; hier_pc1 <= w_res[15];
                                          hier_cre <= w_res[2]; hier_sle <= w_res[32]; end   // HIER
@@ -1086,6 +1142,9 @@ module ev4_core (
                             endcase
                     end
                     if (w_cls == C_MFPR && !w_ir[7] && w_ir[6] && w_ir[4:0] == 5'd5) mm_lock <= 1'b0;
+                    if (w_cls == C_MFPR && !w_ir[7] && !w_ir[6] && w_ir[5] && w_ir[4:0] == 5'd10) begin
+                        exc_mask[6'd63 - msk_ptr] <= 1'b0; msk_ptr <= msk_ptr + 6'd1;  // MSK: one bit per read, F31 first
+                    end
                     if (w_cls == C_MFPR && !w_ir[7] && w_ir[6] && w_ir[4:0] == 5'd2) begin   // DTB_PTE read
                         dtb_temp <= {dtb_asm[dtb_p], dtb_pfn[dtb_p], dtb_pr[dtb_p][3:0], dtb_pr[dtb_p][7:4], dtb_pr[dtb_p][9:8], 3'b000};
                         dtb_p <= dtb_p + 5'd1;

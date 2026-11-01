@@ -82,7 +82,7 @@ cputest: obj_cpu/Vev4_seq
 	done; exit $$fails
 
 # the pipelined core (rtl/cpu/ev4_core.v) on the same images
-PIPE_RTL = $(RTL)/cpu/ev4_ram.v $(RTL)/cpu/ev4_ialu.v $(RTL)/cpu/ev4_imul.v $(RTL)/cpu/ev4_core.v
+PIPE_RTL = $(RTL)/cpu/ev4_ram.v $(RTL)/cpu/ev4_ialu.v $(RTL)/cpu/ev4_imul.v $(RTL)/cpu/ev4_fpu.v $(RTL)/cpu/ev4_fpu_dec.v $(RTL)/cpu/ev4_core.v
 
 obj_pipe/Vev4_core: $(PIPE_RTL) cputest/tb_cpu.cpp
 	$(TB_V) --Mdir obj_pipe --top-module ev4_core -Wno-BLKSEQ -CFLAGS '-DCPU_TOP=Vev4_core -DCPU_PIPE' $^
@@ -108,6 +108,7 @@ t3: obj_pipe/Vev4_core
 	obj_pipe/Vev4_core $(T0)/t3_tlb.bin --trace $(T0)/t3_tlb.pipe.trace
 	obj_pipe/Vev4_core $(T0)/t3_intr.bin --trace $(T0)/t3_intr.pipe.trace
 	obj_pipe/Vev4_core $(T0)/t3_fp.bin --trace $(T0)/t3_fp.pipe.trace
+	obj_pipe/Vev4_core $(T0)/t3_fparith.bin --trace $(T0)/t3_fparith.pipe.trace
 
 .PHONY: cputest cputest-pipe sromload t3
 

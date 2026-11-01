@@ -64,7 +64,7 @@ $(B)/pal/t3_%.o: t3_%.S
 	@python3 -I check_ev4.py $(B)/pal/t3_$*.s
 	$(AS) -o $@ $(B)/pal/t3_$*.s
 
-t3: $(B)/pal/t3_tlb.bin $(B)/pal/t3_intr.bin $(B)/pal/t3_fp.bin
+t3: $(B)/pal/t3_tlb.bin $(B)/pal/t3_intr.bin $(B)/pal/t3_fp.bin $(B)/pal/t3_fparith.bin
 
 TOHOST = 0x800000
 pal-emu: $(EMU) pal
