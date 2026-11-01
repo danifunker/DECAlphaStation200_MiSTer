@@ -125,3 +125,12 @@ system: obj_sys/Vas200_sys $(FLASH)
 	obj_sys/Vas200_sys --flash $(FLASH) --drom $(DROM) $(SYSARGS)
 
 .PHONY: system
+
+# the SDRAM controller against a behavioural chip
+obj_tb_sdram/Vtb_sdram_top: $(RTL)/mister/sdram_ctl.v tb/sdram_model.v tb/tb_sdram_top.v tb/tb_sdram.cpp
+	$(TB_V) --Mdir obj_tb_sdram --top-module tb_sdram_top -Wno-BLKSEQ $^
+
+tb_sdram: obj_tb_sdram/Vtb_sdram_top
+	obj_tb_sdram/Vtb_sdram_top
+
+.PHONY: tb_sdram
