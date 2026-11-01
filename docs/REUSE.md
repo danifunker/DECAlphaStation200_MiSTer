@@ -60,6 +60,13 @@ reading of EV4 details next to the HRM, QEMU and our `tools/alphaemu`: `src/emu/
 layouts), `src/emu/21071.h` (21071-CA/DA CSR bitfields), `src/emu/execute.c` (CALL_PAL, HW_*
 instructions, TB handling). No floating point and no device models beyond headers.
 
+## ASA-EMulatR (reference only, `scratch/emulatr`)
+
+github.com/timothyPeer/EmulatRAppUni (GPL-3 per its README): an ES40 / 21264 emulator in progress
+(Qt 6, Windows), aiming to boot Tru64/VMS/Linux. Same platform limits as AXPbox; its FP grains
+(`grainFactoryLib`, `coreLib/IEEE754_FloatConversion_inl.h`) and `controllersLib` SCSI/SCRIPTS
+classes are a third reading where AXPbox and the manuals disagree. Lower confidence than AXPbox.
+
 ## Main_MiSTer
 
 Branch `dec-alphastation` (off `master`). Clone the family support code as
