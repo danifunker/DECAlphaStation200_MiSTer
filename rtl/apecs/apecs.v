@@ -181,8 +181,14 @@ module apecs (
         sp_be = len == 2'd0 ? (4'b0001 << lane) : len == 2'd1 ? (4'b0011 << lane) :
                 len == 2'd2 ? (4'b0111 << lane) : 4'b1111;
     endfunction
-    reg [7:0] nvram [0:8191];
+    (* ramstyle = "no_rw_check, M10K" *) reg [7:0] nvram [0:8191];   // no port relies on read-during-write
     reg [7:0] nv_q;
+    // the NVRAM as a true dual-port M10K: each port in its own block (a port
+    // that shared a block with the CSR RAMs was not inferred as RAM)
+    always @(posedge clk) begin                 // port A: the CPU
+        nv_q <= nvram[nv_a];
+        if (nv_we) nvram[nv_a] <= nv_wd;
+    end
     always @(posedge clk) begin                 // port B (true dual-port M10K)
         nvb_rdata <= nvram[nvb_addr];
         if (nvb_we) nvram[nvb_addr] <= nvb_wdata;
@@ -190,7 +196,6 @@ module apecs (
     always @(posedge clk) begin
         ca_q <= ca[ca_a]; if (ca_we) ca[ca_a] <= ca_wd;
         da_q <= da[da_a]; if (da_we) da[da_a] <= da_wd;
-        nv_q <= nvram[nv_a]; if (nv_we) nvram[nv_a] <= nv_wd;
         nv_dirty <= nv_we;
     end
 
