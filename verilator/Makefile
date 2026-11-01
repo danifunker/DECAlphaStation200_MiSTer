@@ -49,3 +49,15 @@ tb_ialu: obj_tb_ialu/Vev4_ialu $(VEC)/ialu.vec
 	obj_tb_ialu/Vev4_ialu $(VEC)/ialu.vec
 
 .PHONY: tb_ialu
+
+$(VEC)/imul.vec: ../tests/cpu/unit_vectors.py ../tests/cpu/gen_int.py
+	@mkdir -p $(VEC)
+	python3 -I ../tests/cpu/unit_vectors.py imul $@
+
+obj_tb_imul/Vev4_imul: $(RTL)/cpu/ev4_imul.v tb/tb_imul.cpp
+	$(TB_V) --Mdir obj_tb_imul --top-module ev4_imul $^
+
+tb_imul: obj_tb_imul/Vev4_imul $(VEC)/imul.vec
+	obj_tb_imul/Vev4_imul $(VEC)/imul.vec
+
+.PHONY: tb_imul

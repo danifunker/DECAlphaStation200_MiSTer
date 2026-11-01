@@ -3,6 +3,7 @@
 model: one line per case, hex fields.
 
     unit_vectors.py ialu OUT     op func a b res wr ovf   (opcodes 10, 11, 12)
+    unit_vectors.py imul OUT     13 func a b res 1 ovf    (opcode 13)
 """
 import random
 import sys
@@ -29,6 +30,7 @@ FUNC = {
     'msklh': (0x12, 0x62), 'inslh': (0x12, 0x67), 'extlh': (0x12, 0x6A), 'mskqh': (0x12, 0x72),
     'insqh': (0x12, 0x77), 'extqh': (0x12, 0x7A),
 }
+MFUNC = {'mull': 0x00, 'mulq': 0x20, 'umulh': 0x30, 'mull/v': 0x40, 'mulq/v': 0x60}
 
 
 def ialu(out):
@@ -62,5 +64,27 @@ def ialu(out):
     print(f'{out}: {n} vectors')
 
 
+def imul(out):
+    gen = g.Gen(0x1A3)
+    n = 0
+    with open(out, 'w') as f:
+        for op, fn in MFUNC.items():
+            for k in range(2000):
+                if k < len(g.EDGE) ** 2:
+                    a = g.EDGE[k % len(g.EDGE)]
+                    b = g.EDGE[k // len(g.EDGE)]
+                else:
+                    a, b = gen.rnd64(), gen.rnd64()
+                ovf = 0
+                if op.endswith('/v'):
+                    ovf = int(g.OPS[op](a, b, 0) is None)
+                    r = g.OPS[op[:-2]](a, b, 0)
+                else:
+                    r = g.OPS[op](a, b, 0)
+                f.write(f'13 {fn:02x} {a:016x} {b:016x} {r:016x} 1 {ovf}\n')
+                n += 1
+    print(f'{out}: {n} vectors')
+
+
 if __name__ == '__main__':
-    {'ialu': ialu}[sys.argv[1]](sys.argv[2])
+    {'ialu': ialu, 'imul': imul}[sys.argv[1]](sys.argv[2])
