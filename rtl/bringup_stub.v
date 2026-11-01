@@ -17,7 +17,7 @@ module bringup_stub (
 );
     localparam [8*74-1:0] BANNER = {
         "\r\nDEC AlphaStation 200 4/166 - MiSTer core, bring-up build\r\n",
-        "Memory: \001 MB\r\n"
+        "Memory: # MB\r\n"
     };
     localparam BLEN = 74;
     localparam [8*49-1:0] BANNER2 = "CPU not implemented yet. COM1 echo: type here.\r\n>";
@@ -69,7 +69,7 @@ module bringup_stub (
             end
             S_BANNER: begin
                 if (bi == BLEN + B2LEN) st <= S_POLL;
-                else if (banner_at(bi) == 8'h01) begin
+                else if (banner_at(bi) == "#") begin
                     if (digit == 2'd3 || memtxt[8*(2-digit) +: 8] == 8'h00) begin
                         bi <= bi + 7'd1; digit <= 2'd0;
                     end else begin
