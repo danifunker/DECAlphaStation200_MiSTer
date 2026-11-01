@@ -39,7 +39,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
-| **SRM's `show config` lists no PCI devices** (the DROM sees the 53C810 and SIO) | open | P1 | Found 2026-11-01: SRM's configuration accesses differ from the DROM's; the SIM_PCILOG run will show how |
+| ~~SRM's `show config` lists no PCI devices~~ | **done** 2026-11-01 | P1 | DCSR<31> (pass 2) read 0, so SRM used pass-1 raw IDSEL addresses; now 1. SRM lists the NCR 810 (pka0) and the SIO |
 | DMA scatter/gather (TLB, TBIA) | stub | P2 | Direct-mapped windows only; Digital UNIX and others use S/G |
 | Error reporting (EDSR/PEAR/SEAR, master-abort bits, error interrupt to irq_h[0]) | stub | P2 | |
 | D-cache invalidation on DMA writes (dInvReq) | open | P2 | Required once disks DMA into memory the CPU has cached |
