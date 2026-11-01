@@ -784,9 +784,22 @@ module ev4_core (
                 for (k = 0; k < 8; k = k + 1) if (be[k]) merge[8*k +: 8] = d[8*k +: 8];
         end
     endfunction
-    wire [63:0] m2_dqm = merge(merge(merge(m2_dq, sh2_v, sh2_a, m2_pa[33:3], sh2_d, sh2_b),
-                                     sh1_v, sh1_a, m2_pa[33:3], sh1_d, sh1_b),
-                               sh0_v, sh0_a, m2_pa[33:3], sh0_d, sh0_b);
+    // the address compares are done in M1 against the entries the load will
+    // meet in M2 (sh0, sh1 then and the store committing then) and registered
+    // with their data (timing: they ran from m2_pa into the load result)
+    reg         mg2_v, mg1_v, mg0_v;
+    reg  [63:0] mg2_d, mg1_d, mg0_d;
+    reg   [7:0] mg2_b, mg1_b, mg0_b;
+    function [63:0] mrg;
+        input [63:0] q; input v; input [63:0] d; input [7:0] be;
+        integer k;
+        begin
+            mrg = q;
+            if (v) for (k = 0; k < 8; k = k + 1) if (be[k]) mrg[8*k +: 8] = d[8*k +: 8];
+        end
+    endfunction
+    wire [63:0] m2_dqm = mrg(mrg(mrg(m2_dq, mg2_v, mg2_d, mg2_b), mg1_v, mg1_d, mg1_b), mg0_v, mg0_d, mg0_b);
+    // the store M2 commits into the D-cache this cycle (becomes sh0)
 
     // the bus side of M2: misses and uncached loads
     localparam MS_IDLE = 2'd0, MS_WAIT = 2'd1, MS_DONE = 2'd2;
@@ -1033,6 +1046,11 @@ module ev4_core (
                 m2_tchk <= m1_exc == E_NONE && m1_mem && !m1_unal && !m1_spx;
                 m2_dtbm <= dtb_m; m2_vacv <= dtb_acv; m2_vfor <= dtb_for; m2_vfow <= dtb_fow;
                 m2_dq <= dc_q; m2_dt <= dct_q; m2_dv <= dcv_q; m2_hitq <= m1_hit;
+                // store history as M2 will see it: sh1 -> sh2, sh0 -> sh1, M2's commit -> sh0
+                mg2_v <= sh1_v && sh1_a == m1_pa[33:3]; mg2_d <= sh1_d; mg2_b <= sh1_b;
+                mg1_v <= sh0_v && sh0_a == m1_pa[33:3]; mg1_d <= sh0_d; mg1_b <= sh0_b;
+                mg0_v <= m2_live && m2_store && !(m2_stc && !m2_stc_ok) && m2_hit && m2_pa[33:3] == m1_pa[33:3];
+                mg0_d <= m2_wq; mg0_b <= m2_be;
                 mstate <= MS_IDLE;
             end
 
