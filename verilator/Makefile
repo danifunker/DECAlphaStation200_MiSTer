@@ -134,3 +134,16 @@ tb_sdram: obj_tb_sdram/Vtb_sdram_top
 	obj_tb_sdram/Vtb_sdram_top
 
 .PHONY: tb_sdram
+
+# ---------------------------------------------------------------- the 53C810 and its SCSI targets
+# rtl/scsi: PCI header, the DROM's config test, registers through both BARs,
+# SCRIPTS against a disk and a CD-ROM (tb/tb_ncr810.cpp)
+SCSI_RTL = $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v tb/tb_ncr810_top.v
+
+obj_tb_ncr810/Vtb_ncr810_top: $(SCSI_RTL) tb/tb_ncr810.cpp
+	$(TB_V) --Mdir obj_tb_ncr810 --top-module tb_ncr810_top -Wno-BLKSEQ $(NCR_FLAGS) $^
+
+tb_ncr810: obj_tb_ncr810/Vtb_ncr810_top
+	obj_tb_ncr810/Vtb_ncr810_top
+
+.PHONY: tb_ncr810
