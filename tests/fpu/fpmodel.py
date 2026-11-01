@@ -148,7 +148,8 @@ def legal(ir):
     return False
 
 
-def model(ir, fa, fb, dyn):
+def model(ir, fa, fb, dyn, vax_rne=False):
+    """vax_rne: VAX normal rounding to nearest even instead (QEMU's, for qemu_check.py)."""
     if not legal(ir):
         return None
     vax = (ir >> 26) == 0x15
@@ -156,7 +157,7 @@ def model(ir, fa, fb, dyn):
     op, src, rnd = fn & 15, (fn >> 4) & 3, (fn >> 6) & 3
     en_u, en_i, q_s = fn >> 8 & 1, (fn >> 9 & 1) and not vax, fn >> 10 & 1
     if vax:
-        mode = RNA if rnd == 2 else RZ
+        mode = (RNE if vax_rne else RNA) if rnd == 2 else RZ
     else:
         mode = [RZ, RM, RNE, RP][dyn if rnd == 3 else rnd]
 
