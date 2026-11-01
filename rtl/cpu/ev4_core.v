@@ -160,6 +160,11 @@ module ev4_core (
     reg  [63:0] w_res; reg [5:0] w_dst; reg w_dst_v;
     reg  [63:0] w_va; reg w_cmf;   // *_cmf: a CMOV whose condition was false (rewrites Rc, not traced)
     reg         w_st;  reg [63:0] w_sdata; reg [3:0] w_ssize;
+    // PAL_TEMP writes (HW_MTPR to a P register at W) outside the reset-gated
+    // block: they are undefined at reset, and the reset fanned into 2048 enables
+    always @(posedge clk)
+        if (w_v && (w_exc == E_NONE || w_exc == E_ARITH) && w_cls == C_MTPR && w_ir[7])
+            pal_temp[w_ir[4:0]] <= w_res;
     wire        w_redir;
     reg  [63:0] w_target;
 
@@ -1083,7 +1088,6 @@ module ev4_core (
                     dbg_mwr <= w_st; dbg_maddr <= w_va; dbg_mval <= w_sdata; dbg_msize <= w_ssize;
                     // IPR writes
                     if (w_cls == C_MTPR) begin
-                        if (w_ir[7]) pal_temp[w_ir[4:0]] <= w_res;
                         if (w_ir[6]) case (w_ir[4:0])
                             5'd14: begin
                                 abox_ctl <= w_res[15:0];
