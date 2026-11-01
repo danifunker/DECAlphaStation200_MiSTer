@@ -72,7 +72,8 @@ module ev4_core (
                C_CMOVX = 4'd15;                 // only as an x_slow selector
     // exception codes carried down the pipe
     localparam E_NONE = 4'd0, E_OPCDEC = 4'd1, E_FEN = 4'd2, E_ITBM = 4'd3,
-               E_UNAL = 4'd4, E_DTBM = 4'd5, E_ARITH = 4'd6, E_DFAULT = 4'd7, E_ITBACV = 4'd8;
+               E_UNAL = 4'd4, E_DTBM = 4'd5, E_ARITH = 4'd6, E_DFAULT = 4'd7, E_ITBACV = 4'd8,
+               E_INTR = 4'd9;                    // an interrupt, taken on this instruction
 
     // ================================================================ architectural state (W)
     reg         pal;
@@ -103,6 +104,23 @@ module ev4_core (
     // the request logic outside is long)
     reg   [5:0] irq_q;
     always @(posedge clk) irq_q <= irq_h;
+
+    // interrupt enables and software requests (cpu.md 4.2, 7)
+    reg   [5:0] hier;
+    reg         hier_pc0, hier_pc1, hier_cre, hier_sle;
+    reg  [15:1] sier, sirr;
+    reg   [3:0] aster, astrr;               // [0] K, [1] E, [2] S, [3] U
+    wire  [3:0] ast_mode_ok = {ps_cm >= 2'd3, ps_cm >= 2'd2, ps_cm >= 2'd1, 1'b1};
+    wire        ast_req = sier[2] && |(astrr & aster & ast_mode_ok);
+    wire        hw_req  = |(irq_q & hier);
+    wire        sw_req  = |(sirr & sier);
+    reg         intr_req;                    // registered: a deliverable interrupt is pending
+    always @(posedge clk) intr_req <= !rst && !pal && (hw_req || sw_req || ast_req);
+    // the HIRR / HIER read formats (cpu.md 4.2)
+    wire [63:0] hirr_rd = {31'd0, astrr[3], astrr[2], astrr[1], astrr[0], sirr, 1'b0,
+                           irq_q[2:0], 1'b0, 1'b0, irq_q[5:3], 1'b0, ast_req, sw_req, hw_req, 1'b0};
+    wire [63:0] hier_rd = {31'd0, aster[3], aster[2], aster[1], aster[0], sier, hier_sle,
+                           hier[2:0], hier_pc0, hier_pc1, hier[5:3], hier_cre, 4'd0};
 
     // ---------------------------------------------------------------- TBs (cpu.md 4.2, 4.3, 6)
     reg  [42:13] tb_tag;                // TB_TAG: VA of the next PTE write
@@ -335,6 +353,9 @@ module ev4_core (
         6'h38, 6'h39, 6'h3A, 6'h3B, 6'h3C, 6'h3D, 6'h3E, 6'h3F: begin dc_cls = C_CBR; dc_ua = 1'b1; end
         default: dc_exc = E_OPCDEC;
         endcase
+        if (d_exc == E_NONE && intr_req) begin        // an interrupt: this instruction does not run
+            dc_exc = E_INTR; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0;
+        end
         if (d_exc != E_NONE) begin                    // fetch fault: nothing else happens
             dc_exc = d_exc; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0; dc_ser = 1'b0;
         end
@@ -446,6 +467,7 @@ module ev4_core (
         else if (d_ir[6]) case (d_ir[4:0])
             5'd3:  ipr_rd = {29'd0, dtb_temp};                             // DTB_PTE_TEMP
             5'd4:  ipr_rd = {49'd0, mm_csr};
+            5'd12: ipr_rd = {60'd0, 1'b0, 3'b111};                        // DC_STAT: CHIP_ID 7 = production 21064
             5'd5:  ipr_rd = va_ipr;
             default: ipr_rd = 64'd0;
             endcase
@@ -454,7 +476,8 @@ module ev4_core (
             5'd3:  ipr_rd = {29'd0, itb_temp};                             // ITB_PTE_TEMP
             5'd4:  ipr_rd = exc_addr;
             5'd5:  ipr_rd = {60'd0, sl_rcv, 3'b000};                       // SL_RCV
-            5'd12: ipr_rd = {51'd0, irq_q[2:0], 2'b00, irq_q[5:3], 3'b000, |irq_q, 1'b0};   // HIRR [12:10] [7:5], HWR
+            5'd12, 5'd13, 5'd14: ipr_rd = hirr_rd;                        // HIRR (SIRR, ASTRR read the same)
+            5'd16, 5'd17, 5'd18: ipr_rd = hier_rd;                        // HIER (SIER, ASTER read the same)
             5'd9:  ipr_rd = {29'd0, ps_cm[1], 32'd0, ps_cm[0], 1'b0};
             5'd11: ipr_rd = {30'd0, pal_base, 14'd0};
             default: ipr_rd = 64'd0;
@@ -647,6 +670,7 @@ module ev4_core (
         E_ITBM:   begin w_ent = 1'b1; w_off = 14'h03E0; end
         E_ITBACV: begin w_ent = 1'b1; w_off = 14'h07E0; end
         E_DFAULT: begin w_ent = 1'b1; w_off = 14'h01E0; end
+        E_INTR:   begin w_ent = 1'b1; w_off = 14'h00E0; end
         E_UNAL:   begin w_ent = 1'b1; w_off = 14'h11E0; end
         E_DTBM:   begin w_ent = 1'b1; w_off = pal ? 14'h09E0 : 14'h08E0; end
         E_ARITH:  begin w_ent = 1'b1; w_off = 14'h0060; end
@@ -680,6 +704,8 @@ module ev4_core (
             pal <= 1'b1; iccsr_fpe <= 1'b0; iccsr_map <= 1'b0; iccsr_hwe <= 1'b0;
             pal_base <= 20'd0; abox_ctl <= 16'd0; ps_cm <= 2'd0; alt_cm <= 2'd0;
             itb_v <= 12'd0; dtb_v <= 32'd0; itb_sp <= 3'd0; itb_lp <= 2'd0; dtb_p <= 5'd0;
+            hier <= 6'd0; hier_pc0 <= 1'b0; hier_pc1 <= 1'b0; hier_cre <= 1'b0; hier_sle <= 1'b0;
+            sier <= 15'd0; sirr <= 15'd0; aster <= 4'd0; astrr <= 4'd0;
             mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0; cc_hi <= 32'd0; cc_en <= 1'b0;
             fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b0; v_f2 <= 1'b0;   // fetch starts after the sweep or the SROM load
             ld_active <= !icmode; ld_start <= 1'b0; ld_fin <= 1'b0; ld_bcnt <= 9'd0; ld_blk <= 9'd0;
@@ -896,6 +922,12 @@ module ev4_core (
                             5'd9: ps_cm <= w_res[4:3];
                             5'd11: pal_base <= w_res[33:14];
                             5'd22: sl_xmit <= w_res[4];               // SL_XMIT
+                            5'd13: sirr <= w_res[47:33];                               // SIRR
+                            5'd14: astrr <= w_res[51:48];                              // ASTRR {U, S, E, K}
+                            5'd16: begin hier <= w_res[14:9]; hier_pc0 <= w_res[8]; hier_pc1 <= w_res[15];
+                                         hier_cre <= w_res[2]; hier_sle <= w_res[32]; end   // HIER
+                            5'd17: sier <= w_res[47:33];                               // SIER
+                            5'd18: aster <= w_res[51:48];                              // ASTER {U, S, E, K}
                             5'd0: tb_tag <= w_res[42:13];                              // TB_TAG
                             5'd1: begin                                                 // ITB_PTE
                                 if (tb_gh == 2'd3) begin

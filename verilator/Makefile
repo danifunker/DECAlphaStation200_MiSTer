@@ -106,6 +106,7 @@ sromload: obj_pipe/Vev4_core
 t3: obj_pipe/Vev4_core
 	$(MAKE) -C ../tests/cpu t3 >/dev/null
 	obj_pipe/Vev4_core $(T0)/t3_tlb.bin --trace $(T0)/t3_tlb.pipe.trace
+	obj_pipe/Vev4_core $(T0)/t3_intr.bin --trace $(T0)/t3_intr.pipe.trace
 
 .PHONY: cputest cputest-pipe sromload t3
 
@@ -114,13 +115,14 @@ t3: obj_pipe/Vev4_core
 # flash and DROM images from scratch/ (not in git)
 SIO_RTL = $(RTL)/sio/ns16550.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v \
 	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/sio82378.v
+SIM_FAST ?= 1
 SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/as200_sys.v
 FLASH   ?= ../scratch/roms/archive_alpha-station-200-roms/flash_v7.0_arc4.58.bin
 DROM    ?= ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E47_DROM1.7.bin
 
 obj_sys/Vas200_sys: $(SYS_RTL) system/tb_sys.cpp
 	$(TB_V) --Mdir obj_sys --top-module as200_sys -Wno-BLKSEQ --savable \
-		-GSROM_HEX='"../srom/build/avanti_srom.bitstream.hex"' $^
+		-GSROM_HEX='"../srom/build/avanti_srom.bitstream.hex"' -GSIM_FAST=$(SIM_FAST) $^
 
 $(FLASH):
 	cat ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E13_SRMV7.0-9.bin \

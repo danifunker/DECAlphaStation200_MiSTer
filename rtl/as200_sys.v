@@ -9,7 +9,8 @@
 // This replaces rtl/as200.v (the bring-up stub machine) in the MiSTer top
 // once the SDRAM and DDR3 adapters exist.
 module as200_sys #(
-    parameter SROM_HEX = "srom/build/avanti_srom.bitstream.hex"   // relative to the Quartus project
+    parameter SROM_HEX = "srom/build/avanti_srom.bitstream.hex",  // relative to the Quartus project
+    parameter SIM_FAST = 0              // 1 (simulation only): the TOY's seconds run fast
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -172,7 +173,7 @@ module as200_sys #(
     wire        sio_dm_req, sio_dm_we;
     wire [31:0] sio_dm_addr, sio_dm_wdata;
     wire  [3:0] sio_dm_be;
-    sio82378 #(.CLK_HZ(100000000), .DEVNUM(5'd7)) sio (
+    sio82378 #(.CLK_HZ(100000000), .DEVNUM(5'd7), .RTC_FAST(SIM_FAST)) sio (
         .clk(clk), .rst(rst),
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
         .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_sub(pt_req && pt_cmd == 2'd1 && !scsi_claim),
