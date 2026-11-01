@@ -1,0 +1,9 @@
+# Third-party material (DEC manuals, ROM dumps, firmware, Microsoft binaries, ISOs) and
+# everything generated from it. Distributed separately as a zip of scratch/ - see scratch/README.md.
+scratch/
+
+# Local build output
+build/
+*.o
+__pycache__/
+.DS_Store
