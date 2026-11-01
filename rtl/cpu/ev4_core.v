@@ -140,33 +140,44 @@ module ev4_core (
     wire [31:0] f2_insn  = pc_f2[2] ? q2[63:32] : q2[31:0];
     wire        f_hold   = stall_d;
 
-    reg  [63:0] npc;
-    reg         nv;
-    reg         kill_f2;
+    // Next PC. The X redirect (a taken branch or jump) decides last: it is
+    // the late signal (operand flop -> condition), so npc_o is everything
+    // else, and the X target and its I-cache valid bit are looked up in
+    // parallel and picked by x_take at the very end (cpu-timing.md).
+    reg  [63:0] npc_o;
+    reg         nv_o;
+    reg         kill_o;
+    wire        x_take = x_redir && !w_redir && !ld_active && !ld_start && fstate == FS_FETCH;
+    wire [63:0] npc  = x_take ? x_target_r : npc_o;
+    wire        nv   = x_take ? 1'b1 : nv_o;
+    wire        kill_f2 = kill_o || x_redir;
     always @* begin
-        npc = pc_f1; nv = v_f1; kill_f2 = 1'b0;
+        npc_o = pc_f1; nv_o = v_f1; kill_o = 1'b0;
         if (ld_active) begin
-            npc = 64'd0; nv = 1'b0; kill_f2 = 1'b1;
+            npc_o = 64'd0; nv_o = 1'b0; kill_o = 1'b1;
         end else if (ld_start) begin
-            npc = 64'd0; nv = 1'b1; kill_f2 = 1'b1;
-        end else if (w_redir || x_redir) begin
-            kill_f2 = 1'b1;
-            if (fstate == FS_FILL) nv = 1'b0;
-            else begin npc = w_redir ? w_target : x_target_r; nv = 1'b1; end
+            npc_o = 64'd0; nv_o = 1'b1; kill_o = 1'b1;
+        end else if (w_redir) begin
+            kill_o = 1'b1;
+            if (fstate == FS_FILL) nv_o = 1'b0;
+            else begin npc_o = w_target; nv_o = 1'b1; end
+        end else if (x_redir) begin
+            // only reached in FS_FILL (otherwise x_take wins): the fill finishes first
+            kill_o = 1'b1; nv_o = 1'b0;
         end else if (fstate == FS_FILL) begin
-            if (ifill_done) begin npc = restart_pc; nv = 1'b1; end
-            else nv = 1'b0;
+            if (ifill_done) begin npc_o = restart_pc; nv_o = 1'b1; end
+            else nv_o = 1'b0;
         end else if (f2_miss) begin
-            nv = 1'b0; kill_f2 = 1'b1;
+            nv_o = 1'b0; kill_o = 1'b1;
         end else if (!f_hold)
-            npc = pc_f1 + 64'd4;
+            npc_o = pc_f1 + 64'd4;
     end
 
     ev4_ram #(.AW(10), .DW(64), .BE(1)) icache_d (.clk(clk), .raddr(npc[12:3]), .rdata(ic_q),
         .we(ic_we), .waddr(ic_wa), .wdata(ic_wd), .wbe(1'b1));
     ev4_ram #(.AW(8), .DW(21), .BE(1)) icache_t (.clk(clk), .raddr(npc[12:5]), .rdata(ict_q),
         .we(ict_we), .waddr(ict_wa), .wdata(ict_wd), .wbe(1'b1));
-    always @(posedge clk) icv_q <= rst ? 1'b0 : icv[npc[12:5]];
+    always @(posedge clk) icv_q <= rst ? 1'b0 : x_take ? icv[x_target_r[12:5]] : icv[npc_o[12:5]];
 
     // ================================================================ D stage
     reg         d_v;  reg [63:0] d_pc; reg [31:0] d_ir; reg [2:0] d_exc;
