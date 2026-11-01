@@ -219,6 +219,126 @@ static uint32_t run_cmd(int id, const std::vector<uint8_t> &cdb, int dphase, uin
     return rl(DSPS);
 }
 
+// ---------------------------------------------------------------- SRM's pke_script and driver loop
+// A port of DEC SRM's pke_script.mar (the SCRIPTS SRM V5.8 runs on the
+// 53C810) and of pke_driver.c's interrupt handling: SIR dispatch (ok,
+// dat_in_done / dat_out_done -> pke_check_sts, got_msg_in), and phase
+// mismatch fix-up of a short data phase. Each command's status byte is
+// written by the program's STATUS move; a path that skips it (pke_flush
+// after an errNNN interrupt) leaves the 0xEE poison in it, which is what SRM
+// then reports as "bad SCSI status".
+enum { K_OK = 1, K_DOUT_DONE = 2, K_DIN_DONE = 3, K_MSG_IN = 4 };
+static const uint32_t PKE = 0x6000, PDSA = 0x6800, PMSGO = 0x6900, PCMD = 0x6910, PSTS = 0x6920,
+                      PMSGI = 0x6930, PIN = 0x8000, POUT = 0xA000;
+static uint32_t pke_sel, pke_check_sts, pke_msg_in_continue, pke_flush;
+static const uint32_t FBUF = 0x6A00;                          // pke_flush's one-byte buffers
+static void pke_build() {
+    uint32_t p = PKE;
+    auto ins = [&](uint32_t a, uint32_t b) { put32(p, a); put32(p + 4, b); p += 8; };
+    auto when = [](int ph) { return 0x800B0000u | (uint32_t)ph << 24; };          // JUMP WHEN phase
+    auto intnot = [](int ph) { return 0x98030000u | (uint32_t)ph << 24; };        // INT WHEN NOT phase
+    uint32_t L_cmd, L_dout, L_din, L_sts, L_msgin, L_70, L_disc;
+    // two passes: the first finds the labels
+    for (int pass = 0; pass < 2; pass++) {
+        p = PKE;
+        pke_sel = p;
+        ins(0x41000000, 0);                                   // SELECT ATN (ID patched), no resel
+        ins(intnot(P_MOUT), 101);
+        ins(0x1E000000, 4);                                   // pke_msg_out: MOVE indirect 4 WHEN MSG_OUT
+        ins(when(P_CMD), L_cmd); ins(when(P_STS), L_sts); ins(when(P_MIN), L_msgin);
+        ins(0x98080000, 102);
+        L_cmd = p;  ins(0x1A000000, 12);                      // pke_cmd
+        ins(when(P_DOUT), L_dout); ins(when(P_DIN), L_din); ins(when(P_STS), L_sts); ins(when(P_MIN), L_msgin);
+        ins(0x98080000, 103);
+        L_dout = p; ins(0x18000000, 20); ins(0x98080000, K_DOUT_DONE);
+        L_din = p;  ins(0x19000000, 28); ins(0x98080000, K_DIN_DONE);
+        pke_check_sts = p;
+        ins(when(P_MIN), L_msgin); ins(intnot(P_STS), 104);
+        L_sts = p;  ins(0x1B000000, 36);                      // pke_sts: MOVE indirect 36 WHEN STATUS
+        ins(intnot(P_MIN), 105);
+        ins(0x0F000001, PMSGI);                               // MOVE 1 msg_in WHEN MSG_IN
+        ins(0x98040000 | 0x00, 106);                          // INT err106 IF NOT data 00 (sense false)
+        ins(0x7C027F00, 0);                                   // AND SCNTL2, 7F (SDU off)
+        ins(0x60000040, 0);                                   // CLEAR ACK
+        ins(0x48000000, 0);                                   // WAIT DISCONNECT
+        ins(0x98080000, K_OK);
+        L_msgin = p; ins(0x0F000001, PMSGI);                  // pke_msg_in (IDENTIFY, extended: not modelled)
+        ins(0x800C0004, L_disc);                              // JUMP disconnect IF 04
+        ins(0x98080000, K_MSG_IN);
+        pke_msg_in_continue = p;
+        ins(0x60000040, 0);                                   // CLEAR ACK
+        L_70 = p;
+        ins(when(P_DOUT), L_dout); ins(when(P_DIN), L_din); ins(when(P_CMD), L_cmd);
+        ins(when(P_STS), L_sts); ins(when(P_MIN), L_msgin); ins(0x98080000, 111);
+        L_disc = p; ins(0x98080000, 120);                     // (no disconnects in this model)
+        (void)L_70;
+        // pke_flush: drain whatever phase the target is in, a byte at a time, into
+        // its own buffers (the status too: the command's status byte stays unwritten)
+        uint32_t F10, F20, F30, F40, F50, F60, F70;
+        static uint32_t f[7];
+        F10 = f[0]; F20 = f[1]; F30 = f[2]; F40 = f[3]; F50 = f[4]; F60 = f[5]; F70 = f[6];
+        auto whennot = [](int ph) { return 0x80030000u | (uint32_t)ph << 24; };
+        pke_flush = p;
+        f[0] = p; ins(whennot(P_MOUT), F20); ins(0x0E000001, FBUF); ins(0x80080000, F10);
+        f[1] = p; ins(whennot(P_CMD), F30);  ins(0x0A000001, FBUF); ins(0x80080000, F10);
+        f[2] = p; ins(whennot(P_DOUT), F40); ins(0x08000001, FBUF); ins(0x80080000, F10);
+        f[3] = p; ins(whennot(P_DIN), F50);  ins(0x09000001, FBUF); ins(0x80080000, F10);
+        f[4] = p; ins(whennot(P_STS), F60);  ins(0x0B000001, FBUF + 8); ins(0x80080000, F10);
+        f[5] = p; ins(whennot(P_MIN), F70);  ins(0x0F000001, FBUF + 16); ins(0x60000040, 0);
+        ins(0x980C0000, K_OK); ins(0x80080000, F10);
+        f[6] = p; ins(0x98080000, 107);
+    }
+}
+// one command as pke_send runs it; returns the status byte (0xEE: none written), or -1 on a driver error
+static int srm_cmd(int id, const std::vector<uint8_t> &cdb, uint32_t in_len, uint32_t out_len, uint32_t *got_in = nullptr) {
+    put32(pke_sel, 0x41000000 | id << 16);
+    mem[PMSGO] = 0x80;                                        // IDENTIFY (no disconnect privilege)
+    for (size_t k = 0; k < cdb.size(); k++) mem[PCMD + k] = cdb[k];
+    mem[PSTS] = 0xEE; mem[PMSGI] = 0xEE;
+    uint32_t din = PIN, dlen = in_len, dout = POUT, olen = out_len;
+    auto table = [&]() {
+        put32(PDSA + 4, 1); put32(PDSA + 8, PMSGO);
+        put32(PDSA + 12, (uint32_t)cdb.size()); put32(PDSA + 16, PCMD);
+        put32(PDSA + 20, olen); put32(PDSA + 24, dout);
+        put32(PDSA + 28, dlen); put32(PDSA + 32, din);
+        put32(PDSA + 36, 1); put32(PDSA + 40, PSTS);
+    };
+    table();
+    wb(STIME0, 0x01); wb(CTEST3, 0x04);
+    wl(DSA, PDSA);
+    wl(DSP, PKE);
+    for (int guard = 0; guard < 20; guard++) {
+        uint8_t i = wait_int();
+        uint8_t ds = (i & 1) ? rb(DSTAT) : 0;
+        uint8_t s0 = (i & 2) ? rb(SIST0) : 0, s1 = (i & 2) ? rb(SIST1) : 0;
+        if (ds & 4) {
+            uint32_t k = rl(DSPS);
+            if (k == K_OK) { if (got_in) *got_in = in_len - dlen + (dlen ? 0 : 0); return mem[PSTS]; }
+            if (k == K_DOUT_DONE) { olen = 0; table(); wl(DSP, pke_check_sts); continue; }
+            if (k == K_DIN_DONE) { dlen = 0; table(); wl(DSP, pke_check_sts); continue; }
+            if (k == K_MSG_IN) { wl(DSP, pke_msg_in_continue); continue; }
+            // pke_driver's default case: "while connected to ..., dsps = n", then pke_flush;
+            // its INT ok returns the command's status byte as it is
+            printf("  srm_cmd %02X: script error %u, flushing (as SRM)\n", cdb[0], k);
+            wl(DSP, pke_flush);
+            continue;
+        }
+        if (s0 & 0x80) {                                      // phase mismatch: shorten the data phase
+            uint32_t t_ = rl(DBC - 0x00);                     // DCMD/DBC
+            uint32_t bc = t_ & 0xFFFFFF; int ph = (t_ >> 24) & 7;
+            wb(CTEST3, 0x04);
+            if (ph == P_DIN) { din += dlen - bc; dlen = bc; table(); wl(DSP, pke_check_sts); continue; }
+            if (ph == P_DOUT) { dout += olen - bc; olen = bc; table(); wl(DSP, pke_check_sts); continue; }
+            if (ph == P_CMD) { wl(DSP, pke_check_sts); continue; }
+            printf("  srm_cmd %02X: bad phase mismatch dcmd/dbc %08X\n", cdb[0], t_);
+            return -1;
+        }
+        printf("  srm_cmd %02X: istat %02X dstat %02X sist0 %02X sist1 %02X\n", cdb[0], i, ds, s0, s1);
+        return -1;
+    }
+    return -1;
+}
+
 int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
     t = new Vtb_ncr810_top;
@@ -672,6 +792,51 @@ int main(int argc, char **argv) {
     CHECK(run(0, {0x88, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0}, P_DIN, 0) == 2 && sense(0) == 0x0520,
           "a 16-byte CDB is taken whole");
     printf("disks: READ/WRITE(6/12), mode pages, DBD, FORMAT UNIT, READ DEFECT DATA: %s\n", fails ? "see failures" : "ok");
+
+    // ================================================================ SRM's own SCRIPTS (pke_script) on the CD
+    // the board's "bad SCSI status (b8)" at boot dka400 (2026-11-01): SRM's
+    // sequence after a mount, with its buffer lengths (scsi.c), every status byte checked
+    pke_build();
+    pulse_change();
+    {
+        struct { std::vector<uint8_t> c; uint32_t in, out; int want; const char *what; } q[] = {
+            {{0x12, 0, 0, 0, 255, 0}, 255, 0, 0, "INQUIRY 255"},
+            {{0x12, 0, 0, 0, 1, 0}, 1, 0, 0, "INQUIRY 1"},
+            {{0xA0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x08, 0, 0}, 264, 0, 2, "REPORT LUNS"},
+            {{0x00, 0, 0, 0, 0, 0}, 0, 0, 0, "TEST UNIT READY (REPORT LUNS took the attention)"},
+            {{0x03, 0, 0, 0, 18, 0}, 18, 0, 0, "REQUEST SENSE"},
+            {{0x1B, 0, 0, 0, 1, 0}, 0, 0, 0, "START UNIT"},
+            {{0x00, 0, 0, 0, 0, 0}, 0, 0, 0, "TEST UNIT READY"},
+            {{0x15, 0x10, 0, 0, 12, 0}, 0, 12, 0, "MODE SELECT 512"},
+            {{0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 8, 0, 0, "READ CAPACITY"},
+            {{0x28, 0, 0, 0, 0, 0, 0, 0, 1, 0}, 512, 0, 0, "READ(10) block 0"},
+            {{0x28, 0, 0, 0, 0, 1, 0, 0, 15, 0}, 7680, 0, 0, "READ(10) blocks 1-15"},
+            {{0xEC, 0, 0, 0, 0, 0, 0, 0xFF, 0, 0}, 255, 0, 2, "vendor EC (10 bytes sent)"},
+            {{0x12, 0, 0, 0, 255, 0}, 255, 0, 0, "INQUIRY 255 again"},
+        };
+        uint8_t ms[12] = {0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 2, 0};
+        memcpy(mem + POUT, ms, 12);
+        for (auto &x : q) {
+            int st_ = srm_cmd(4, x.c, x.in, x.out);
+            CHECK(st_ == x.want, "SRM %s: status %02X, expected %02X", x.what, st_ & 0xFF, x.want);
+        }
+        // the open's MODE SELECT (512) must survive a SCSI bus reset (SRM resets the bus at a port
+        // init or a command timeout and does not select again): 512 bytes per READ block after it
+        wb(SCNTL1, 0x08); for (int k = 0; k < 20; k++) tick(); wb(SCNTL1, 0x80);
+        rb(SIST0); rb(SIST1); rb(DSTAT);
+        memset(mem + PIN, 0, 1024);
+        int st_ = srm_cmd(4, {0x28, 0, 0, 0, 0, 1, 0, 0, 1, 0}, 512, 0);
+        CHECK(st_ == 0 && !memcmp(mem + PIN, &img[2][512], 512), "SRM READ(10) of 1 block after a bus reset: status %02X", st_ & 0xFF);
+        st_ = srm_cmd(4, {0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 8, 0);
+        CHECK(st_ == 0 && mem[PIN + 6] == 0x02, "block length after a bus reset: %02X", mem[PIN + 6]);
+        // and a remount: UNIT ATTENTION, the block length kept
+        pulse_change();
+        st_ = srm_cmd(4, {0x28, 0, 0, 0, 0, 1, 0, 0, 1, 0}, 512, 0);
+        CHECK(st_ == 2, "READ after a remount: attention, status %02X", st_ & 0xFF);
+        st_ = srm_cmd(4, {0x28, 0, 0, 0, 0, 1, 0, 0, 1, 0}, 512, 0);
+        CHECK(st_ == 0 && !memcmp(mem + PIN, &img[2][512], 512), "READ after the attention: status %02X", st_ & 0xFF);
+    }
+    printf("SRM pke_script on dka400 (status bytes): %s\n", fails ? "see failures" : "ok");
 
     printf("%s: %d failure(s), %llu cycles\n", fails ? "FAIL" : "PASS", fails, (unsigned long long)cyc);
     delete t;

@@ -277,7 +277,17 @@ All registers are readable and writable as in the RS6K port.
 | SDTR | Answered with the same period and an offset of at most 8 |
 | Anything else (REPORT LUNS, LOG SENSE, 16-byte CDBs ...) | CHECK CONDITION / ILLEGAL REQUEST 20. A 16-byte CDB is taken whole first |
 
-The CD's block size returns to 2048 on a bus reset or a remount.
+The CD's block size returns to 2048 only at power-on. A bus reset or a remount keeps it, as a mode
+parameter is kept.
+
+This fixes "bad SCSI status (b8)" at `boot dka400` (board build 13, 2026-11-01). The cause was:
+- SRM selects 512 once, when it opens the unit, and a bus reset (its port init, a command timeout)
+  does not make it select again.
+- The model went back to 2048 on the bus reset, so a 1-block READ sent 2048 bytes into SRM's
+  512-byte buffer.
+- `pke_script` then found DATA IN at `pke_check_sts` and raised err104. The driver ran `pke_flush`,
+  which drains the status into its own buffer and ends with `INT ok`.
+- SRM read its status byte, never written (stack garbage 0xB8).
 
 ### The bench (`make -C verilator tb_ncr810`, all checks pass)
 
@@ -317,6 +327,15 @@ The CD's block size returns to 2048 on a bus reset or a remount.
   - READ CD of 2 sectors; the CD's mode page list and its missing page 4.
   - No disc: INQUIRY answers, then UNIT ATTENTION, then NOT READY 3A for TUR and READ CAPACITY; the
     disc back.
+- **SRM's own SCRIPTS** (2026-11-01): a port of `pke_script.mar` (select, IDENTIFY, the
+  table-indirect phases, `pke_check_sts`, `pke_sts`, `pke_msg_in`, `pke_flush`) and of
+  `pke_driver.c`'s handling: SIR dispatch, the phase-mismatch fix-up of a short data phase, and the
+  flush after an errNNN.
+  - SRM's open and boot sequence runs on dka400 after a mount, with SRM's buffer lengths: INQUIRY
+    255 and 1, REPORT LUNS, TUR, REQUEST SENSE, START UNIT, MODE SELECT 512, READ CAPACITY,
+    READ(10) of block 0 and of 15 blocks, the 10-byte vendor EC.
+  - Then a bus reset and a remount, each followed by a 1-block READ and READ CAPACITY.
+  - Every status byte is checked (0x00 or 0x02 as expected; 0xEE = not written).
 - **The disks' commands**: READ/WRITE(12) and (6) against the image, READ past the end (21), MODE
   SENSE 3F (the six pages in order, geometry), MODE SENSE(10) page 8 with DBD, FORMAT UNIT with and
   without a defect list, READ DEFECT DATA, SYNCHRONIZE CACHE, VERIFY, START STOP, READ TOC on a disk

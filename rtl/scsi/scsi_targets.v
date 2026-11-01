@@ -13,9 +13,10 @@
 //    - flat ports (no unpacked arrays): slot s of a per-slot bus at
 //      [32s+31:32s] (img_blocks, sd_lba) or [6s+5:6s] (sd_blk_cnt); one
 //      sd_buff_din for all three slots (the top fans it out);
-//    - the CD-ROM's block size: 2048 bytes at reset, 512 after a MODE SELECT
+//    - the CD-ROM's block size: 2048 bytes at power-on, 512 after a MODE SELECT
 //      whose block descriptor says 512 (DEC's SRM sets 512 on every disk-type
 //      unit it opens, and refuses a unit whose READ CAPACITY says otherwise);
+//      kept across bus resets and disc changes, as a mode parameter;
 //    - the CD drive is always on the bus (CD_ALWAYS): with no image it answers
 //      NOT READY, MEDIUM NOT PRESENT; a (re)mount gives UNIT ATTENTION,
 //      MEDIUM MAY HAVE CHANGED once;
@@ -488,7 +489,7 @@ module scsi_targets #(
             end
             // a new disc: its table is read again at the next command that needs
             // it, the play stops, the next command sees UNIT ATTENTION
-            if (cd_change) begin toc_ok <= 1'b0; toc_n <= 8'd0; cd_512 <= 1'b0; a_stop <= 1'b1; cd_ua <= 1'b1; end
+            if (cd_change) begin toc_ok <= 1'b0; toc_n <= 8'd0; a_stop <= 1'b1; cd_ua <= 1'b1; end
             // a frame for the CD player, between the engine's own transfers
             if (fr_req && !fr_go && !sd_busy && cd_in &&
                 st != T_FETCH && st != T_DOUT && st != T_STORE && st != T_TOC) begin
@@ -499,7 +500,13 @@ module scsi_targets #(
         if (rst || brst) begin
             st <= T_FREE; bsy <= 1'b0; req <= 1'b0;
             for (d = 0; d < 3; d = d + 1) begin skey[d] <= 4'd0; sasc[d] <= 8'd0; end
-            pend <= 2'd0; cd_512 <= 1'b0;
+            pend <= 2'd0;
+            // the block length is a mode parameter: only a power-on reset returns it to
+            // 2048. SRM selects 512 once, when it opens the unit, and a bus reset (its port
+            // init, a command timeout) does not make it select again: with 2048 after one,
+            // a 1-block READ sent 2048 bytes into SRM's 512, its script's err104 and flush
+            // skipped the status move, and SRM reported "bad SCSI status (b8)" (board, build 13)
+            if (rst) cd_512 <= 1'b0;
         end else begin
             case (st)
                 T_FREE: if (sel) begin
