@@ -1,5 +1,7 @@
 # Resume prompt
 
+> 2026-11-01: historical. The target is now the **4/100**, at a 100 MHz clock target; `CLAUDE.md` and `docs/CORE_SPEC.md` are current.
+
 Setup on the new Linux machine:
 1. Clone the repo.
 2. Unzip `scratch.zip` in the repo root so `scratch/` exists.

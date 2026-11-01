@@ -1,21 +1,22 @@
 # MiSTer core: locked hardware configuration
 
-Target machine: **DEC AlphaStation 200 4/166** ("Avanti" platform), as documented in `docs/HARDWARE.md`.
+Target machine: **DEC AlphaStation 200 4/100** ("Mustang"; the firmware's "Avanti" platform), as documented in `docs/HARDWARE.md`.
+(Changed from the 4/166 by the user on 2026-11-01: the 4/100's 100 MHz 21064 matches the core's clock target.)
 This file is the authoritative feature set for the core. Change it deliberately and record why.
 
 ## Fixed configuration
 
 | Area | Locked choice | Notes |
 |---|---|---|
-| CPU | **DECchip 21064 (EV4)**, 8 KB I-cache + 8 KB D-cache, no BWX | The 4/166 part. The 21064A (4/233, 16 KB + 16 KB) is a possible later variant; the firmware supports both |
-| CPU clock | Whatever the FPGA achieves | The firmware measures speed with `RPCC` and adapts. The reported clock is informational only |
+| CPU | **DECchip 21064 (EV4)**, 8 KB I-cache + 8 KB D-cache, no BWX | The 4/100 part (100 MHz). The 21064A (4/233, 16 KB + 16 KB) is a possible later variant; the firmware supports both |
+| CPU clock | **100 MHz target** (the 4/100's own speed), pipelined CPU and FPU with caches (user, 2026-11-01) | The init code reports the real cycle time to the DROM (PA 0x70 = 2, PA 0x10 = 10000 ps, PA 0x68 = 100): DROM V1.2's speed table only knows 166-266 MHz (`docs/design/cpu.md` Q11) |
 | Core logic | 21071-AA: 21071-CA cache/memory controller, 2× 21071-BA data path, 21071-DA PCI bridge (CSRs at `1.8000.0000` / `1.A000.0000`) | Includes the PCI scatter/gather TLB and sparse/dense spaces |
 | Bcache | Architecturally 512 KB, direct-mapped, 32-byte lines | Invisible to software except for diagnostics. The implementation may be smaller or omitted, as long as the 21071-CA and BIU_CTL behave consistently |
 | **Main memory** | **OSD option: 32 MB / 64 MB / 128 MB** (default 64 MB) | Bank layout below. 128 MB is the maximum this core supports (the real machine reaches 384 MB) |
 | Flash | 1 MB flashbus image, **default = the real board dump** (SRM v6.4-1 at 0x00000, ARC 4.49 at 0x80000, flash 3 blank) | `scratch/roms/flash/as200_flash_1MB.bin`. An option for SRM v7.0-9 + ARC 4.58 waits on the per-chip check-byte question (open items) |
 | DROM | `scratch/roms/flash/drom_v1.2.bin` (64 KB) | |
 | NVRAM | 8 KB on the flashbus, persisted to SD | Holds console environment variables |
-| SROM | **Replacement init code** (the original 64 Kbit SROM is not dumped) | Must do what the SROM does: CPU/BIU init, memory sizing, writing the 21071-CA bank registers, then jump to the DROM |
+| SROM | **The original SROM image if one can be found** (user, 2026-11-01: bake it into a file or the core); none is dumped publicly (searched 2026-11-01). Until then, **replacement init code** | Must do what the SROM does: CPU/BIU init, memory sizing, writing the 21071-CA bank registers, then jump to the DROM |
 | PCI-ISA bridge | Intel 82378IB SIO (8259 ×2, 8237 ×2, 8254, NMI, PIRQ routing) | IDSEL AD18 |
 | Super I/O | National PC87332: COM1, COM2, parallel, FDC | |
 | Keyboard/mouse | 8242-compatible controller, PS/2 from MiSTer | |

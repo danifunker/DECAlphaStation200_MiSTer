@@ -1,6 +1,6 @@
 //============================================================================
 //
-//  DEC AlphaStation 200 4/166 for MiSTer: the emu top (from Template_MiSTer).
+//  DEC AlphaStation 200 4/100 for MiSTer: the emu top (from Template_MiSTer).
 //  The machine itself is rtl/as200.v; this file is the MiSTer side: hps_io
 //  and the OSD (docs/osd-standard.md layout), clocks, the settings latch,
 //  video and the UART.
@@ -78,7 +78,7 @@ localparam CONF_STR = {
 	"h0-,Changes pending;",
 	"R[0],Apply and reset;",
 
-	"P1-,AlphaStation 200 4/166;",
+	"P1-,AlphaStation 200 4/100;",
 	"P1-,DECchip 21064 (EV4);",
 	"P1-;",
 	"P1T[20],Halt button;",

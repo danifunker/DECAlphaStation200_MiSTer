@@ -1,6 +1,6 @@
 # DEC AlphaStation 200 core for MiSTer
 
-An FPGA core for the MiSTer (DE10-Nano) recreating a **DEC AlphaStation 200 4/166**: the 21064 (EV4) Alpha CPU, the
+An FPGA core for the MiSTer (DE10-Nano) recreating a **DEC AlphaStation 200 4/100**: the 21064 (EV4) Alpha CPU, the
 21071 "APECS" chipset, a ZLXp-E1 TGA graphics card, NCR 53C810 SCSI, and the 82378 SIO with standard PC peripherals.
 Target OSes: the SRM and ARC consoles, NetBSD/Linux, Digital UNIX 4.0x, OpenVMS, Windows NT 3.51/4.0 and the Windows 2000 RC1 Alpha build.
 

@@ -1,6 +1,6 @@
-# DEC AlphaStation 200 4/166 for MiSTer: working notes for Claude
+# DEC AlphaStation 200 4/100 for MiSTer: working notes for Claude
 
-An FPGA recreation of the DEC AlphaStation 200 4/166 ("Avanti": 21064 EV4,
+An FPGA recreation of the DEC AlphaStation 200 4/100 ("Avanti": 21064 EV4,
 21071-AA APECS, ZLXp-E1 TGA, NCR 53C810, 82378 SIO) for the MiSTer
 (DE10-Nano, Cyclone V 5CSEBA6). Read `docs/RESUME_PROMPT.md` for the
 research history, `docs/CORE_SPEC.md` for the **locked** hardware
@@ -17,7 +17,9 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 | Main_MiSTer | Branch **`dec-alphastation`** off `master` (88d2d10) in `../Main_MiSTer`, for this core's Main needs: SCSI write buffering and CD-ROM handling like the HP/Sun/RS6K families (`support/hp9k`, `support/ibmrs6k` on `origin/ibmrs6k`), CD audio later. Don't check it out in `../Main_MiSTer` (other sessions use that tree on `hp9k-family`): use a worktree. |
 | Simulator | Verilator, headless: `make -C verilator` / `make -C verilator smoke` (`verilator/sim_main.cpp` options in its header). |
 | Memory | SDRAM = system RAM (32/64/128 MB), DDR3 = TGA VRAM, flash/DROM images, BRAM = caches (user's standing preference). |
-| Clocks | PLL: 50 MHz system (`outclk_0`), 50 MHz shifted for SDRAM (`outclk_1`, unused yet), 65 MHz pixel (`outclk_2`, 1024x768@60). The CPU clock is whatever the 21064 closes at; the firmware measures it with RPCC. |
+| Clocks | **Target: the CPU at 100 MHz** (the 4/100's own speed; user, 2026-11-01): a fast pipelined CPU and FPU with caches. Today's PLL: 50 MHz system (`outclk_0`), 50 MHz shifted for SDRAM (`outclk_1`, unused yet), 65 MHz pixel (`outclk_2`, 1024x768@60); the system clock moves to 100 MHz with the CPU. |
+| Machine | **AlphaStation 200 4/100** (user, 2026-11-01; was the 4/166). DROM V1.2's speed table stops at 166 MHz, so the init code hands over PA 0x70 = 2, 0x10 = 10000 ps, 0x68 = 100 |
+| SROM | User wants **the original SROM** baked in (a file or the core's ROM). None is dumped publicly (searched 2026-11-01: archive.org AS200ROM has only flash + DROM; EBSDK has SROM sources for 21164/21264 boards only; cetus.sh documents the DEC 3000 SROM format). Replacement init code until one turns up. |
 | ROMs | `games/DECAlphaStation200/boot0.rom` = the 1 MB flash image (ioctl index 0; Load ROM replaces it for the session), `boot1.rom` = DROM V1.2 (index 0x40). NVRAM: slot SC4. |
 
 ## State

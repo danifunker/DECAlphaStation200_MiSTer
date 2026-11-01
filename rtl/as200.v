@@ -1,4 +1,4 @@
-// The AlphaStation 200 4/166 machine (docs/CORE_SPEC.md), board-independent:
+// The AlphaStation 200 4/100 machine (docs/CORE_SPEC.md), board-independent:
 // the MiSTer top (DECAlphaStation200.sv) and the Verilator testbench
 // (verilator/sim_top.v) both instantiate it.
 //

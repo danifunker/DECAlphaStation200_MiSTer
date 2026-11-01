@@ -16,7 +16,7 @@ module bringup_stub (
     input  wire [7:0] io_din
 );
     localparam [8*74-1:0] BANNER = {
-        "\r\nDEC AlphaStation 200 4/166 - MiSTer core, bring-up build\r\n",
+        "\r\nDEC AlphaStation 200 4/100 - MiSTer core, bring-up build\r\n",
         "Memory: # MB\r\n"
     };
     localparam BLEN = 74;
