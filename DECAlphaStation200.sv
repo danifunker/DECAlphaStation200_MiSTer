@@ -52,6 +52,8 @@ assign BUTTONS = 0;
 //   15:14    TOY year            (0 from the MiSTer RTC, 1 1999)
 //   16       Console             (0 SRM, 1 ARC: the TOY CMOS 3Fh at reset)
 //   20       Halt button         (T: an action)
+//   25       Serial port         (0 COM1, 1 the TGA trace; rtl/mister/dbg_trace.v)
+//   26       Video debug         (the overlay; rtl/mister/dbg_overlay.v)
 //   24       CPU state line      (the terminal prints PC, PAL mode, irq_h, retired count each second)
 //   23:21    Network interface   (0 eth0, 1 None, 2 eth1, 3 macvlan, 4 tap0; read by Main, not latched)
 // Settings take effect at reset (cfg below); "Changes pending" shows while
@@ -59,7 +61,7 @@ assign BUTTONS = 0;
 
 `include "build_id.v"
 localparam CONF_STR = {
-	"DECAlphaStation200;UART9600:19200:38400:57600:115200;",
+	"DECAlphaStation200;UART9600:19200:38400:57600:115200:230400:460800:921600;",
 	"-;",
 	"SC0,IMGHDAVHD,Pri. disk (ID 0);",
 	"SC1,IMGHDAVHD,Disk (ID 1);",
@@ -96,6 +98,8 @@ localparam CONF_STR = {
 	"P5O[13],J6 flash write,Enabled,Disabled;",
 	"P5O[15:14],TOY year,From RTC,1999;",
 	"P5O[24],CPU state line,Off,On;",
+	"P5O[25],Serial port,COM1,TGA trace;",
+	"P5O[26],Video debug,Off,On;",
 	"P5-;",
 	"P5SC4,NVR,NVRAM image;",
 
@@ -191,6 +195,7 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(5)) hps_io
 
 	.buttons(buttons),
 	.status(status),
+	.uart_speed(uart_speed),
 	.status_menumask({14'd0, sdram_128, cfg_pending}),
 	.sdram_sz(sdram_sz),
 
@@ -301,6 +306,19 @@ wire [20:0] f_addr;
 wire  [7:0] f_wdata, f_rdata;
 
 wire        dbg_retire, dbg_pal;    // the CPU state line (con_mux)
+wire        tdbg_rw, tdbg_fw;       // the TGA's debug taps (dbg_trace, dbg_overlay)
+wire  [7:0] tdbg_ri, tdbg_mode;
+wire [31:0] tdbg_rd;
+wire [319:0] tdbg_st;
+wire        com1_txd, trace_txd;
+wire [31:0] uart_speed;
+// the MiSTer UART: COM1, or the TGA trace (OSD P5 Serial port)
+assign UART_TXD = status[25] ? trace_txd : com1_txd;
+dbg_trace #(.CLK_HZ(100000000)) dbg_trace
+(
+	.clk(clk_sys), .en(status[25]), .speed(uart_speed),
+	.rw(tdbg_rw), .ri(tdbg_ri), .rd(tdbg_rd), .fw(tdbg_fw), .mode(tdbg_mode), .txd(trace_txd)
+);
 wire [63:0] dbg_pc;
 wire  [5:0] dbg_irqh;
 as200_sys machine
@@ -333,7 +351,7 @@ as200_sys machine
 	.srom_txd(srom_txd),
 	.srom_rxd(1'b1),
 
-	.com1_txd(UART_TXD),
+	.com1_txd(com1_txd),
 	.com1_rxd(UART_RXD),
 	.com1_tx_stb(com1_tx_stb),
 	.com1_tx_byte(com1_tx_byte),
@@ -368,7 +386,8 @@ as200_sys machine
 	.aud_l(aud_l), .aud_r(aud_r), .aud_tgl(aud_tgl),
 
 	.dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
-	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize(), .dbg_pal(dbg_pal), .dbg_irqh(dbg_irqh)
+	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize(), .dbg_pal(dbg_pal), .dbg_irqh(dbg_irqh),
+	.tdbg_rw(tdbg_rw), .tdbg_ri(tdbg_ri), .tdbg_rd(tdbg_rd), .tdbg_fw(tdbg_fw), .tdbg_mode(tdbg_mode), .tdbg_st(tdbg_st)
 );
 
 // audio into the audio clock (rtl/audio/audio_cdc.v)
@@ -497,8 +516,32 @@ tga_vsel tga_vsel
 	.t_ce(tga_ce), .t_hs(tga_hs), .t_vs(tga_vs), .t_de(tga_de), .t_hb(tga_hb), .t_vb(tga_vb),
 	.t_r(tga_r), .t_g(tga_g), .t_b(tga_b),
 	.v_hs(vt_hs), .v_vs(vt_vs), .v_de(vt_de), .v_hb(vt_hb), .v_vb(vt_vb), .v_r(vt_r), .v_g(vt_g), .v_b(vt_b),
-	.ce(vid_ce), .hs(vid_hs), .vs(vid_vs), .de(vid_de), .hblank(vid_hb), .vblank(vid_vb),
-	.r(vid_r), .g(vid_g), .b(vid_b), .showing_tga()
+	.ce(vid_ce), .hs(sel_hs), .vs(sel_vs), .de(sel_de), .hblank(sel_hb), .vblank(sel_vb),
+	.r(sel_r), .g(sel_g), .b(sel_b), .showing_tga()
+);
+wire       sel_hs, sel_vs, sel_de, sel_hb, sel_vb;
+wire [7:0] sel_r, sel_g, sel_b;
+
+// the video debug overlay (OSD P5 Video debug): the TGA's drawing state and the CPU's
+reg  [31:0] tdbg_fcnt, tdbg_rcnt, tdbg_ldat;
+reg   [7:0] tdbg_lreg;
+always @(posedge clk_sys) begin
+	if (tdbg_fw) tdbg_fcnt <= tdbg_fcnt + 32'd1;
+	if (tdbg_rw) begin tdbg_rcnt <= tdbg_rcnt + 32'd1; tdbg_lreg <= tdbg_ri; tdbg_ldat <= tdbg_rd; end
+end
+wire [575:0] ovl_fields = {
+	tdbg_rcnt, tdbg_ldat, {22'd0, tdbg_lreg, 2'b00},                                 // 17 RCNT, 16 LDAT, 15 LREG
+	{23'd0, dbg_pal, 2'b00, dbg_irqh}, dbg_pc[31:0], dbg_pc[63:32],                    // 14 PALI, 13 PCLO, 12 PCHI
+	tdbg_fcnt, {4'd0, tdbg_st[23:12], 4'd0, tdbg_st[11:0]}, tdbg_st[55:24],             // 11 FBWR, 10 CURS, 9 BT03
+	{16'd0, tdbg_st[71:56]}, tdbg_st[103:72], tdbg_st[135:104],                         // 8 VVBR, 7 BG, 6 FG
+	tdbg_st[167:136], tdbg_st[199:168], tdbg_st[231:200],                               // 5 PXO, 4 PXP, 3 PMSK
+	tdbg_st[263:232], {16'd0, tdbg_st[267:264], tdbg_st[279:268]}, {16'd0, tdbg_st[295:280]}  // 2 DEEP, 1 ROP, 0 MODE
+};
+dbg_overlay dbg_overlay
+(
+	.clk(clk_pix), .ce(vid_ce), .en(status[26]), .fields(ovl_fields),
+	.hs_i(sel_hs), .vs_i(sel_vs), .de_i(sel_de), .hb_i(sel_hb), .vb_i(sel_vb), .r_i(sel_r), .g_i(sel_g), .b_i(sel_b),
+	.hs(vid_hs), .vs(vid_vs), .de(vid_de), .hblank(vid_hb), .vblank(vid_vb), .r(vid_r), .g(vid_g), .b(vid_b)
 );
 assign CE_PIXEL  = vid_ce;
 assign VGA_HS = vid_hs;

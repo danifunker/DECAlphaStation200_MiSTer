@@ -39,6 +39,8 @@ set_global_assignment -name VERILOG_FILE rtl/mister/sdram_ctl.v
 set_global_assignment -name VERILOG_FILE rtl/mister/fbrom.v
 set_global_assignment -name VERILOG_FILE rtl/mister/ddr3_arb.v
 set_global_assignment -name VERILOG_FILE rtl/mister/con_mux.v
+set_global_assignment -name VERILOG_FILE rtl/mister/dbg_trace.v
+set_global_assignment -name VERILOG_FILE rtl/mister/dbg_overlay.v
 set_global_assignment -name VERILOG_FILE rtl/mister/nvsave.v
 set_global_assignment -name VERILOG_FILE rtl/mister/vterm.v
 set_global_assignment -name VERILOG_FILE rtl/mister/ps2_ascii.v

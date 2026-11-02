@@ -144,7 +144,14 @@ module as200_sys #(
     output wire [63:0] dbg_mval,
     output wire  [3:0] dbg_msize,
     output wire        dbg_pal,
-    output wire  [5:0] dbg_irqh
+    output wire  [5:0] dbg_irqh,
+    // the TGA's debug taps (rtl/tga/tga.v dbg_*)
+    output wire        tdbg_rw,
+    output wire  [7:0] tdbg_ri,
+    output wire [31:0] tdbg_rd,
+    output wire        tdbg_fw,
+    output wire  [7:0] tdbg_mode,
+    output wire [319:0] tdbg_st
 );
     // ------------------------------------------------------------ SROM (XC1765D image)
     reg  [7:0] srom [0:8191];
@@ -291,7 +298,8 @@ module as200_sys #(
         .vr_ack(vr_ack), .vr_rvalid(vr_rvalid), .vr_rdata(vr_rdata),
         .sc_req(sc_req), .sc_addr(sc_addr), .sc_len(sc_len), .sc_ack(sc_ack), .sc_rvalid(sc_rvalid), .sc_rdata(sc_rdata),
         .clk_pix(clk_pix), .ce_pix(tga_ce), .hs(tga_hs), .vs(tga_vs), .de(tga_de), .hblank(tga_hb), .vblank(tga_vb),
-        .r(tga_r), .g(tga_g), .b(tga_b), .video_on(tga_on)
+        .r(tga_r), .g(tga_g), .b(tga_b), .video_on(tga_on),
+        .dbg_rw(tdbg_rw), .dbg_ri(tdbg_ri), .dbg_rd(tdbg_rd), .dbg_fw(tdbg_fw), .dbg_mode(tdbg_mode), .dbg_st(tdbg_st)
     );
 
     // the 21040 Ethernet (device 11, IDSEL AD22, PIRQ0; rtl/net, docs/design/ethernet.md)

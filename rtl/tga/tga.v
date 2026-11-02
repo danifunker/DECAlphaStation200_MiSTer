@@ -80,7 +80,17 @@ module tga #(
     output wire  [7:0] r,
     output wire  [7:0] g,
     output wire  [7:0] b,
-    output wire        video_on         // (clk) the TGA drives a picture: VVVR<0> and a mode set
+    output wire        video_on,        // (clk) the TGA drives a picture: VVVR<0> and a mode set
+
+    // debug (clk): each register write and frame buffer write as it is executed, and the
+    // drawing state (the OSD's TGA trace and video overlay; rtl/mister/dbg_trace.v, dbg_overlay.v)
+    output reg         dbg_rw,          // a register write: dbg_ri (longword index), dbg_rd
+    output reg   [7:0] dbg_ri,
+    output reg  [31:0] dbg_rd,
+    output reg         dbg_fw,          // a frame buffer write in mode dbg_mode
+    output wire  [7:0] dbg_mode,
+    output wire [319:0] dbg_st          // {24 zero, mode 16, rop 12, pshift 4, deep 32, pm 32, pxm_p 32, pxm_os 32,
+                                        //  fg 32, bg 32, vvbr 16, cr0 8, cr2 8, cr3 8, pixmask 8, cur_x 12, cur_y 12}
 );
     assign dm_be = 4'hF;
 
@@ -310,6 +320,7 @@ module tga #(
     integer k;
     always @(posedge clk) begin
         cq_pop <= 1'b0; rd_done <= 1'b0; bt_wr <= 1'b0; bt_rd <= 1'b0;
+        dbg_rw <= 1'b0; dbg_fw <= 1'b0;
         if (vr_ack) vr_req <= 1'b0;
         if (dm_ack) dm_req <= 1'b0;
         if (vid_eof) sisr_st[0] <= 1'b1;
@@ -327,6 +338,7 @@ module tga #(
             est <= E_IDLE;
             if (!c_fb) begin
                 // registers
+                dbg_rw <= 1'b1; dbg_ri <= c_idx; dbg_rd <= c_d;
                 gram[c_idx] <= c_d;
 `ifdef SIM_PCILOG
                 // +tgalog: the drawing state the console firmware and NT leave behind
@@ -371,6 +383,7 @@ module tga #(
                 endcase
             end else begin
                 // the frame buffer: by mode
+                dbg_fw <= 1'b1;
                 os_v <= 1'b0;
                 g_first <= 1'b1; g_rot <= 1'b0; g_ret <= 1'b0; g_m1 <= 1'b0; g_fs <= 3'd0;
                 case (m8)
@@ -611,6 +624,9 @@ module tga #(
     wire  [7:0] cur_q0, cur_q1, cr0, cr2, cr3, pixmask;
     wire [95:0] curcol;
     wire [11:0] cur_x, cur_y;
+    assign dbg_mode = m8;
+    assign dbg_st = {24'd0, mode, rop, pshift, deep, pm, pxm_p, pxm_os, fg, bg, 7'd0, vvbr,
+                     cr0, cr2, cr3, pixmask, cur_x, cur_y};
     wire        pix_en, vid_eof;
 
     tga_bt485 ramdac (
