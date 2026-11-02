@@ -16,7 +16,7 @@
 // gap of 20 us after each read so the next byte makes a new edge.
 //
 // The keyboard: reset (FA AA), identify (FA AB 83), enable and disable, the
-// LEDs, the scan set (2, or 3, which SRM selects: F0 03, then FC 39 and FC 58
+// LEDs, the scan set (2; 1, which ARC selects, as set 2 translated; or 3, which SRM selects: F0 03, then FC 39 and FC 58
 // to make the right Alt and Ctrl make/break), the set 3 key types
 // (FB/FC/FD and their key lists: all keys stay make/break), typematic,
 // echo, FE for a byte that is not a command; its keys in set 2 (E0 for
@@ -270,6 +270,7 @@ module isa_kbc #(
     reg        k_on;                    // scanning
     reg  [7:0] k_wait;                  // a command waiting for its parameter (0 none)
     reg        k_set3;                  // scan set 3 selected (F0 03; else set 2)
+    reg        k_set1;                  // scan set 1 selected (F0 01: ARC's choice, translation off)
     reg        k_list;                  // after FB/FC/FD: key codes follow until the next command
     // the mouse
     reg        m_on;
@@ -299,7 +300,7 @@ module isa_kbc #(
         // the keyboard's answer to a byte written to 60 (no controller command pending)
         if (wr60 && pend == 8'h00) begin
             if (k_wait == 8'hF0 && io_din == 8'h00) begin          // the scan set, asked
-                kpush_n = 3'd2; kp0 = 8'hFA; kp1 = k_set3 ? 8'h03 : 8'h02;
+                kpush_n = 3'd2; kp0 = 8'hFA; kp1 = k_set3 ? 8'h03 : k_set1 ? 8'h01 : 8'h02;
             end else if (k_wait != 8'h00) begin kpush_n = 3'd1; kp0 = 8'hFA; end
             else if (k_list && !k_cmd(io_din)) begin kpush_n = 3'd1; kp0 = 8'hFA; end   // a key after FB/FC/FD
             else case (io_din)
@@ -319,8 +320,8 @@ module isa_kbc #(
                     if (ps2_key[9]) begin kpush_n = 3'd1; kp0 = c3; end
                     else begin kpush_n = 3'd2; kp0 = 8'hF0; kp1 = c3; end
                 end
-            end else if (cbyte[6]) begin
-                // translated: E0, then the code with bit 7 for a release
+            end else if (cbyte[6] || k_set1) begin
+                // translated, or set 1 from the keyboard itself: E0, then the code with bit 7 for a release
                 if (ps2_key[8]) begin kpush_n = 3'd2; kp0 = 8'hE0; kp1 = kx; end
                 else begin kpush_n = 3'd1; kp0 = kx; end
             end else begin
@@ -441,8 +442,10 @@ module isa_kbc #(
                 default: begin                          // to the keyboard
                     cbyte[4] <= 1'b0;
                     if (k_wait != 8'h00) begin
-                        // the scan set: 1-3 select (set 1 is taken as 2), 0 asks (answered above)
-                        if (k_wait == 8'hF0 && io_din != 8'h00) k_set3 <= io_din == 8'h03;
+                        // the scan set: 1-3 select, 0 asks (answered above)
+                        if (k_wait == 8'hF0 && io_din != 8'h00) begin
+                            k_set3 <= io_din == 8'h03; k_set1 <= io_din == 8'h01;
+                        end
                         k_wait <= 8'h00;
                     end else if (k_list && !k_cmd(io_din)) ;      // a key code after FB/FC/FD
                     else begin
@@ -452,7 +455,7 @@ module isa_kbc #(
                         8'hF4: k_on <= 1'b1;
                         8'hF5: k_on <= 1'b0;
                         8'hF6: k_on <= 1'b1;
-                        8'hFF: begin k_on <= 1'b1; k_set3 <= 1'b0; end     // the reset: set 2 again
+                        8'hFF: begin k_on <= 1'b1; k_set3 <= 1'b0; k_set1 <= 1'b0; end     // the reset: set 2 again
                         default: ;
                         endcase
                     end
@@ -468,7 +471,7 @@ module isa_kbc #(
         if (rst) begin
             kq_r <= 5'd0; kq_w <= 5'd0; mq_r <= 5'd0; mq_w <= 5'd0;
             obf <= 1'b0; ob_aux <= 1'b0; obuf <= 8'h00; cbyte <= 8'h00; a2 <= 1'b0; pend <= 8'h00; outport <= 8'hCF;
-            gap <= 16'd0; rst_cnt <= 16'd0; k_on <= 1'b1; k_wait <= 8'h00; k_set3 <= 1'b0; k_list <= 1'b0;
+            gap <= 16'd0; rst_cnt <= 16'd0; k_on <= 1'b1; k_wait <= 8'h00; k_set3 <= 1'b0; k_set1 <= 1'b0; k_list <= 1'b0;
             m_on <= 1'b0; m_wait <= 8'h00; m_rate <= 8'd100; m_res <= 8'd2; m_scale <= 1'b0;
         end
     end

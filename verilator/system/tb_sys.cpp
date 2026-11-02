@@ -72,6 +72,7 @@ static bool load(const char *path, std::vector<uint8_t> &mem, size_t off, size_t
 
 int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
+    setvbuf(stdout, nullptr, _IOLBF, 0);   // the logs are read while the run goes on
     const char *flash = nullptr, *drom = nullptr, *trace = nullptr;
     uint64_t cycles = 200000000, trace_from = 0;
     int mem = 0, until_led = -1, jumpers = 0x03, save_led = -1;
