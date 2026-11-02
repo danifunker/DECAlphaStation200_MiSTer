@@ -25,7 +25,6 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | ~~Block (32-byte) bus transfers~~ | **done** 2026-11-01 | P3 | Cache fills are line reads: one SDRAM ACTIVE and two 8-beat READs, 4 quadword acks (`mem_line` -> `c_line` -> `d_line`); tb_sdram covers them |
 | A board cache (Bcache) | open | P4 | |
 | BIU_CTL / Bcache registers | partial | P4 | Stored as shadows only; no Bcache |
-| ITB/DTB: ASN tagging | partial | P2 | Entries have ASM only; no ASN compare (cpu.md 6.5) |
 | Timing: 100 MHz full-system closure | partial | P2 | Build 16 (`53584d1`): -1.897 ns, 33.9k ALMs (81%); runs on the board regardless (`cpu-timing.md`) |
 
 ## Firmware path (`docs/design/srom.md`)
@@ -98,3 +97,19 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | OSD options wired to the machine (memory size, jumpers, year) | partial | P3 | cfg_mem, J1/J2 and the year override are; check the rest against the status map |
 | Load ROM (replace boot0.rom for the session) | open | P4 | |
 | ~~Video: TGA or the terminal~~ | **done** 2026-11-01 | P2 | `tga_vsel` in the top: OSD Display Graphics shows the TGA once it has video on, else the terminal |
+
+## Operating systems (targets, 2026-11-01; images on the board in `games/DECAlphaStation200/`)
+
+The 21064's TBs hold no ASN (HRM 2.3.2): PALcode clears the ASM=0 entries on a context switch, and the
+I-cache compares physical tags after translation, so no ASN support is needed.
+
+| OS | Console | Last version for the AS200 4/100 | Status |
+|---|---|---|---|
+| Windows NT 4.0 (Workstation SP1, TSE 4.0) | ARC | 4.0 (Compaq never qualified SP6, but it runs) | First target |
+| Windows NT 3.51 | ARC | | First target |
+| Windows 2000 RC1 (2072) | ARC | Betas/RCs only | |
+| OpenVMS | SRM | HP V8.4 (its release notes still carry an AS200/400 note); VSI 8.4-2L1/2L2 drop it. Min V6.1-1H1 | Images 6.2, 7.3, 8.4 |
+| Digital UNIX / Tru64 | SRM | 5.1B-6 (needs 128 MB); min 3.2 | Image 4.0G |
+| NetBSD 10.2 | SRM | current | Kernel starts, hangs after "Unrecognized boot flag" |
+| FreeBSD | SRM | 6.x (alpha dropped after) | |
+| OpenBSD | SRM | current | |
