@@ -156,6 +156,7 @@ static bool rw(int op, int d, int c, int h, int r, int eot, int dma_addr, int dm
     if (dma_bytes) dma2(dma_addr, dma_bytes, to_mem);
     cmd({op, (h << 2) | d, c, h, r, 2, eot, 0x1B, 0xFF});
     bool ok = wait_int(20000000);
+    CHECK(ok, "the command's interrupt");
     result();
     return ok;
 }
@@ -269,13 +270,13 @@ int main(int argc, char **argv) {
     CHECK(cyc - c0 > 200000 && cyc - c0 < 3 * 200000 + 50000, "two index pulses: %llu", (unsigned long long)(cyc - c0));
     rw(0x66, 0, 11, 0, 1, 18, 0x60000, 512, true);
     res7("wrong cylinder", 0x40, 0x04, 0x10, 11, 0, 1);
-    dma2(0x60000, 512, true); cmd({0x66, 0x00, 12, 1, 1, 2, 18, 0x1B, 0xFF}); wait_int(20000000); result();
+    dma2(0x60000, 512, true); cmd({0x66, 0x00, 12, 1, 1, 2, 18, 0x1B, 0xFF}); CHECK(wait_int(20000000), "interrupt"); result();
     res7("ID head 1 under head 0", 0x40, 0x04, 0x00, 12, 1, 1);
     outb(0x3F7, 0x03);
     rw(0x66, 0, 12, 0, 1, 18, 0x60000, 512, true);
     res7("1 Mbps on a 1.44 MB disk", 0x40, 0x01, 0x00, 12, 0, 1);
     outb(0x3F4, 0x02);                                   // DSR: 250 kbps
-    cmd({0x4A, 0x00}); wait_int(); result(); CHECK(res[0] == 0x40 && res[1] == 0x01, "READ ID at 250 kbps: %02x %02x", res[0], res[1]);
+    cmd({0x4A, 0x00}); CHECK(wait_int(), "interrupt"); result(); CHECK(res[0] == 0x40 && res[1] == 0x01, "READ ID at 250 kbps: %02x %02x", res[0], res[1]);
     outb(0x3F7, 0x00);
     rw(0x26, 0, 12, 0, 1, 18, 0x60000, 512, true);       // FM
     res7("FM on an MFM disk", 0x40, 0x01, 0x00, 12, 0, 1);
@@ -317,7 +318,7 @@ int main(int argc, char **argv) {
     // VERIFY (no DMA), to EOT and by count (EC)
     rw(0x56, 0, 40, 1, 15, 18, 0, 0, true);
     res7("VERIFY to EOT", 0x04, 0x00, 0x00, 41, 1, 1);
-    cmd({0x56, 0x84, 40, 1, 2, 2, 18, 0x1B, 3}); wait_int(20000000); result();
+    cmd({0x56, 0x84, 40, 1, 2, 2, 18, 0x1B, 3}); CHECK(wait_int(20000000), "interrupt"); result();
     res7("VERIFY 3 sectors (EC)", 0x04, 0x00, 0x00, 40, 1, 5);
     // SCAN EQUAL against what was written
     rw(0x51, 0, 40, 1, 5, 18, 0x70000, 512, false);
@@ -377,7 +378,7 @@ int main(int argc, char **argv) {
     // ------------------------------------------------------------ FORMAT
     printf("-- FORMAT TRACK\n");
     for (int s = 0; s < 18; s++) { mem[0x90000 + 4 * s] = 50; mem[0x90001 + 4 * s] = 1; mem[0x90002 + 4 * s] = s + 1; mem[0x90003 + 4 * s] = 2; }
-    cmd({0x0F, 0x04, 50}); wait_int(); sense(s0, pc);
+    cmd({0x0F, 0x04, 50}); CHECK(wait_int(), "interrupt"); sense(s0, pc);
     dma2(0x90000, 72, false);
     c0 = cyc;
     cmd({0x4D, 0x04, 2, 18, 0x54, 0xE5}); CHECK(wait_int(20000000), "format interrupt"); result();
@@ -391,7 +392,7 @@ int main(int argc, char **argv) {
     printf("-- 720 KB and 2.88 MB images\n");
     mount(737280, false, 3);
     CHECK(inb(0x3F7) & 0x80, "DIR: changed by the mount");
-    cmd({0x0F, 0x00, 5}); wait_int(); sense(s0, pc);
+    cmd({0x0F, 0x00, 5}); CHECK(wait_int(), "interrupt"); sense(s0, pc);
     CHECK(!(inb(0x3F7) & 0x80), "DIR: cleared by a seek");
     rw(0x66, 0, 5, 0, 1, 9, 0x60000, 512, true);
     res7("720 KB at 500 kbps", 0x40, 0x01, 0x00, 5, 0, 1);
@@ -399,10 +400,10 @@ int main(int argc, char **argv) {
     rw(0x66, 0, 5, 1, 1, 9, 0xA0000, 9 * 512, true);
     res7("720 KB track at 250 kbps", 0x04, 0x00, 0x00, 6, 1, 1);
     CHECK(same(0xA0000, 5 * 18 + 9, 9), "720 KB data");
-    cmd({0x4A, 0x00}); wait_int(); result(); CHECK(res[0] == 0 && res[5] >= 1 && res[5] <= 9, "READ ID, 9 sectors: R%d", res[5]);
+    cmd({0x4A, 0x00}); CHECK(wait_int(), "interrupt"); result(); CHECK(res[0] == 0 && res[5] >= 1 && res[5] <= 9, "READ ID, 9 sectors: R%d", res[5]);
     mount(2949120, false, 5);
     outb(0x3F7, 0x03);
-    cmd({0x0F, 0x00, 70}); wait_int(); sense(s0, pc);
+    cmd({0x0F, 0x00, 70}); CHECK(wait_int(), "interrupt"); sense(s0, pc);
     rw(0x66, 0, 70, 0, 16, 36, 0xB0000, 6 * 512, true);   // across the cache's half (sectors 16-21)
     res7("2.88 MB at 1 Mbps", 0x00, 0x00, 0x00, 70, 0, 22);
     CHECK(same(0xB0000, 70 * 72 + 15, 6), "2.88 MB data");
@@ -421,7 +422,10 @@ int main(int argc, char **argv) {
             cmd({0x03, tab[i].srt << 4 | tab[i].hut, tab[i].hlt});
             cmd({0x12, 0x84});
             outb(0x3F2, 0x1C);
-            for (int k = 0; k < 2; k++) { cmd({0x07, 0}); wait_int(); sense(s0, pc); if (!(s0 & 0xC0) && pc == 0) break; }
+            for (int k = 0; k < 2; k++) {
+                cmd({0x07, 0}); CHECK(wait_int(), "SRM's recalibrate interrupt (density %d)", i);
+                sense(s0, pc); if (!(s0 & 0xC0) && pc == 0) break;
+            }
             CHECK((s0 & 0xF0) == 0x20, "recalibrate after the reset: %02x", s0);
             for (int retry = 0; retry < 3; retry++) {
                 cmd({0x13, 0x00, 0x0B, 0x00});
@@ -429,7 +433,7 @@ int main(int argc, char **argv) {
                 outb(0x0C, 0); outb(0x04, 0x00); outb(0x04, 0x00); outb(0x81, 0x0C); outb(0x481, 0x00);
                 outb(0x0C, 0); outb(0x05, 0xFF); outb(0x05, 0x01); outb(0xD4, 0); outb(0x0A, 0x02);
                 cmd({0x66, 0x00, 0, 0, 1, 2, tab[i].spt, 0x1B, 0xFF});
-                wait_int(20000000); result();
+                CHECK(wait_int(20000000), "interrupt"); result();
                 if (nres == 7 && !(res[0] & 0xC0) && !res[1] && !res[2]) { found = i; break; }
             }
         }
@@ -440,10 +444,10 @@ int main(int argc, char **argv) {
         uint32_t lbn = 1, left = 40; uint32_t m = 0xC0000; int cur_cyl = 0;
         while (left) {
             int cyl = lbn / 36, head = lbn % 36 / 18, sec = lbn % 18, n = 18 - sec; if ((uint32_t)n > left) n = left;
-            if (cyl != cur_cyl) { cmd({0x0F, head << 2, cyl}); wait_int(); sense(s0, pc); cur_cyl = cyl; }
+            if (cyl != cur_cyl) { cmd({0x0F, head << 2, cyl}); CHECK(wait_int(), "interrupt"); sense(s0, pc); cur_cyl = cyl; }
             cmd({0x13, 0x00, 0x0B, 0x00});
             dma2(m, n * 512, true);
-            cmd({0x66, head << 2, cyl, head, sec + 1, 2, 18, 0x1B, 0xFF}); wait_int(20000000); result();
+            cmd({0x66, head << 2, cyl, head, sec + 1, 2, 18, 0x1B, 0xFF}); CHECK(wait_int(20000000), "interrupt"); result();
             CHECK(!(res[0] & 0xC0) && !res[1] && !res[2], "SRM read lbn %u x %d: %02x %02x %02x", lbn, n, res[0], res[1], res[2]);
             lbn += n; left -= n; m += n * 512;
         }

@@ -184,7 +184,7 @@ module isa_fdc #(
     reg  [7:0] res [0:9];
     reg  [3:0] nres, rpos;
     reg        int_res;                 // the interrupt of a result phase
-    reg        int_sk;                  // the interrupt of a seek end, a reset (SENSE INTERRUPT takes it)
+    reg        int_sk;                  // the interrupt of a seek end, a reset (a command byte takes it)
     reg  [2:0] rst_n;                   // SENSE INTERRUPT results owed after a reset
     reg  [3:0] sk_pend;                 // a seek end per drive, for SENSE INTERRUPT
     reg  [7:0] sk_st0 [0:3];
@@ -296,7 +296,10 @@ module isa_fdc #(
             end
             3'd5: if (ph == P_CMD && !resetting && !disp) begin
                 cmdb[ncmd] <= io_din;
-                int_res <= 1'b0;
+                // a command byte takes the interrupt line (the statuses stay for SENSE INTERRUPT):
+                // SRM (dv_driver.c) issues no SENSE INTERRUPT after its reset, and its next
+                // interrupt (RECALIBRATE's) must be an edge for the edge-triggered IRQ 6
+                int_res <= 1'b0; int_sk <= 1'b0;
                 if (ncmd == 4'd0) need <= cmdlen(io_din);
                 if ((ncmd == 4'd0 && cmdlen(io_din) == 4'd1) || (ncmd != 4'd0 && ncmd + 4'd1 == need)) begin
                     ncmd <= 4'd0; ph <= P_EXEC; disp <= 1'b1;
