@@ -161,6 +161,10 @@ module apecs (
 
     // window registers (21071-DA; shadows of the DA CSRs at 0xC0..0x1C0)
     reg [31:0] tbr1, tbr2, pbr1, pbr2, pmr1, pmr2, haxr1, haxr2;
+    // 21071-DA error state: DCSR<15:5> (RW1C), DCSR<21:18> the failing PCI command, PEAR
+    reg [15:5] dcsr_err;
+    reg  [3:0] dcsr_cmd;
+    reg [31:0] pear;
     // DMA translation (21071 10.1.1.x, Tables 10-7/10-8). TBR<31:9> holds
     // address bits <32:10>. A window is direct mapped, or (PBR<18> SGEN)
     // scatter/gather: 8 KB pages through quadword map entries in memory
@@ -264,6 +268,7 @@ module apecs (
             tbr1 <= 32'd0; tbr2 <= 32'd0; pbr1 <= 32'd0; pbr2 <= 32'd0; pmr1 <= 32'd0; pmr2 <= 32'd0;
             haxr1 <= 32'd0; haxr2 <= 32'd0;
             sg_v <= 8'd0; sg_rr <= 3'd0;
+            dcsr_err <= 11'd0; dcsr_cmd <= 4'd0; pear <= 32'd0;
             for (k = 0; k < 3; k = k + 1) begin bcnfg[k] <= 9'd0; bbase[k] <= 16'd0; end
         end else case (st)
         S_IDLE: if (dm_req && !dm_ack) begin
@@ -339,7 +344,8 @@ module apecs (
                     default: ;
                 endcase
                 da_a <= pa[11:5]; da_we <= c_we;
-                da_wd <= pa[11:5] == 7'h00 ? (wlw & 32'hFFFF00FF & ~32'h00000060) : wlw;   // DCSR: error bits RW1C
+                da_wd <= pa[11:5] == 7'h00 ? (wlw & 32'h0003000F) : wlw;   // DCSR: the RW bits only
+                if (c_we && pa[11:5] == 7'h00) dcsr_err <= dcsr_err & ~wlw[15:5];   // the error bits: RW1C
                 lsel <= 2'd1; st <= S_LR1;
             end else if (pa[33:28] == 6'h1B) begin
                 // ---------------------------------------- PCI interrupt acknowledge (1.B000.0000, read)
@@ -384,7 +390,9 @@ module apecs (
             // picks the PCI configuration address form from DCSR<31>: pass 2 decodes the
             // device number in PA<20:16> into IDSEL itself (21071 Table 10-4)
             c_rdata <= lsel == 2'd0 ? lw2q(ca_q | (ca_a == 7'h02 ? 32'h0000_2000 : 32'd0)) :
-                       lsel == 2'd1 ? lw2q(da_q | (da_a == 7'h00 ? 32'h8000_0000 : 32'd0)) :
+                       lsel == 2'd1 ? lw2q(da_a == 7'h00 ? ((da_q & 32'h0003000F) | 32'h8000_0000 |
+                                                             {10'd0, dcsr_cmd, 2'b00, dcsr_err, 5'd0}) :
+                                           da_a == 7'h01 ? pear : da_q) :
                        lw2q({24'd0, nv_q});
             c_ack <= 1'b1; st <= S_IDLE;
         end
@@ -405,6 +413,13 @@ module apecs (
             if (!pt_claim) begin
                 pt_req <= 1'b0;
                 c_rdata <= {64{1'b1}}; c_ack <= 1'b1; st <= S_IDLE;     // master abort
+                // DCSR<11> ndev_err, PEAR = the PCI address, DCSR<21:18> = the PCI command
+                if (dcsr_err[11] == 1'b0) begin
+                    pear <= pt_cmd == 2'd0 ? (32'd1 << ({1'b0, pt_dev} + 6'd11)) | pt_addr : pt_addr;   // config: IDSEL AD<11+dev>
+                    dcsr_cmd <= pt_cmd == 2'd0 ? (pt_we ? 4'hB : 4'hA) : pt_cmd == 2'd1 ? (pt_we ? 4'h3 : 4'h2)
+                                                                       : (pt_we ? 4'h7 : 4'h6);
+                end
+                dcsr_err[11] <= 1'b1;
             end else st <= S_PCIW;
         end
         S_PCIW: if (pt_ack) begin
@@ -430,8 +445,10 @@ module apecs (
                 sg_v[sg_rr] <= 1'b1; sg_tag[sg_rr] <= sgf_tag; sg_pfn[sg_rr] <= d_rdata[20:1];
                 sg_rr <= sg_rr + 3'd1;
                 st <= S_IDLE;
-            end else begin                              // invalid entry: master abort (STUB: error bits)
+            end else begin                              // invalid entry: DCSR<14> ptl_inv, PEAR
                 dm_rdata <= 32'hFFFFFFFF; dm_ack <= 1'b1; st <= S_IDLE;
+                if (dcsr_err[14] == 1'b0) pear <= {sgf_tag, 13'd0};
+                dcsr_err[14] <= 1'b1;
             end
         end
         S_DMA: if (d_ack) begin

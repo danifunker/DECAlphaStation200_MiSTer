@@ -103,6 +103,24 @@ int main() {
     memcpy(&v, &dram[0x0310002C], 4); check("after TBIA the new entry is used", v, 0x44444444);
     // outside both windows: master abort
     check("no window", dma(false, 0x40000000, 0), 0xFFFFFFFF);
+    // a configuration read nobody claims: all ones, DCSR<11> ndev_err, PEAR; RW1C clears it
+    {
+        auto cpu_rd = [&](uint64_t pa) {
+            t->pt_claim = 0;
+            t->c_req = 1; t->c_we = 0; t->c_addr = pa >> 3; t->c_be = (pa & 4) ? 0xF0 : 0x0F;
+            for (int i = 0; i < 50 && !t->c_ack; i++) tick();
+            uint64_t r = t->c_rdata; t->c_req = 0; tick(); tick();
+            return (pa & 4) ? (uint32_t)(r >> 32) : (uint32_t)r;
+        };
+        uint32_t r = cpu_rd(0x1E0000000ull | (3ull << 16) | (0x08 << 7) | (3 << 3));  // dev 3, reg 0x08, longword
+        check("unclaimed config read", r, 0xFFFFFFFF);
+        uint32_t dcsr = cpu_rd(0x1A0000000ull);
+        check("DCSR ndev_err after the abort", (dcsr >> 11) & 1, 1);
+        check("DCSR pass2", dcsr >> 31, 1);
+        check("PEAR = IDSEL AD14 | byte offset 0x20 (register 8)", cpu_rd(0x1A0000020ull), (1u << 14) | 0x20);
+        da_write(0x00, 1u << 11);                   // RW1C
+        check("DCSR ndev_err cleared", (cpu_rd(0x1A0000000ull) >> 11) & 1, 0);
+    }
     printf("tb_apecs: %d failures\n", fails);
     delete t;
     return fails ? 1 : 0;

@@ -42,7 +42,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | ~~SRM's `show config` lists no PCI devices~~ | **done** 2026-11-01 | P1 | DCSR<31> (pass 2) read 0, so SRM used pass-1 raw IDSEL addresses; now 1. SRM lists the NCR 810 (pka0) and the SIO |
 | ~~DMA scatter/gather (TLB, TBIA)~~ | **done** 2026-11-01 | P2 | 8 KB map entries, 8-entry round-robin TLB, TBIA; direct windows' translated base fixed (was one bit high); `make -C verilator tb_apecs` |
-| Error reporting (EDSR/PEAR/SEAR, master-abort bits, error interrupt to irq_h[0]) | stub | P2 | |
+| Error reporting (EDSR/PEAR/SEAR, master-abort bits, error interrupt to irq_h[0]) | partial | P2 | DCSR ndev_err (CPU master abort, with the PCI command) and ptl_inv (invalid S/G entry), PEAR, RW1C (2026-11-01). No error interrupt or machine check yet; SEAR, the CA's EDSR errors not raised |
 | ~~D-cache invalidation on DMA writes (dInvReq)~~ | **done** 2026-11-01 | P1 | apecs sends PA[12:5] of every DMA write, the core invalidates that line. Found as SRM's "bad SCSI status (b8)" at `boot dka400` (stale cached status byte and buffer) |
 | PCI type-1 configuration (bus != 0) | open | P4 | No bridges in this config |
 | Sparse-memory HAXR1 high bits, dense-memory quadword ordering | partial | P3 | Check against the TGA's use |
