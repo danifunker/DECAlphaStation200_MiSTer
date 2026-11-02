@@ -70,7 +70,13 @@ module ev4_core (
     output reg  [63:0] dbg_maddr,
     output reg  [63:0] dbg_mval,
     output reg   [3:0] dbg_msize,
-    output wire        dbg_pal          // PAL mode (the board's CPU state line)
+    output wire        dbg_pal,         // PAL mode (the board's CPU state line)
+    // each PAL entry (exception, interrupt, CALL_PAL), a cycle after it is taken: the entry's
+    // offset, EXC_ADDR and VA as they are then (the board's CPU trace, rtl/mister/dbg_trace.v)
+    output reg         dbg_ent,
+    output reg  [13:0] dbg_ent_off,
+    output wire [63:0] dbg_exc_addr,
+    output wire [63:0] dbg_va
 );
     // ================================================================ classes
     localparam C_NOP = 4'd0, C_ALU = 4'd1, C_SHF = 4'd2, C_MUL = 4'd3, C_LDA = 4'd4,
@@ -85,6 +91,8 @@ module ev4_core (
     // ================================================================ architectural state (W)
     reg         pal;
     assign dbg_pal = pal;
+    assign dbg_exc_addr = exc_addr;
+    assign dbg_va = va_ipr;
     reg         iccsr_fpe, iccsr_map, iccsr_hwe;
     reg  [63:0] exc_addr;
     reg   [1:0] ps_cm;
@@ -1117,6 +1125,7 @@ module ev4_core (
 
             // ------------------------------------------------ W: retire
             r_v <= rf_we; r_dst <= w_dst; r_res <= w_res;
+            dbg_ent <= 1'b0;
             if (w_v) begin
                 if (w_exc == E_NONE || w_exc == E_ARITH) begin
                     fpcr_f <= fpcr_f | w_fs;            // FP arithmetic flags, trap or not
@@ -1231,6 +1240,7 @@ module ev4_core (
                         mm_lock <= 1'b1;
                     end
                 end
+                dbg_ent <= w_ent; dbg_ent_off <= w_off;
                 if (w_ent) begin
                     exc_addr <= w_exc == E_ARITH ? ((w_pc + 64'd4) | 64'd2 | {63'd0, pal}) :
                                 (w_cls == C_CPAL && w_exc == E_NONE) ? ((w_pc + 64'd4) | {63'd0, pal}) :

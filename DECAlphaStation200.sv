@@ -52,7 +52,7 @@ assign BUTTONS = 0;
 //   15:14    TOY year            (0 from the MiSTer RTC, 1 1999)
 //   16       Console             (0 SRM, 1 ARC: the TOY CMOS 3Fh at reset)
 //   20       Halt button         (T: an action)
-//   25       Serial port         (0 COM1, 1 the TGA trace; rtl/mister/dbg_trace.v)
+//   28:27    Serial port         (0 COM1, 1 the TGA trace, 2 the CPU trace (PAL entries); rtl/mister/dbg_trace.v)
 //   26       Video debug         (the overlay; rtl/mister/dbg_overlay.v)
 //   24       CPU state line      (the terminal prints PC, PAL mode, irq_h, retired count each second)
 //   23:21    Network interface   (0 eth0, 1 None, 2 eth1, 3 macvlan, 4 tap0; read by Main, not latched)
@@ -98,7 +98,7 @@ localparam CONF_STR = {
 	"P5O[13],J6 flash write,Enabled,Disabled;",
 	"P5O[15:14],TOY year,From RTC,1999;",
 	"P5O[24],CPU state line,Off,On;",
-	"P5O[25],Serial port,COM1,TGA trace;",
+	"P5O[28:27],Serial port,COM1,TGA trace,CPU trace;",
 	"P5O[26],Video debug,Off,On;",
 	"P5-;",
 	"P5SC4,NVR,NVRAM image;",
@@ -306,6 +306,9 @@ wire [20:0] f_addr;
 wire  [7:0] f_wdata, f_rdata;
 
 wire        dbg_retire, dbg_pal;    // the CPU state line (con_mux)
+wire        dbg_ent;                // the CPU's PAL entries (dbg_trace)
+wire [13:0] dbg_ent_off;
+wire [63:0] dbg_exc_addr, dbg_va;
 wire        tdbg_rw, tdbg_fw;       // the TGA's debug taps (dbg_trace, dbg_overlay)
 wire  [7:0] tdbg_ri, tdbg_mode;
 wire [31:0] tdbg_rd;
@@ -313,11 +316,12 @@ wire [319:0] tdbg_st;
 wire        com1_txd, trace_txd;
 wire [31:0] uart_speed;
 // the MiSTer UART: COM1, or the TGA trace (OSD P5 Serial port)
-assign UART_TXD = status[25] ? trace_txd : com1_txd;
+assign UART_TXD = status[28:27] != 2'd0 ? trace_txd : com1_txd;
 dbg_trace #(.CLK_HZ(100000000)) dbg_trace
 (
-	.clk(clk_sys), .en(status[25]), .speed(uart_speed),
-	.rw(tdbg_rw), .ri(tdbg_ri), .rd(tdbg_rd), .fw(tdbg_fw), .mode(tdbg_mode), .txd(trace_txd)
+	.clk(clk_sys), .sel(status[28:27]),
+	.rw(tdbg_rw), .ri(tdbg_ri), .rd(tdbg_rd), .fw(tdbg_fw), .mode(tdbg_mode),
+	.ent(dbg_ent), .ent_off(dbg_ent_off), .ent_pc(dbg_exc_addr[31:0]), .ent_va(dbg_va[31:0]), .txd(trace_txd)
 );
 wire [63:0] dbg_pc;
 wire  [5:0] dbg_irqh;
@@ -387,6 +391,7 @@ as200_sys machine
 
 	.dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
 	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize(), .dbg_pal(dbg_pal), .dbg_irqh(dbg_irqh),
+	.dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va),
 	.tdbg_rw(tdbg_rw), .tdbg_ri(tdbg_ri), .tdbg_rd(tdbg_rd), .tdbg_fw(tdbg_fw), .tdbg_mode(tdbg_mode), .tdbg_st(tdbg_st)
 );
 
