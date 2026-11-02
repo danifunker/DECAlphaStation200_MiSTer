@@ -52,6 +52,7 @@ assign BUTTONS = 0;
 //   15:14    TOY year            (0 from the MiSTer RTC, 1 1999)
 //   16       Console             (0 SRM, 1 ARC: the TOY CMOS 3Fh at reset)
 //   20       Halt button         (T: an action)
+//   24       CPU state line      (the terminal prints PC, PAL mode, irq_h, retired count each second)
 //   23:21    Network interface   (0 eth0, 1 None, 2 eth1, 3 macvlan, 4 tap0; read by Main, not latched)
 // Settings take effect at reset (cfg below); "Changes pending" shows while
 // the OSD differs from what is running.
@@ -94,6 +95,7 @@ localparam CONF_STR = {
 	"P5O[12],J2 floppy boot,Off,On;",
 	"P5O[13],J6 flash write,Enabled,Disabled;",
 	"P5O[15:14],TOY year,From RTC,1999;",
+	"P5O[24],CPU state line,Off,On;",
 	"P5-;",
 	"P5SC4,NVR,NVRAM image;",
 
@@ -298,6 +300,9 @@ wire        f_req, f_we, f_ack;
 wire [20:0] f_addr;
 wire  [7:0] f_wdata, f_rdata;
 
+wire        dbg_retire, dbg_pal;    // the CPU state line (con_mux)
+wire [63:0] dbg_pc;
+wire  [5:0] dbg_irqh;
 as200_sys machine
 (
 	.clk(clk_sys),
@@ -362,8 +367,8 @@ as200_sys machine
 	.speaker(),
 	.aud_l(aud_l), .aud_r(aud_r), .aud_tgl(aud_tgl),
 
-	.dbg_retire(), .dbg_pc(), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
-	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize()
+	.dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
+	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize(), .dbg_pal(dbg_pal), .dbg_irqh(dbg_irqh)
 );
 
 // audio into the audio clock (rtl/audio/audio_cdc.v)
@@ -443,6 +448,7 @@ con_mux #(.CLK_HZ(100000000)) con_mux
 (
 	.clk(clk_sys), .rst(m_reset),
 	.srom_txd(srom_txd), .com1_stb(com1_tx_stb), .com1_byte(com1_tx_byte), .leds(leds),
+	.st_en(status[24]), .st_retire(dbg_retire), .st_pc(dbg_pc), .st_pal(dbg_pal), .st_irq(dbg_irqh),
 	.out_stb(con_stb), .out_byte(con_byte)
 );
 

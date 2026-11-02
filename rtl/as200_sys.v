@@ -142,7 +142,9 @@ module as200_sys #(
     output wire        dbg_mwr,
     output wire [63:0] dbg_maddr,
     output wire [63:0] dbg_mval,
-    output wire  [3:0] dbg_msize
+    output wire  [3:0] dbg_msize,
+    output wire        dbg_pal,
+    output wire  [5:0] dbg_irqh
 );
     // ------------------------------------------------------------ SROM (XC1765D image)
     reg  [7:0] srom [0:8191];
@@ -159,6 +161,7 @@ module as200_sys #(
     wire  [7:0] dinv_idx;
     wire        sio_intr, sio_nmi, sio_toy, sio_kbrst;
     assign irq_h = {sio_kbrst | halt, sio_toy, sio_nmi, sio_intr, 2'b00};
+    assign dbg_irqh = irq_h;
 `ifdef SIM_PCILOG
     reg [5:0] irq_h_q;
     always @(posedge clk) begin
@@ -181,7 +184,7 @@ module as200_sys #(
         .mem_be(c_be), .mem_wdata(c_wdata), .mem_ack(c_ack), .mem_rdata(c_rdata),
         .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(dbg_insn), .dbg_rwr(dbg_rwr),
         .dbg_rnum(dbg_rnum), .dbg_rval(dbg_rval), .dbg_mwr(dbg_mwr), .dbg_maddr(dbg_maddr),
-        .dbg_mval(dbg_mval), .dbg_msize(dbg_msize)
+        .dbg_mval(dbg_mval), .dbg_msize(dbg_msize), .dbg_pal(dbg_pal)
     );
 
     // ------------------------------------------------------------ 21071

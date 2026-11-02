@@ -69,7 +69,8 @@ module ev4_core (
     output reg         dbg_mwr,
     output reg  [63:0] dbg_maddr,
     output reg  [63:0] dbg_mval,
-    output reg   [3:0] dbg_msize
+    output reg   [3:0] dbg_msize,
+    output wire        dbg_pal          // PAL mode (the board's CPU state line)
 );
     // ================================================================ classes
     localparam C_NOP = 4'd0, C_ALU = 4'd1, C_SHF = 4'd2, C_MUL = 4'd3, C_LDA = 4'd4,
@@ -83,6 +84,7 @@ module ev4_core (
 
     // ================================================================ architectural state (W)
     reg         pal;
+    assign dbg_pal = pal;
     reg         iccsr_fpe, iccsr_map, iccsr_hwe;
     reg  [63:0] exc_addr;
     reg   [1:0] ps_cm;

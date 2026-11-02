@@ -19,6 +19,9 @@
 //                      (default: at once); more --type options queue up
 //     --arc            the OSD Console = ARC (TOY CMOS 3Fh at reset)
 //     --flash-wp       J6 flash write disabled (the flashROMs ignore writes)
+//     --nvram FILE     load the 8 KB flashbus NVRAM (the board's AS200.nvr) at the start
+//     --cd-ua          pulse cd_change at the start (the CD's Unit Attention, as after the board's mount)
+//     --key also takes {wN}: a pause of N x 100 ms
 //     --save-every N   a checkpoint every N cycles (the same --ckpt file)
 //     --key STR        type STR on the PS/2 keyboard (into the 8242): ASCII, \n = Enter,
 //                      {up} {down} {left} {right} {esc} {f1}..{f12} {tab} {bs};
@@ -79,9 +82,9 @@ int main(int argc, char **argv) {
     uint64_t save_at = 0;
     std::string ckpt = "../scratch/sys.ckpt", restore, typed;
     uint64_t type_at = 0, key_at = 0, vram_every = 0;
-    bool arc = false, flash_wp = false;
+    bool arc = false, flash_wp = false, cd_ua = false;
     uint64_t save_every = 0;
-    std::string keys, vram_file = "../scratch/vram.bin";
+    std::string keys, vram_file = "../scratch/vram.bin", nvram_file;
     std::vector<uint8_t> img[3];
     bool img_on[3] = {false, false, false};
     for (int i = 1; i < argc; i++) {
@@ -109,6 +112,8 @@ int main(int argc, char **argv) {
         else if (a == "--type-at") type_at = strtoull(next(), 0, 0);
         else if (a == "--arc") arc = true;
         else if (a == "--flash-wp") flash_wp = true;
+        else if (a == "--cd-ua") cd_ua = true;
+        else if (a == "--nvram") nvram_file = next();
         else if (a == "--save-every") save_every = strtoull(next(), 0, 0);
         else if (a == "--key") keys += next();
         else if (a == "--key-at") key_at = strtoull(next(), 0, 0);
@@ -210,12 +215,18 @@ int main(int argc, char **argv) {
                 else if (n == "left") kseq.push_back({0x6B, 1}); else if (n == "right") kseq.push_back({0x74, 1});
                 else if (n == "esc") kseq.push_back({0x76, 0}); else if (n == "tab") kseq.push_back({0x0D, 0});
                 else if (n == "bs") kseq.push_back({0x66, 0}); else if (n == "enter") kseq.push_back({0x5A, 0});
+                else if (n[0] == 'w') kseq.push_back({-atoi(n.c_str() + 1), 0});      // {wN}: wait N x 100 ms
                 else if (n[0] == 'f') kseq.push_back({fcode[atoi(n.c_str() + 1) - 1], 0});
             } else if (c == '\\' && k + 1 < keys.size() && keys[k + 1] == 'n') { kseq.push_back({0x5A, 0}); k++; }
             else if (c >= 'a' && c <= 'z') kseq.push_back({lcode[c - 'a'], 0});
             else if (c >= 'A' && c <= 'Z') kseq.push_back({lcode[c - 'A'], 0});
             else if (c >= '0' && c <= '9') kseq.push_back({dcode[c - '0'], 0});
             else if (c == ' ') kseq.push_back({0x29, 0});
+            else if (c == '\\') kseq.push_back({0x5D, 0});
+            else if (c == '(') kseq.push_back({0x146, 0});
+            else if (c == ')') kseq.push_back({0x145, 0});
+            else if (c == ':') kseq.push_back({0x14C, 0});
+            else if (c == '_') kseq.push_back({0x14E, 0});
             else if (c == '.') kseq.push_back({0x49, 0});
             else if (c == '-') kseq.push_back({0x4E, 0});
             (void)lc;
@@ -277,14 +288,32 @@ int main(int argc, char **argv) {
         // PS/2 keys: press, then release 10 ms later, then the next key 10 ms on
         {
             static size_t kpos = 0; static uint64_t knext = 0; static int kph = 0;
-            if (kpos < kseq.size() && cyc >= key_at && cyc >= knext) {
-                int code = kseq[kpos].first, ext = kseq[kpos].second;
+            if (kpos < kseq.size() && cyc >= key_at && cyc >= knext && kseq[kpos].first < 0) {
+                knext = cyc + (uint64_t)(-kseq[kpos].first) * 10000000ull; kpos++;
+            } else if (kpos < kseq.size() && cyc >= key_at && cyc >= knext) {
+                // phases: 0 shift down (shifted keys), 1 key down, 2 key up, 3 shift up
+                int code = kseq[kpos].first & 0xFF, ext = kseq[kpos].second, sh = kseq[kpos].first >> 8;
+                if (kph == 0 && !sh) kph = 1;
                 uint32_t tog = ((t->ps2_key >> 10) & 1) ^ 1;
-                t->ps2_key = tog << 10 | (kph == 0 ? 1 : 0) << 9 | ext << 8 | code;
-                if (kph == 0) kph = 1; else { kph = 0; kpos++; fprintf(stderr, "[%10" PRIu64 " cyc] key %02X%s\n", cyc, code, ext ? " (E0)" : ""); }
+                if (kph == 0)      t->ps2_key = tog << 10 | 1u << 9 | 0x12;
+                else if (kph == 1) t->ps2_key = tog << 10 | 1u << 9 | ext << 8 | code;
+                else if (kph == 2) t->ps2_key = tog << 10 | ext << 8 | code;
+                else               t->ps2_key = tog << 10 | 0x12;
+                if (kph == 2 && !sh) kph = 4; else kph++;
+                if (kph >= 4) { kph = 0; kpos++; fprintf(stderr, "[%10" PRIu64 " cyc] key %02X%s%s\n", cyc, code, ext ? " (E0)" : "", sh ? " (shift)" : ""); }
                 knext = cyc + 1000000;
             }
         }
+        // --nvram: the 8 KB flashbus NVRAM image through the 21071 model's port B, a byte a cycle
+        {
+            static std::vector<uint8_t> nv; static int nvi = -1;
+            if (nvi < 0) { nvi = 0; if (!nvram_file.empty()) { FILE *nf = fopen(nvram_file.c_str(), "rb");
+                if (nf) { nv.resize(8192); size_t got = fread(nv.data(), 1, 8192, nf); fclose(nf); fprintf(stderr, "NVRAM %s: %zu bytes\n", nvram_file.c_str(), got); } } }
+            t->nvb_we = 0;
+            if (nvi < (int)nv.size()) { t->nvb_addr = nvi; t->nvb_wdata = nv[nvi]; t->nvb_we = 1; nvi++; }
+        }
+        // --cd-ua: the mount pulse the board's Main gives at core load (the CD's Unit Attention)
+        { static int cdp = 0; t->cd_change = (cd_ua && cdp < 4) ? 1 : 0; if (cdp < 4) cdp++; }
         tick();
         cyc++;
         // the hps_io block devices (as in verilator/tb/tb_ncr810.cpp): one byte a cycle
