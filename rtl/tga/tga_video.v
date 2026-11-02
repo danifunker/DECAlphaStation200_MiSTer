@@ -46,6 +46,7 @@ module tga_video (
     input  wire  [7:0] cur_q1,
     input  wire  [7:0] cr0,
     input  wire  [7:0] cr2,
+    input  wire  [7:0] cr3,             // <2>: 64 x 64 cursor, else 32 x 32
     input  wire  [7:0] pixmask,
     input  wire [95:0] curcol,
     input  wire [11:0] cur_x,
@@ -174,11 +175,13 @@ module tga_video (
     reg        sa_cin, sb_cin;
     reg  [1:0] sc_cur, sd_cur;
 
-    wire [12:0] cxo = {1'b0, cur_x} - 13'd64;       // the cursor's top-left: the Bt485 position less 64
-    wire [12:0] cyo = {1'b0, cur_y} - 13'd64;
+    // the cursor's top-left: the Bt485 position less its size (64 or 32)
+    wire [12:0] csz = cr3[2] ? 13'd64 : 13'd32;
+    wire [12:0] cxo = {1'b0, cur_x} - csz;
+    wire [12:0] cyo = {1'b0, cur_y} - csz;
     wire [12:0] cdx = hc - cxo;
     wire [12:0] cdy = {2'd0, vc} - cyo;
-    wire        cin = cr2[1:0] != 2'd0 && cdx < 13'd64 && cdy < 13'd64;
+    wire        cin = cr2[1:0] != 2'd0 && cdx < csz && cdy < csz;
     wire [11:0] bi  = {9'd0, vc[0] ? off_h1 : off_h0} + hc[11:0];
     wire  [1:0] cbits = {cur_q1[3'd7 - sb_cx], cur_q0[3'd7 - sb_cx]};
 

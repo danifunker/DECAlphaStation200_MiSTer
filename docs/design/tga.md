@@ -131,7 +131,8 @@ The cursor RAM address is `{CR3<1:0>, address}`. It steps on every access: plane
 - **Display:** a 64x64 cursor whose top-left is at (X-64, Y-64) in active-video coordinates.
 - **Cursor modes (CR2<1:0>):** 1 three-colour, 2 XGA (complement shown as colour 3), 3 X11.
 - **DAC width:** CR0<1> = 0 means 6-bit values, expanded by repeating the top bits.
-- **Not modelled:** the overscan colour (0) and the 32x32 cursor size (CR3<2> = 0).
+- **32x32 cursor (CR3<2> = 0, NT 4.0's TGA driver):** the cursor RAM address is the 8-bit address register: plane 0 at 0-127, plane 1 at 128-255, 4 bytes a row; shown at (X-32, Y-32).
+- **Not modelled:** the overscan colour (0).
 - **Status:** reads 0.
 
 ## 6. Display

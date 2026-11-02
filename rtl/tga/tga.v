@@ -328,6 +328,12 @@ module tga #(
             if (!c_fb) begin
                 // registers
                 gram[c_idx] <= c_d;
+`ifdef SIM_PCILOG
+                // +tgalog: the drawing state the console firmware and NT leave behind
+                if ($test$plusargs("tgalog") && (c_idx == 8'h0A || c_idx == 8'h0B || c_idx == 8'h0C ||
+                                                 c_idx == 8'h0D || c_idx == 8'h17 || c_idx == 8'h14))
+                    $display("TGA reg %03x = %08x", {c_idx, 2'b00}, c_d);
+`endif
                 case (c_idx)
                 8'h08: fg <= c_d;
                 8'h09: bg <= c_d;
@@ -620,7 +626,7 @@ module tga #(
         .sc_req(sc_req), .sc_addr(sc_addr), .sc_len(sc_len), .sc_ack(sc_ack), .sc_rvalid(sc_rvalid),
         .sc_rdata(sc_rdata),
         .clk_pix(clk_pix), .pix_en(pix_en), .pal_a(pal_a), .pal_q(pal_q), .cur_a(cur_a),
-        .cur_q0(cur_q0), .cur_q1(cur_q1), .cr0(cr0), .cr2(cr2), .pixmask(pixmask), .curcol(curcol),
+        .cur_q0(cur_q0), .cur_q1(cur_q1), .cr0(cr0), .cr2(cr2), .cr3(cr3), .pixmask(pixmask), .curcol(curcol),
         .cur_x(cur_x), .cur_y(cur_y),
         .ce_pix(ce_pix), .hs(hs), .vs(vs), .de(de), .hblank(hblank), .vblank(vblank), .r(r), .g(g), .b(b)
     );

@@ -13,7 +13,9 @@
 //
 // The cursor RAM address is {CR3<1:0>, address}, a 10-bit counter that steps
 // on each cursor RAM access (plane 0 at 0-511, plane 1 at 512-1023, 8 bytes a
-// row, bit 7 the leftmost pixel). The palette address steps after the blue
+// row, bit 7 the leftmost pixel). With CR3<2> = 0 (the 32 x 32 cursor, NT's
+// TGA driver) it is the 8-bit address alone: plane 0 at 0-127, plane 1 at
+// 128-255, 4 bytes a row; those rows are kept at the start of the 64 x 64 rows. The palette address steps after the blue
 // byte. Palette and cursor RAM have a second copy read in the pixel clock
 // domain (pal_a/pal_q, cur_a/cur_q0/cur_q1, one cycle).
 module tga_bt485 (
@@ -71,7 +73,9 @@ module tga_bt485 (
     reg  [7:0] cram_p1 [0:511];
     reg  [7:0] cram_sy [0:1023];
     reg  [7:0] cram_rd;
-    wire [9:0] ca = {cr3[1:0], addr};
+    // the cursor RAM index (plane, row, byte) in the 64 x 64 layout
+    wire [9:0] ca = cr3[2] ? {cr3[1:0], addr} : {addr[7], 1'b0, addr[6:2], 1'b0, addr[1:0]};
+    wire [9:0] ca_next = cr3[2] ? ca + 10'd1 : {2'b00, addr + 8'd1};
     reg        cram_we;
     reg  [9:0] cram_wa;
     reg  [7:0] cram_wd;
@@ -121,7 +125,7 @@ module tga_bt485 (
             4'd10: if (ind3) cr3 <= wdata;
             4'd11: begin
                 cram_we <= 1'b1; cram_wa <= ca; cram_wd <= wdata;
-                {cr3[1:0], addr} <= ca + 10'd1;
+                if (cr3[2]) {cr3[1:0], addr} <= ca_next; else addr <= addr + 8'd1;
             end
             4'd12: cur_x[7:0]  <= wdata;
             4'd13: cur_x[11:8] <= wdata[3:0];
@@ -149,7 +153,7 @@ module tga_bt485 (
             4'd8: rdata <= cr1;
             4'd9: rdata <= cr2;
             4'd10: rdata <= ind3 ? cr3 : 8'h00;  // status: no sense trip, ID 0
-            4'd11: begin rdata <= cram_rd; {cr3[1:0], addr} <= ca + 10'd1; end
+            4'd11: begin rdata <= cram_rd; if (cr3[2]) {cr3[1:0], addr} <= ca_next; else addr <= addr + 8'd1; end
             4'd12: rdata <= cur_x[7:0];
             4'd13: rdata <= {4'd0, cur_x[11:8]};
             4'd14: rdata <= cur_y[7:0];
