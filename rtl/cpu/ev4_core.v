@@ -826,7 +826,13 @@ module ev4_core (
     wire m2_live    = m2_v && m2_exc == E_NONE && !w_redir;
     wire m2_need_bus = m2_live && m2_load && !m2_hit && mstate != MS_DONE;
     wire m2_need_wb  = m2_live && m2_store && wb_v;     // buffer full (a failing STx_C waits too: timing)
-    assign stall_m2 = m2_need_bus || m2_need_wb;
+    // after a D-fill the line's tag and data land in the RAMs one cycle after the
+    // last beat and M1 reads them a cycle later: hold M1 until it has re-read them,
+    // or a store behind the load is judged a miss against the old (invalid) tag,
+    // skips the D-cache (write-through, no allocate) and leaves the filled line stale
+    // (ARC 4.58's FindScsiDevices: stl then ldl of the same longword read 0)
+    reg   [1:0] dsettle;
+    assign stall_m2 = m2_need_bus || m2_need_wb || dsettle != 2'd0;
     assign stall_m1 = stall_m2;
 
     reg [63:0] m2_lq;
@@ -919,7 +925,7 @@ module ev4_core (
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
             fpu_go <= 1'b0; fpu_live <= 1'b0; fpu_fin <= 1'b0; exc_sum_r <= 7'd0; exc_mask <= 64'd0; msk_ptr <= 6'd0;
-            wb_v <= 1'b0; bown <= B_NONE; mem_req <= 1'b0;
+            wb_v <= 1'b0; bown <= B_NONE; mem_req <= 1'b0; dsettle <= 2'd0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
             // ------------------------------------------------ cache sweeps
@@ -1236,6 +1242,7 @@ module ev4_core (
             if (w_redir) ser_pending <= 1'b0;
 
             // ------------------------------------------------ bus
+            if (dsettle != 2'd0) dsettle <= dsettle - 2'd1;     // (a fill's last beat below sets it again)
             if (bown == B_NONE) begin
                 // D-side (M2) first, after the write buffer; then I-fill; then the buffer
                 if (m2_need_bus && mstate == MS_IDLE && !wb_v) begin
@@ -1271,7 +1278,7 @@ module ev4_core (
                     if (!bunc) begin dc_we <= 1'b1; dc_wa <= {m2_pa[12:5], bbeat}; dc_wd <= mem_rdata; dc_wbe <= 8'hFF; end
                     if (bunc || bbeat == 2'd3) begin
                         mem_req <= 1'b0; bown <= B_NONE; mstate <= MS_DONE;
-                        if (!bunc) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_wd <= m2_pa[33:13]; dct_v <= 1'b1; tagw = 1'b1; end
+                        if (!bunc) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_wd <= m2_pa[33:13]; dct_v <= 1'b1; tagw = 1'b1; dsettle <= 2'd3; end
                     end else begin
                         bbeat <= bbeat + 2'd1; mem_addr <= {m2_pa[33:5], bbeat + 2'd1};
                     end

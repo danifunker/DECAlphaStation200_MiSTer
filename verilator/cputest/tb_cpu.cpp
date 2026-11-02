@@ -73,6 +73,7 @@ int main(int argc, char **argv) {
     uint64_t cyc = 0, retired = 0;
     int rc = 3;
     bool pend = false;
+    const bool memlog = getenv("MEMLOG") != nullptr, fastline = getenv("FASTLINE") != nullptr;
     while (cyc < maxcyc) {
         // memory: answer a request on the cycle after it appears
         c->mem_ack = 0;
@@ -89,6 +90,7 @@ int main(int argc, char **argv) {
                 goto retired;
             }
             uint64_t q; memcpy(&q, &mem[a], 8);
+            if (memlog) fprintf(stderr, "mem %s%s %#" PRIx64 " at %" PRIu64 "\n", c->mem_we ? "W" : "R", c->mem_line ? " line" : "", a, cyc);
             if (c->mem_we) {
                 uint64_t w = c->mem_wdata, m = 0;
                 for (int b = 0; b < 8; b++) if (c->mem_be >> b & 1) m |= 0xFFull << (8 * b);
@@ -103,7 +105,7 @@ int main(int argc, char **argv) {
             }
             c->mem_rdata = q;
             c->mem_ack = 1;
-            pend = false;
+            pend = c->mem_line && !c->mem_we && fastline;   // line beats back to back (FASTLINE), as the SDRAM gives them
             if (rc != 3) break;     // alphaemu's trace also ends before the TOHOST store
         }
         tick();
