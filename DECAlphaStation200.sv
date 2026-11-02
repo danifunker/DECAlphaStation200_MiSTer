@@ -268,7 +268,7 @@ end
 wire [15:0] aud_l, aud_r;
 wire       aud_tgl;
 
-wire        d_req, d_we, d_ack;
+wire        d_req, d_we, d_ack, d_line;
 wire [26:3] d_addr;
 wire  [7:0] d_be;
 wire [63:0] d_wdata, d_rdata;
@@ -286,7 +286,7 @@ as200_sys machine
 	.leds(leds),
 	.nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
 
-	.d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
+	.d_req(d_req), .d_we(d_we), .d_line(d_line), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
 	.d_ack(d_ack), .d_rdata(d_rdata),
 	.f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata),
 	.f_ack(f_ack), .f_rdata(f_rdata),
@@ -341,7 +341,7 @@ assign SDRAM_DQ = sd_dq_oe ? sd_dq_out : 16'hZZZZ;
 sdram_ctl #(.CLK_MHZ(100)) sdram
 (
 	.clk(clk_sys), .init(~pll_locked), .ready(sdram_ready),
-	.req(d_req), .we(d_we), .addr(d_addr), .be(d_be), .wdata(d_wdata), .ack(d_ack), .rdata(d_rdata),
+	.req(d_req), .we(d_we), .line(d_line), .addr(d_addr), .be(d_be), .wdata(d_wdata), .ack(d_ack), .rdata(d_rdata),
 	.SDRAM_A(SDRAM_A), .SDRAM_BA(SDRAM_BA), .SDRAM_nCS(SDRAM_nCS), .SDRAM_nRAS(SDRAM_nRAS),
 	.SDRAM_nCAS(SDRAM_nCAS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
 	.SDRAM_CKE(SDRAM_CKE), .dq_out(sd_dq_out), .dq_oe(sd_dq_oe), .dq_in(SDRAM_DQ)

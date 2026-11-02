@@ -22,7 +22,8 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | SLR (serial-line interrupt), CRR | open | P3 | |
 | ABOX_CTL WB_DIS, EMD_EN (big-endian), DC_FHIT | open | P4 | Diagnostic |
 | Branch prediction (BHT/BTB), dual issue | open | P3 | Performance only; static rule today |
-| Block (32-byte) bus transfers, a board cache (Bcache) | open | P3 | Performance: each miss is 4 single quadword requests |
+| ~~Block (32-byte) bus transfers~~ | **done** 2026-11-01 | P3 | Cache fills are line reads: one SDRAM ACTIVE and two 8-beat READs, 4 quadword acks (`mem_line` -> `c_line` -> `d_line`); tb_sdram covers them |
+| A board cache (Bcache) | open | P4 | |
 | BIU_CTL / Bcache registers | partial | P4 | Stored as shadows only; no Bcache |
 | ITB/DTB: ASN tagging | partial | P2 | Entries have ASM only; no ASN compare (cpu.md 6.5) |
 | Timing: 100 MHz full-system closure | partial | P2 | Last fit -1.244 ns (`cpu-timing.md`) |

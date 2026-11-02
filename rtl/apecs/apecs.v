@@ -54,6 +54,7 @@ module apecs (
     // CPU
     input  wire        c_req,
     input  wire        c_we,
+    input  wire        c_line,          // a 32-byte line read: 4 quadwords, one c_ack each
     input  wire [33:3] c_addr,
     input  wire  [7:0] c_be,
     input  wire [63:0] c_wdata,
@@ -63,6 +64,7 @@ module apecs (
     // DRAM (128 MB)
     output reg         d_req,
     output reg         d_we,
+    output reg         d_line,          // a 32-byte line read: 4 quadwords, one d_ack each
     output reg  [26:3] d_addr,
     output reg   [7:0] d_be,
     output reg  [63:0] d_wdata,
@@ -157,6 +159,7 @@ module apecs (
                S_PCIW = 4'd6, S_DMA = 4'd7, S_PCI2 = 4'd8, S_SGR = 4'd9;
     reg [3:0] st;
     reg       pci_hi;                   // dense quadword: the second longword is pending
+    reg [1:0] d_beats;                  // quadwords delivered in a line read
     reg [31:0] pci_lo;                  // dense quadword read: the first longword
 
     // window registers (21071-DA; shadows of the DA CSRs at 0xC0..0x1C0)
@@ -264,7 +267,7 @@ module apecs (
         dinv <= 1'b0;
         ca_we <= 1'b0; da_we <= 1'b0; nv_we <= 1'b0;
         if (rst) begin
-            st <= S_IDLE; d_req <= 1'b0; f_req <= 1'b0; pt_req <= 1'b0; dm_ack <= 1'b0; leds <= 8'hFF;
+            st <= S_IDLE; d_req <= 1'b0; d_line <= 1'b0; f_req <= 1'b0; pt_req <= 1'b0; dm_ack <= 1'b0; leds <= 8'hFF;
             tbr1 <= 32'd0; tbr2 <= 32'd0; pbr1 <= 32'd0; pbr2 <= 32'd0; pmr1 <= 32'd0; pmr2 <= 32'd0;
             haxr1 <= 32'd0; haxr2 <= 32'd0;
             sg_v <= 8'd0; sg_rr <= 3'd0;
@@ -275,11 +278,11 @@ module apecs (
             // ---------------------------------------- DMA first
             if (dmx_miss) begin
                 // read the scatter/gather map entry, then retry the DMA (a TLB hit)
-                d_req <= 1'b1; d_we <= 1'b0; d_addr <= dmx_raw[26:3]; d_be <= 8'hFF;
+                d_req <= 1'b1; d_we <= 1'b0; d_addr <= dmx_raw[26:3]; d_be <= 8'hFF; d_line <= 1'b0;
                 sgf_tag <= dm_addr[31:13];
                 st <= S_SGR;
             end else if (dmx[34]) begin
-                d_req <= 1'b1; d_we <= dm_we; d_addr <= dmx[26:3];
+                d_req <= 1'b1; d_we <= dm_we; d_addr <= dmx[26:3]; d_line <= 1'b0;
                 d_be <= dmx[2] ? {dm_be, 4'd0} : {4'd0, dm_be};
                 d_wdata <= {dm_wdata, dm_wdata};
                 dma_lane <= dmx[2];
@@ -294,6 +297,7 @@ module apecs (
                 if (bank_hit && isz != 28'd0) begin
                     d_req <= 1'b1; d_we <= c_we; d_addr <= doff[26:3];
                     d_be <= c_be; d_wdata <= c_wdata;
+                    d_line <= c_line && !c_we; d_beats <= 2'd0;
                     st <= S_DRAM;
                 end else begin
                     c_rdata <= {64{1'b1}}; c_ack <= 1'b1;   // empty or no bank
@@ -397,8 +401,9 @@ module apecs (
             c_ack <= 1'b1; st <= S_IDLE;
         end
         S_DRAM: if (d_ack) begin
-            d_req <= 1'b0;
-            c_rdata <= d_rdata; c_ack <= 1'b1; st <= S_IDLE;
+            c_rdata <= d_rdata; c_ack <= 1'b1;
+            d_beats <= d_beats + 2'd1;
+            if (!d_line || d_beats == 2'd3) begin d_req <= 1'b0; d_line <= 1'b0; st <= S_IDLE; end
         end
         S_FB: if (f_ack) begin
             f_req <= 1'b0;

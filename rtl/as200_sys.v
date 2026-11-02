@@ -29,6 +29,7 @@ module as200_sys #(
     // DRAM (128 MB)
     output wire        d_req,
     output wire        d_we,
+    output wire        d_line,          // a 32-byte line read (4 quadwords, one d_ack each)
     output wire [26:3] d_addr,
     output wire  [7:0] d_be,
     output wire [63:0] d_wdata,
@@ -111,7 +112,7 @@ module as200_sys #(
     wire  [7:0] dinv_idx;
     wire        sio_intr, sio_nmi, sio_toy, sio_kbrst;
     assign irq_h = {sio_kbrst | halt, sio_toy, sio_nmi, sio_intr, 2'b00};
-    wire        c_req, c_we, c_ist, c_ack;
+    wire        c_req, c_we, c_ist, c_ack, c_line;
     wire [33:3] c_addr;
     wire  [7:0] c_be;
     wire [63:0] c_wdata, c_rdata;
@@ -122,7 +123,7 @@ module as200_sys #(
         .sl_xmit(srom_txd), .sl_rcv(srom_rxd),
         .irq_h(irq_h),
         .dinv(dinv), .dinv_idx(dinv_idx),
-        .mem_req(c_req), .mem_we(c_we), .mem_istream(c_ist), .mem_addr(c_addr),
+        .mem_req(c_req), .mem_we(c_we), .mem_istream(c_ist), .mem_line(c_line), .mem_addr(c_addr),
         .mem_be(c_be), .mem_wdata(c_wdata), .mem_ack(c_ack), .mem_rdata(c_rdata),
         .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(dbg_insn), .dbg_rwr(dbg_rwr),
         .dbg_rnum(dbg_rnum), .dbg_rval(dbg_rval), .dbg_mwr(dbg_mwr), .dbg_maddr(dbg_maddr),
@@ -141,9 +142,9 @@ module as200_sys #(
     apecs core_logic (
         .clk(clk), .rst(rst), .cfg_mem(cfg_mem), .jumpers(jumpers), .leds(leds),
         .nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
-        .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_be(c_be), .c_wdata(c_wdata),
+        .c_req(c_req), .c_we(c_we), .c_line(c_line), .c_addr(c_addr), .c_be(c_be), .c_wdata(c_wdata),
         .c_ack(c_ack), .c_rdata(c_rdata),
-        .d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
+        .d_req(d_req), .d_we(d_we), .d_line(d_line), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
         .d_ack(d_ack), .d_rdata(d_rdata),
         .f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata),
         .f_ack(f_ack), .f_rdata(f_rdata),

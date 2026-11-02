@@ -175,9 +175,10 @@ int main(int argc, char **argv) {
     while (cyc < cycles) {
         // DRAM: answer on the cycle after the request appears
         t->d_ack = 0;
-        if (t->d_req && !dpend) dpend = true;
+        static int dbeat = 0;
+        if (t->d_req && !dpend) { dpend = true; dbeat = 0; }
         else if (t->d_req && dpend) {
-            uint64_t a = (uint64_t)t->d_addr << 3, q;
+            uint64_t a = ((uint64_t)t->d_addr << 3) + (t->d_line ? 8 * dbeat : 0), q;
             memcpy(&q, &dram[a], 8);
             if (t->d_we) {
                 uint64_t m = 0;
@@ -185,7 +186,8 @@ int main(int argc, char **argv) {
                 q = (q & ~m) | (t->d_wdata & m);
                 memcpy(&dram[a], &q, 8);
             }
-            t->d_rdata = q; t->d_ack = 1; dpend = false;
+            t->d_rdata = q; t->d_ack = 1;
+            if (!t->d_line || ++dbeat == 4) dpend = false;
         }
         // flashbus ROMs
         t->f_ack = 0;

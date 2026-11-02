@@ -5,6 +5,7 @@ module tb_sdram_top (
     output wire        ready,
     input  wire        req,
     input  wire        we,
+    input  wire        line,
     input  wire [26:3] addr,
     input  wire  [7:0] be,
     input  wire [63:0] wdata,
@@ -14,7 +15,7 @@ module tb_sdram_top (
     wire [12:0] A; wire [1:0] BA; wire ncs, nras, ncas, nwe, dqml, dqmh, cke, oe;
     wire [15:0] dq_out, dq_in;
     sdram_ctl #(.CLK_MHZ(100)) ctl (.clk(clk), .init(init), .ready(ready),
-        .req(req), .we(we), .addr(addr), .be(be), .wdata(wdata), .ack(ack), .rdata(rdata),
+        .req(req), .we(we), .line(line), .addr(addr), .be(be), .wdata(wdata), .ack(ack), .rdata(rdata),
         .SDRAM_A(A), .SDRAM_BA(BA), .SDRAM_nCS(ncs), .SDRAM_nRAS(nras), .SDRAM_nCAS(ncas),
         .SDRAM_nWE(nwe), .SDRAM_DQML(dqml), .SDRAM_DQMH(dqmh), .SDRAM_CKE(cke),
         .dq_out(dq_out), .dq_oe(oe), .dq_in(dq_in));

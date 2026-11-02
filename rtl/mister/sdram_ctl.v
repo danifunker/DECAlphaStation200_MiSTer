@@ -28,6 +28,7 @@ module sdram_ctl #(
 
     input  wire        req,             // held until ack
     input  wire        we,
+    input  wire        line,            // a 32-byte line read: 4 quadwords from addr (line aligned), one ack each
     input  wire [26:3] addr,
     input  wire  [7:0] be,
     input  wire [63:0] wdata,
@@ -75,11 +76,12 @@ module sdram_ctl #(
     reg        acked;
     wire       cpu_req = req && !acked && !ack;
 
-    reg        r_we;
+    reg        r_we, r_line;
     reg [26:3] r_a;
     reg  [7:0] r_be;
     reg [63:0] r_wd;
-    reg  [2:0] beat, issued;
+    reg  [2:0] issued;
+    reg  [3:0] beat;                    // halfwords captured (16 for a line)
 
     always @(posedge clk) begin
         if (state == S_IDLE && ref_due) ref_due <= 1'b0;
@@ -118,7 +120,7 @@ module sdram_ctl #(
             if (ref_due) begin
                 chip <= 1'b0; command <= CMD_REFRESH; state <= S_REF;
             end else if (cpu_req) begin
-                r_we <= we; r_a <= addr; r_be <= be; r_wd <= wdata;
+                r_we <= we; r_line <= line && !we; r_a <= addr; r_be <= be; r_wd <= wdata;
                 chip <= addr[26]; SDRAM_BA <= addr[24:23]; SDRAM_A <= addr[22:10];
                 command <= CMD_ACTIVE;
                 state <= S_ACT;
@@ -129,22 +131,32 @@ module sdram_ctl #(
             if (t == T_RFC) state <= S_IDLE;
         end
         S_ACT: begin
-            beat <= 3'd0; issued <= 3'd0;
+            beat <= 4'd0; issued <= 3'd0;
             if (t == T_RCD - 2) state <= r_we ? S_WRITE : S_READ;
         end
+        // a quadword: one READ, the first 4 beats of its burst. A line: two
+        // READs 8 clocks apart from the 16-halfword-aligned column (16 beats
+        // without a gap), an ack after every 4th beat
         S_READ: begin
             if (issued == 3'd0) begin
                 command <= CMD_READ;
-                SDRAM_A <= {3'b000, r_a[25], r_a[9:3], 2'b00};
+                SDRAM_A <= r_line ? {3'b000, r_a[25], r_a[9:5], 4'b0000} : {3'b000, r_a[25], r_a[9:3], 2'b00};
                 issued <= 3'd1;
                 t <= 16'd1;
+            end else if (r_line && issued == 3'd1 && t == 16'd8) begin
+                command <= CMD_READ;
+                SDRAM_A <= {3'b000, r_a[25], r_a[9:5], 4'b1000};
+                issued <= 3'd2;
             end
-            if (t >= CAP && beat < 3'd4) begin
+            if (t >= CAP && (r_line ? 1'b1 : !beat[2]) && !(r_line && beat == 4'd15 && ack)) begin
                 rdata[16*beat[1:0] +: 16] <= dq_q;
-                beat <= beat + 3'd1;
-                if (beat == 3'd3) begin ack <= 1'b1; acked <= 1'b1; end
+                beat <= beat + 4'd1;
+                if (beat[1:0] == 2'd3) begin
+                    ack <= 1'b1;
+                    if (!r_line || beat == 4'd15) acked <= 1'b1;
+                end
             end
-            if (t == CAP + 8) begin                 // the burst of 8 has left the bus
+            if (t == CAP + (r_line ? 16 : 8)) begin   // the burst(s) have left the bus
                 command <= CMD_PRECHARGE; SDRAM_A[10] <= 1'b0;
                 t <= 16'd0; state <= S_PRE;
             end

@@ -53,6 +53,7 @@ module ev4_core (
     output reg         mem_req,
     output reg         mem_we,
     output reg         mem_istream,
+    output reg         mem_line,        // a 32-byte line fill: 4 quadwords from the line base, one mem_ack each
     output reg  [33:3] mem_addr,
     output reg   [7:0] mem_be,
     output reg  [63:0] mem_wdata,
@@ -1227,18 +1228,18 @@ module ev4_core (
                 // D-side (M2) first, after the write buffer; then I-fill; then the buffer
                 if (m2_need_bus && mstate == MS_IDLE && !wb_v) begin
                     bown <= B_DFILL; bbeat <= 2'd0; bunc <= !m2_cachable;
-                    mem_req <= 1'b1; mem_we <= 1'b0; mem_istream <= 1'b0; mem_be <= 8'hFF;
+                    mem_req <= 1'b1; mem_we <= 1'b0; mem_istream <= 1'b0; mem_be <= 8'hFF; mem_line <= m2_cachable;
                     mem_addr <= m2_cachable ? {m2_pa[33:5], 2'd0} : m2_pa[33:3];
                     mstate <= MS_WAIT;
                     if (m2_cachable) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_v <= 1'b0; dct_wd <= 21'd0; tagw = 1'b1; end
                 end else if (wb_v && (m2_need_bus || m2_need_wb || fstate != FS_FILL)) begin
                     bown <= B_WB;
-                    mem_req <= 1'b1; mem_we <= 1'b1; mem_istream <= 1'b0;
+                    mem_req <= 1'b1; mem_we <= 1'b1; mem_istream <= 1'b0; mem_line <= 1'b0;
                     mem_addr <= wb_a; mem_be <= wb_be; mem_wdata <= wb_d;
                 end else if (fstate == FS_FILL && !ifill_issued) begin
                     bown <= B_IFILL; bbeat <= 2'd0; ifill_issued <= 1'b1;
                     ict_we <= 1'b1; ict_wa <= ifill_line[12:5]; ict_v <= 1'b0; ict_wd <= 21'd0;
-                    mem_req <= 1'b1; mem_we <= 1'b0; mem_istream <= 1'b1; mem_be <= 8'hFF;
+                    mem_req <= 1'b1; mem_we <= 1'b0; mem_istream <= 1'b1; mem_be <= 8'hFF; mem_line <= 1'b1;
                     mem_addr <= {ifill_line, 2'd0};
                 end
             end else if (mem_ack) begin
