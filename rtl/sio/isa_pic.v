@@ -12,7 +12,15 @@
 // of the highest request, the slave's through the cascade; with no request
 // IRQ7's or IRQ15's vector (the 8259's spurious interrupt).
 //
-// Edge mode latches a request from its rising edge until it is acknowledged.
+// Edge mode latches a request from its rising edge until it is acknowledged,
+// and, as on the 8259A, only while the line stays high: a line that falls
+// before the acknowledge clears its IRR bit (the 8259A's edge sense latch
+// feeds the request latch through the IR level; Intel: "the IR input must
+// remain high until after the falling edge of the first INTA"). DEC's DROM
+// floppy loader relies on it: it polls IRR bit 6 for each FDC command with
+// the line masked and never acknowledged (docs/design/floppy.md 5). The
+// master's IRQ2 (the slave's INT, which this model's pipeline holds low for two
+// clocks after each access to the slave) keeps the latch until the acknowledge.
 // The lines are active high here (a PCI PIRQ routed by the 82378 arrives
 // inverted, as the level the 8259 sees).
 //
@@ -57,14 +65,14 @@ module isa_pic (
     isa_pic_chip master (
         .clk(clk), .rst(rst),
         .wr(io_wr && !elcr && !slave), .rd(io_rd && !elcr && !slave), .a0(a0), .din(io_din), .dout(m_dout),
-        .elcr_wr(io_wr && elcr && !slave), .elcr_mask(8'hF8), .elcr_q(m_elcr),
+        .elcr_wr(io_wr && elcr && !slave), .elcr_mask(8'hF8), .elcr_q(m_elcr), .hold(8'h04),
         .line({irq[7:3], s_int, irq[1:0]}), .int_o(intr), .pend_o(m_pend),
         .ack(ack_m), .vec(m_vec)
     );
     isa_pic_chip slave_pic (
         .clk(clk), .rst(rst),
         .wr(io_wr && !elcr && slave), .rd(io_rd && !elcr && slave), .a0(a0), .din(io_din), .dout(s_dout),
-        .elcr_wr(io_wr && elcr && slave), .elcr_mask(8'hDE), .elcr_q(s_elcr),   // IRQ8 and 13 edge only
+        .elcr_wr(io_wr && elcr && slave), .elcr_mask(8'hDE), .elcr_q(s_elcr), .hold(8'h00),   // IRQ8 and 13 edge only
         .line(irq[15:8]), .int_o(s_int), .pend_o(s_pend),
         .ack(ack_s), .vec(s_vec)
     );
@@ -84,6 +92,7 @@ module isa_pic_chip (
     input  wire       elcr_wr,
     input  wire [7:0] elcr_mask,      // the lines that may be level-sensitive
     output wire [7:0] elcr_q,
+    input  wire [7:0] hold,           // edge lines whose latch holds until the acknowledge, whatever the line does
     input  wire [7:0] line,
     output wire       int_o,
     output wire [3:0] pend_o,         // the request to raise INT for; bit 3: none
@@ -153,8 +162,9 @@ module isa_pic_chip (
 
     always @(posedge clk) begin
         last <= line;
-        // requests: a level line follows its input; an edge line latches a rising edge
-        irr <= (lvl & line) | (~lvl & (irr | (line & ~last)));
+        // requests: a level line follows its input; an edge line latches a rising edge,
+        // and drops with the line
+        irr <= (lvl & line) | (~lvl & (line | hold) & (irr | (line & ~last)));
 
         if (icw1) begin
             ltim <= din[3]; single <= din[1]; need_icw4 <= din[0];
