@@ -22,7 +22,9 @@
 // then 2E (the jump to the flash console) with no beep code; with a floppy, 2B
 // (the floppy loader), 2C and the jump to 0x100000 with the image's blocks
 // there (docs/design/floppy.md 5). The SIO's DMA master port goes to memory
-// here (PCI 0x40000000 = PA 0, the DROM's 1 GB window). The image is
+// here as through a direct window at PCI 1 GB = PA 0 (the DROM's ISA DMA high
+// page is 40h; the DROM sets no 21071 window itself, so the SROM must: the
+// summary prints the window registers as the DROM left them). The image is
 // DEC's, from scratch/ (not in git); this file holds none of it.
 #include <cstdio>
 #include <cstdlib>
@@ -441,6 +443,8 @@ done:
         }
         u64 cnt, lbn; memcpy(&cnt, &fimg[0x1E0], 8); memcpy(&lbn, &fimg[0x1E8], 8);
         bool at = pc == 0x100000, same = cnt < 2048 && !memcmp(&mem[0x100000], &fimg[lbn * 512], cnt * 512);
+        printf("     21071 DMA windows as the DROM left them: TBR1 %08x PBR1 %08x PMR1 %08x TBR2 %08x PBR2 %08x PMR2 %08x\n",
+               da[6], da[8], da[10], da[7], da[9], da[11]);
         printf("%s the jump to 0x100000 (pc %05" PRIx64 ")\n", at ? "PASS" : "FAIL", pc);
         printf("%s %" PRIu64 " blocks from LBN %" PRIu64 " at 0x100000\n", same ? "PASS" : "FAIL", cnt, lbn);
         if (!at || !same) ok = 0;
