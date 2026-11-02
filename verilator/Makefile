@@ -248,3 +248,14 @@ tb_apecs: obj_tb_apecs/Vapecs
 	obj_tb_apecs/Vapecs
 
 .PHONY: tb_apecs
+
+# rtl/net: the DECchip 21040 with its mailbox side, against a modelled memory, DDR3 mailbox and
+# Main's bridge (verilator/tb/tb_tulip.cpp; docs/design/ethernet.md)
+NET_RTL = $(RTL)/net/tulip21040.v $(RTL)/net/tulip_nb.v
+obj_tb_tulip/Vtulip21040: $(NET_RTL) tb/tb_tulip.cpp
+	$(TB_V) --Mdir obj_tb_tulip --top-module tulip21040 -Wno-BLKSEQ -Wno-UNUSEDPARAM $^
+
+tb_tulip: obj_tb_tulip/Vtulip21040
+	obj_tb_tulip/Vtulip21040
+
+.PHONY: tb_tulip
