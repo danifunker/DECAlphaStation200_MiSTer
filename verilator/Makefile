@@ -116,7 +116,7 @@ t3: obj_pipe/Vev4_core
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the
 # flash and DROM images from scratch/ (not in git)
 SIO_RTL = $(RTL)/sio/ns16550.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v \
-	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/sio82378.v
+	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/isa_fdc.v $(RTL)/sio/isa_fdc_img.v $(RTL)/sio/sio82378.v
 SIM_FAST ?= 1
 JTOPL_RTL = $(addprefix $(RTL)/audio/jtopl/,$(shell grep '^set_global' $(RTL)/audio/jtopl/jtopl.qip | grep -o 'jtopl[a-z0-9_]*\.v'))
 AUDIO_RTL = $(RTL)/audio/wss_ad1848.v $(RTL)/audio/opl_isa.v $(RTL)/audio/audio_mix.v $(RTL)/audio/as200_audio.v
@@ -165,8 +165,8 @@ tb_ncr810: obj_tb_ncr810/Vtb_ncr810_top
 # rtl/sio/sio82378.v on its PCI target bus (verilator/tb/tb_sio.cpp; docs/design/sio.md);
 # RTC_FAST: the TOY second is 512 ticks of its 32 kHz (the periodic rates unchanged)
 SIO_RTL = $(RTL)/sio/sio82378.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v \
-	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/ns16550.v
-SIO_V   = $(TB_V) --top-module sio82378 -Wno-BLKSEQ -Wno-PINCONNECTEMPTY -GRTC_FAST=1
+	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/isa_fdc.v $(RTL)/sio/isa_fdc_img.v $(RTL)/sio/ns16550.v
+SIO_V   = $(TB_V) --top-module sio82378 -Wno-BLKSEQ -Wno-PINCONNECTEMPTY -GRTC_FAST=1 -GFD_SPEED=100
 
 obj_tb_sio/Vsio82378: $(SIO_RTL) tb/tb_sio.cpp
 	$(SIO_V) --Mdir obj_tb_sio $^
@@ -175,6 +175,16 @@ tb_sio: obj_tb_sio/Vsio82378
 	obj_tb_sio/Vsio82378
 
 .PHONY: tb_sio
+
+# the floppy controller (rtl/sio/isa_fdc.v, isa_fdc_img.v) inside the SIO, its image on a model of
+# hps_io's slot 3 (verilator/tb/tb_fdc.cpp; docs/design/floppy.md); the drive 100 times a real one's speed
+obj_tb_fdc/Vsio82378: $(SIO_RTL) tb/tb_fdc.cpp
+	$(SIO_V) --Mdir obj_tb_fdc $^
+
+tb_fdc: obj_tb_fdc/Vsio82378
+	obj_tb_fdc/Vsio82378
+
+.PHONY: tb_fdc
 
 # DEC's DROM V1.7 POST (an EV4 interpreter in the bench) against the SIO: the 82378,
 # TOY, 8242, 87332 and interrupts tests must pass (the DROM image from scratch/)

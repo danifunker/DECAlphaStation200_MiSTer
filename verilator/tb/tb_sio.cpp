@@ -339,10 +339,10 @@ int main(int argc, char **argv) {
     CHECK(t->intr && iack() == 0x04, "COM1 interrupt (IRQ4)");
     outb(0x3F9, 0x00); outb(0x3FC, 0x00); outb(0x20, 0x20); outb(0x21, 0xFF);
 
-    // ------------------------------------------------------------ FDC stub
-    printf("-- FDC stub\n");
+    // ------------------------------------------------------------ FDC (no medium; verilator/tb/tb_fdc.cpp tests it)
+    printf("-- FDC, no medium\n");
     outb(0x21, 0xBF);
-    outb(0x3F2, 0x00); outb(0x3F2, 0x0C); wait(4);
+    outb(0x3F2, 0x00); outb(0x3F2, 0x0C); wait(12);
     CHECK(t->intr && iack() == 0x06, "FDC reset interrupt");
     for (int d = 0; d < 4; d++) {
         CHECK((inb(0x3F4) & 0xC0) == 0x80, "MSR before SENSE INTERRUPT %02x", inb(0x3F4));
@@ -354,13 +354,13 @@ int main(int argc, char **argv) {
     outb(0x20, 0x20);
     outb(0x3F5, 0x10); CHECK(inb(0x3F5) == 0x90, "VERSION");
     outb(0x3F5, 0x03); outb(0x3F5, 0xDF); outb(0x3F5, 0x02); CHECK((inb(0x3F4) & 0xD0) == 0x80, "SPECIFY done");
-    outb(0x3F5, 0x07); outb(0x3F5, 0x00); wait(4);      // RECALIBRATE drive 0
+    outb(0x3F5, 0x07); outb(0x3F5, 0x00); wait(12);     // RECALIBRATE drive 0 (on track 0 already)
     CHECK(t->intr && iack() == 0x06, "recalibrate interrupt");
     outb(0x3F5, 0x08); { uint8_t s = inb(0x3F5), p = inb(0x3F5); CHECK(s == 0x20 && p == 0, "seek end %02x %02x", s, p); }
     outb(0x20, 0x20);
-    // READ DATA with no medium: abnormal termination, missing address mark
+    // READ DATA with no medium: abnormal termination, missing address mark, after two index pulses
     { const uint8_t c[9] = {0xE6, 0x00, 0, 0, 1, 2, 18, 0x1B, 0xFF}; for (int i = 0; i < 9; i++) outb(0x3F5, c[i]); }
-    wait(4);
+    { int n = 0; while (!t->intr && n < 2000000) { tick(); n++; } }
     CHECK(t->intr, "read interrupt");
     { uint8_t r[7]; for (int i = 0; i < 7; i++) r[i] = inb(0x3F5);
       CHECK(r[0] == 0x40 && r[1] == 0x01 && r[2] == 0x00, "read result %02x %02x %02x", r[0], r[1], r[2]); }

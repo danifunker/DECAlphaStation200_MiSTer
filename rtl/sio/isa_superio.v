@@ -26,22 +26,19 @@
 // selected, no error" (DFh: nothing attached that ever acknowledges), the
 // control register stored. No EPP/ECP, no interrupt.
 //
-// The FDC is a STUB of an 82077AA with one drive that never has a medium,
-// enough for the probes the console firmware makes (dva0 shows, a boot from
-// it fails cleanly): DOR (with the reset and its interrupt, answered by four
-// SENSE INTERRUPTs), MSR/DSR, TDR, DIR (disk changed), CCR, and the command
-// FIFO with every command's parameter and result counts: VERSION 90h,
-// SPECIFY, CONFIGURE, LOCK, DUMPREG, PERPENDICULAR, SENSE DRIVE STATUS,
-// RECALIBRATE and SEEK (completing at once, IRQ6, SENSE INTERRUPT's seek
-// end), and READ/WRITE/VERIFY/FORMAT/READ ID/SCAN ending with an abnormal
-// termination, missing address mark (no DMA). The real FDC with the floppy
-// image comes later (docs/REUSE.md: IBMRS6K7248_fdc.sv).
+// The FDC is rtl/sio/isa_fdc.v (an 82077AA with drive A: on the OSD's floppy
+// image, docs/design/floppy.md) at 3F0h-3F7h (or 370h-377h: FER[5]), less x6
+// (the IDE's): IRQ 6 and DMA channel 2 (fdc_dreq/fdc_dack into the SIO's
+// 8237), its image on hps_io slot 3 (fd_*).
 //
 // Bus (pci.md 5): claim is combinational from io_addr (the ports this chip
 // decodes as configured, its UARTs excepted); io_rd/io_wr are the SIO's
 // one-cycle strobes, already qualified by claim; io_dout combinational, the
 // side effects of a read (FIFO results) on the io_rd clock.
-module isa_superio (
+module isa_superio #(
+    parameter CLK_HZ   = 100000000,
+    parameter FD_SPEED = 4             // the floppy drive's speed, times a real one (isa_fdc.v)
+) (
     input  wire        clk,
     input  wire        rst,
 
@@ -58,8 +55,31 @@ module isa_superio (
     output wire [15:3] uart2_base,
     output wire        irq_fdc,       // IRQ6
     output wire        irq_lpt,       // IRQ7 (or 5: PTR[3]); never raised
-    output wire  [7:0] lpt_data       // the parallel port's data latch (progress codes, if any)
+    output wire  [7:0] lpt_data,      // the parallel port's data latch (progress codes, if any)
+
+    // the FDC's DMA channel 2 (rtl/sio/isa_dma.v)
+    output wire        fdc_dreq,
+    output wire  [7:0] fdc_dma_q,     // the byte for a write-to-memory transfer
+    input  wire        fdc_dack,      // channel 2's transfer done
+    input  wire  [7:0] fdc_dack_data,
+    input  wire        fdc_tc,
+    output wire        fdc_led,
+
+    // drive A:'s image (hps_io slot 3)
+    input  wire        fd_mounted,
+    input  wire        fd_readonly,
+    input  wire [63:0] fd_size,
+    output wire [31:0] fd_lba,
+    output wire  [5:0] fd_blk_cnt,
+    output wire        fd_rd,
+    output wire        fd_wr,
+    input  wire        fd_ack,
+    input  wire [13:0] fd_buff_addr,
+    input  wire  [7:0] fd_buff_dout,
+    input  wire        fd_buff_wr,
+    output wire  [7:0] fd_buff_din
 );
+
     // ---------------------------------------------------------------- configuration
     reg [7:0] fer, far_r, ptr, fcr, pcr, krr, pmc, tup;
     reg [7:0] index;
@@ -106,88 +126,23 @@ module isa_superio (
     assign lpt_data = lpt_d;
     assign irq_lpt  = 1'b0;
 
-    // ---------------------------------------------------------------- FDC stub
-    reg  [7:0] dor, tdr, dsr, ccr;
-    reg  [4:0] fcmd;                    // the command being collected (low 5 bits)
-    reg  [3:0] np;                      // parameter bytes still wanted
-    reg  [3:0] nr;                      // result bytes still to read
-    reg  [3:0] rp;                      // the next result byte's number
-    reg  [2:0] pc;                      // the next parameter's number
-    reg  [7:0] prm0, prm1, prm2, prm3, prm4;   // the parameters kept (drive/head, C, H, R, N)
-    reg  [7:0] st0, pcn;
-    reg  [7:0] cyl;                     // the drive's cylinder
-    reg  [2:0] rst_sense;               // SENSE INTERRUPTs owed after a reset (4 .. 0)
-    reg        seek_int;                // a seek/recalibrate ended: SENSE INTERRUPT reports it
-    reg        fint;                    // the interrupt line's state
-    reg        lock;
-    reg  [7:0] cfg_fifo, cfg_pre;
-
-    // parameter and result counts by command
-    function [7:0] cmd_counts;          // {params, results}
-        input [4:0] c;
-        case (c)
-        5'h02, 5'h05, 5'h06, 5'h09, 5'h0C, 5'h11, 5'h16, 5'h19, 5'h1D: cmd_counts = {4'd8, 4'd7};
-        5'h03: cmd_counts = {4'd2, 4'd0};       // SPECIFY
-        5'h04: cmd_counts = {4'd1, 4'd1};       // SENSE DRIVE STATUS
-        5'h07: cmd_counts = {4'd1, 4'd0};       // RECALIBRATE
-        5'h08: cmd_counts = {4'd0, 4'd2};       // SENSE INTERRUPT (1 when nothing is pending)
-        5'h0A: cmd_counts = {4'd1, 4'd7};       // READ ID
-        5'h0D: cmd_counts = {4'd5, 4'd7};       // FORMAT
-        5'h0E: cmd_counts = {4'd0, 4'd10};      // DUMPREG
-        5'h0F: cmd_counts = {4'd2, 4'd0};       // SEEK
-        5'h10: cmd_counts = {4'd0, 4'd1};       // VERSION
-        5'h12: cmd_counts = {4'd1, 4'd0};       // PERPENDICULAR
-        5'h13: cmd_counts = {4'd3, 4'd0};       // CONFIGURE
-        5'h14: cmd_counts = {4'd0, 4'd1};       // LOCK
-        default: cmd_counts = {4'd0, 4'd1};     // invalid: ST0 = 80h
-        endcase
-    endfunction
-
-    wire       f_busy = np != 4'd0 || nr != 4'd0;
-    wire [7:0] msr    = {1'b1, nr != 4'd0, 1'b0, f_busy, 4'h0};
-    reg  [7:0] fres;                    // the result byte rp
-    always @* begin
-        fres = 8'h00;
-        case (fcmd)
-        5'h08: fres = rp == 4'd0 ? st0 : pcn;
-        5'h04: fres = {1'b0, 1'b0, 1'b1, cyl == 8'd0, 1'b1, prm0[2:0]};   // ST3: ready, track 0, two-sided
-        5'h10: fres = 8'h90;                                                // VERSION: 82077AA
-        5'h14: fres = {3'd0, lock, 4'd0};
-        5'h0E: case (rp)                                                    // DUMPREG
-            4'd0: fres = cyl; 4'd1: fres = 8'd0; 4'd2: fres = 8'd0; 4'd3: fres = 8'd0;
-            4'd4: fres = 8'd0; 4'd5: fres = 8'd0; 4'd6: fres = 8'd0; 4'd7: fres = {lock, 7'd0};
-            4'd8: fres = cfg_fifo; default: fres = cfg_pre;
-        endcase
-        5'h02, 5'h05, 5'h06, 5'h09, 5'h0A, 5'h0C, 5'h0D, 5'h11, 5'h16, 5'h19, 5'h1D:
-            case (rp)                                                       // no medium
-            4'd0: fres = {2'b01, 3'b000, prm0[2:0]};                        // ST0: abnormal termination
-            4'd1: fres = 8'h01;                                             // ST1: missing address mark
-            4'd2: fres = 8'h00;                                             // ST2
-            4'd3: fres = prm1; 4'd4: fres = prm2; 4'd5: fres = prm3; default: fres = prm4;
-            endcase
-        default: fres = 8'h80;                                              // invalid
-        endcase
-    end
-
-    wire [2:0] f_reg  = io_addr[2:0];
-    wire       f_wr   = io_wr && fdc_sel;
-    wire       f_rd   = io_rd && fdc_sel;
-    wire [7:0] cc_now = cmd_counts(io_din[4:0]);
-    wire [2:0] rst_drv = 3'd4 - rst_sense;          // the drive the next post-reset SENSE INTERRUPT reports
-    assign irq_fdc = fint && dor[3];
+    // ---------------------------------------------------------------- FDC
+    wire [7:0] fdc_q;
+    isa_fdc #(.CLK_HZ(CLK_HZ), .SPEED(FD_SPEED)) fdc (
+        .clk(clk), .rst(rst),
+        .io_off(io_addr[2:0]), .io_rd(io_rd && fdc_sel), .io_wr(io_wr && fdc_sel), .io_din(io_din), .io_dout(fdc_q),
+        .irq(irq_fdc),
+        .dreq(fdc_dreq), .dma_q(fdc_dma_q), .dack(fdc_dack), .dack_data(fdc_dack_data), .tc(fdc_tc), .led(fdc_led),
+        .img_mounted(fd_mounted), .img_readonly(fd_readonly), .img_size(fd_size),
+        .sd_lba(fd_lba), .sd_blk_cnt(fd_blk_cnt), .sd_rd(fd_rd), .sd_wr(fd_wr), .sd_ack(fd_ack),
+        .sd_buff_addr(fd_buff_addr), .sd_buff_dout(fd_buff_dout), .sd_buff_wr(fd_buff_wr), .sd_buff_din(fd_buff_din)
+    );
 
     always @* begin
         io_dout = 8'hFF;
         if (cfg_sel) io_dout = io_addr[0] ? cfg_q : index;
         else if (lpt_sel) io_dout = io_addr[1:0] == 2'd0 ? lpt_d : io_addr[1:0] == 2'd1 ? 8'hDF : lpt_ctl;
-        else if (fdc_sel) case (f_reg)
-            3'd2: io_dout = dor;
-            3'd3: io_dout = tdr;
-            3'd4: io_dout = msr;
-            3'd5: io_dout = nr != 4'd0 ? fres : 8'h00;
-            3'd7: io_dout = 8'h80;                                          // DIR: disk changed
-            default: io_dout = 8'hFF;
-        endcase
+        else if (fdc_sel) io_dout = fdc_q;
     end
 
     always @(posedge clk) begin
@@ -206,92 +161,10 @@ module isa_superio (
             if (io_addr[1:0] == 2'd2) lpt_ctl <= io_din;
         end
 
-        // FDC
-        if (f_wr) case (f_reg)
-            3'd2: begin
-                dor <= io_din;
-                if (!io_din[2]) begin                                       // held in reset
-                    np <= 4'd0; nr <= 4'd0; fint <= 1'b0; seek_int <= 1'b0; rst_sense <= 3'd0;
-                end else if (!dor[2]) begin                                 // out of reset: the interrupt
-                    fint <= 1'b1; rst_sense <= 3'd4;
-                end
-            end
-            3'd3: tdr <= io_din;
-            3'd4: begin
-                dsr <= io_din;
-                if (io_din[7]) begin fint <= 1'b1; rst_sense <= 3'd4; np <= 4'd0; nr <= 4'd0; end   // software reset
-            end
-            3'd5: begin
-                if (np != 4'd0) begin
-                    // a parameter: 0 drive/head, then C, H, R, N for the data commands;
-                    // SEEK's cylinder is 1, CONFIGURE's FIFO and precompensation 1 and 2
-                    case (pc)
-                    3'd0: prm0 <= io_din;
-                    3'd1: prm1 <= io_din;
-                    3'd2: prm2 <= io_din;
-                    3'd3: prm3 <= io_din;
-                    3'd4: prm4 <= io_din;
-                    default: ;
-                    endcase
-                    if (pc == 3'd1 && fcmd == 5'h0F) cyl <= io_din;
-                    if (pc == 3'd1 && fcmd == 5'h13) cfg_fifo <= io_din;
-                    if (pc == 3'd2 && fcmd == 5'h13) cfg_pre <= io_din;
-                    pc <= pc + 3'd1;
-                    np <= np - 4'd1;
-                    if (np == 4'd1) begin
-                        // the last parameter: execute
-                        rp <= 4'd0;
-                        case (fcmd)
-                        5'h07: begin cyl <= 8'd0; seek_int <= 1'b1; fint <= 1'b1; st0 <= {2'b00, 1'b1, 2'b00, io_din[2:0]}; end
-                        5'h0F: begin seek_int <= 1'b1; fint <= 1'b1; st0 <= {2'b00, 1'b1, 2'b00, prm0[2:0]}; end
-                        5'h03, 5'h12, 5'h13: ;
-                        5'h04: nr <= 4'd1;
-                        5'h0A: begin nr <= 4'd7; fint <= 1'b1; prm0 <= io_din; end
-                        default: begin nr <= 4'd7; fint <= 1'b1; end         // the data commands: fail
-                        endcase
-                    end
-                end else if (nr == 4'd0) begin
-                    // a command byte
-                    fcmd <= io_din[4:0];
-                    rp   <= 4'd0;
-                    np   <= cc_now[7:4];
-                    pc   <= 3'd0;
-                    if (cc_now[7:4] == 4'd0) begin
-                        if (io_din[4:0] == 5'h08) begin                    // SENSE INTERRUPT
-                            fint <= 1'b0;
-                            if (rst_sense != 3'd0) begin
-                                st0 <= {2'b11, 4'd0, rst_drv[1:0]};
-                                pcn <= 8'd0; nr <= 4'd2; rst_sense <= rst_sense - 3'd1;
-                            end else if (seek_int) begin
-                                pcn <= cyl; nr <= 4'd2; seek_int <= 1'b0;
-                            end else begin
-                                st0 <= 8'h80; nr <= 4'd1;                  // nothing pending: invalid
-                            end
-                        end else begin
-                            if (io_din[4:0] == 5'h14) lock <= io_din[7];
-                            nr <= cc_now[3:0];
-                            if (io_din[4:0] != 5'h10 && io_din[4:0] != 5'h14 && io_din[4:0] != 5'h0E)
-                                st0 <= 8'h80;
-                        end
-                    end
-                end
-            end
-            3'd7: ccr <= io_din;
-            default: ;
-        endcase
-        if (f_rd && f_reg == 3'd5 && nr != 4'd0) begin
-            nr <= nr - 4'd1; rp <= rp + 4'd1;
-            if (fcmd != 5'h08) fint <= 1'b0;                                // the result phase takes the interrupt
-        end
-
         if (rst) begin
             fer <= 8'h0F; far_r <= 8'h10; ptr <= 8'h00; fcr <= 8'h00; pcr <= 8'h00; krr <= 8'h00;
             pmc <= 8'h00; tup <= 8'h00; index <= 8'h00;
             lpt_d <= 8'h00; lpt_ctl <= 8'h0C;
-            dor <= 8'h00; tdr <= 8'h00; dsr <= 8'h02; ccr <= 8'h02; fcmd <= 5'd0; pc <= 3'd0; np <= 4'd0; nr <= 4'd0; rp <= 4'd0;
-            st0 <= 8'h00; pcn <= 8'h00; cyl <= 8'h00; rst_sense <= 3'd0; seek_int <= 1'b0; fint <= 1'b0;
-            lock <= 1'b0; cfg_fifo <= 8'h00; cfg_pre <= 8'h00;
-            prm0 <= 8'h00; prm1 <= 8'h00; prm2 <= 8'h00; prm3 <= 8'h00; prm4 <= 8'h00;
         end
     end
 endmodule

@@ -13,10 +13,11 @@
 //                          20 21 A0 A1 4D0 4D1 PIC, 40-43 61 PIT and NMI status,
 //                          60 64 8242 (UBCSA[1]), 70 71 BQ4285 (UBCSA[0]; port 70
 //                          bit 7 is the SIO's NMI disable), 92 (UBCSB[6]), the
-//                          PC87332 (isa_superio.v: 398 399, parallel port, FDC
-//                          stub) and its UARTs (ns16550.v) where its FER/FAR put
-//                          them; anything else goes out on xio_* (sound, a real
-//                          FDC later), and reads 0xFF when nothing claims it
+//                          PC87332 (isa_superio.v: 398 399, parallel port, the
+//                          FDC isa_fdc.v on DMA channel 2) and its UARTs
+//                          (ns16550.v) where its FER/FAR put them; anything else
+//                          goes out on xio_* (sound), and reads 0xFF when nothing
+//                          claims it
 //   interrupts             8259 pair: 0 PIT, 1 keyboard, 3 COM2, 4 COM1, 6 FDC,
 //                          7 parallel, 12 mouse, 13 DMA S/G, plus xio_irq and the
 //                          PIRQ0-3 lines routed by registers 60h-63h; ISA IRQ8 is
@@ -33,7 +34,8 @@ module sio82378 #(
     parameter       CLK_HZ   = 100000000,
     parameter       RTC_FAST = 0,
     parameter [4:0] DEVNUM   = 5'd7,
-    parameter [7:0] REVID    = 8'h43
+    parameter [7:0] REVID    = 8'h43,
+    parameter       FD_SPEED = 4        // the floppy drive's speed, times a real one (rtl/sio/isa_fdc.v)
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -117,6 +119,21 @@ module sio82378 #(
     input  wire        year_ovr_en,
     input  wire  [6:0] year_ovr,
     input  wire        console_arc,     // the TOY's CMOS 3Fh at reset (rtl/sio/isa_rtc.v)
+
+    // the floppy drive A:'s image: hps_io block device slot 3 (rtl/sio/isa_fdc_img.v)
+    input  wire        fd_mounted,      // img_mounted[3]
+    input  wire        fd_readonly,     // img_readonly (valid with fd_mounted)
+    input  wire [63:0] fd_size,         // img_size (valid with fd_mounted)
+    output wire [31:0] fd_lba,          // sd_lba[3]
+    output wire  [5:0] fd_blk_cnt,      // sd_blk_cnt[3]
+    output wire        fd_rd,           // sd_rd[3]
+    output wire        fd_wr,           // sd_wr[3]
+    input  wire        fd_ack,          // sd_ack[3]
+    input  wire [13:0] fd_buff_addr,    // sd_buff_addr
+    input  wire  [7:0] fd_buff_dout,    // sd_buff_dout
+    input  wire        fd_buff_wr,      // sd_buff_wr
+    output wire  [7:0] fd_buff_din,     // sd_buff_din[3]
+    output wire        fd_led,          // a floppy command is running (the disk LED)
 
     output wire  [7:0] lpt_data
 );
@@ -367,11 +384,16 @@ module sio82378 #(
         .irq0(irq0), .spk(spk)
     );
 
+    // DMA channel 2 is also the FDC's (the PC87332's DRQ2/DACK2): its request ORed in, its byte
+    // in place of xio_dev_data while it requests
+    wire       fdc_dreq;
+    wire [7:0] fdc_dma_q;
     isa_dma dma (
         .clk(clk), .rst(rst),
         .io_addr(a), .io_rd(io_rd && s_dma), .io_wr(io_wr && s_dma), .io_din(io_din), .io_dout(q_dma),
-        .dreq(xio_dreq), .dack(xio_dack), .dack_ch(xio_dack_ch), .dack_data(xio_dack_data),
-        .dev_data(xio_dev_data), .dev_ch(xio_dma_ch), .tc(xio_tc), .sg_irq(sg_irq),
+        .dreq(xio_dreq | {5'd0, fdc_dreq, 2'd0}), .dack(xio_dack), .dack_ch(xio_dack_ch), .dack_data(xio_dack_data),
+        .dev_data(fdc_dreq && xio_dma_ch == 3'd2 ? {8'h00, fdc_dma_q} : xio_dev_data),
+        .dev_ch(xio_dma_ch), .tc(xio_tc), .sg_irq(sg_irq),
         .dm_req(dm_req), .dm_we(dm_we), .dm_addr(dm_addr), .dm_be(dm_be), .dm_wdata(dm_wdata),
         .dm_ack(dm_ack), .dm_rdata(dm_rdata)
     );
@@ -390,12 +412,17 @@ module sio82378 #(
         .rtc(rtc), .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_arc(console_arc)
     );
 
-    isa_superio superio (
+    isa_superio #(.CLK_HZ(CLK_HZ), .FD_SPEED(FD_SPEED)) superio (
         .clk(clk), .rst(rst),
         .io_addr(a), .io_rd(io_rd && s_sup), .io_wr(io_wr && s_sup), .io_din(io_din), .io_dout(q_sup),
         .claim(sup_claim),
         .uart1_on(uart1_on), .uart1_base(uart1_base), .uart2_on(uart2_on), .uart2_base(uart2_base),
-        .irq_fdc(irq_fdc), .irq_lpt(irq_lpt), .lpt_data(lpt_data)
+        .irq_fdc(irq_fdc), .irq_lpt(irq_lpt), .lpt_data(lpt_data),
+        .fdc_dreq(fdc_dreq), .fdc_dma_q(fdc_dma_q), .fdc_dack(xio_dack && xio_dack_ch == 3'd2),
+        .fdc_dack_data(xio_dack_data[7:0]), .fdc_tc(xio_tc), .fdc_led(fd_led),
+        .fd_mounted(fd_mounted), .fd_readonly(fd_readonly), .fd_size(fd_size),
+        .fd_lba(fd_lba), .fd_blk_cnt(fd_blk_cnt), .fd_rd(fd_rd), .fd_wr(fd_wr), .fd_ack(fd_ack),
+        .fd_buff_addr(fd_buff_addr), .fd_buff_dout(fd_buff_dout), .fd_buff_wr(fd_buff_wr), .fd_buff_din(fd_buff_din)
     );
 
     // the UARTs' interrupt outputs are enabled by their MCR OUT2, as on a PC
