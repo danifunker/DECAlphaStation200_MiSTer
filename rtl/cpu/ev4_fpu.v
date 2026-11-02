@@ -125,7 +125,10 @@ module ev4_fpu #(parameter TAG_W = 6) (
     wire [63:0] imag = sb ? -fb : fb;
 
     // exceptions on the inputs (cpu.md 8.4): input ones take priority
-    wire inv_c = (op[3] ? (!is_fromint && bad_b) : (bad_a || bad_b)) ||
+    // CMPTxx takes plus and minus infinity without a trap (Alpha ARM 4.7.6.2, 4.10.8)
+    wire inf_a = !vax && (&ea) && a_f0, inf_b = !vax && !dsrc && (&eb) && b_f0;
+    wire inv_c = (op[3] ? (!is_fromint && bad_b) :
+                          ((bad_a && !(is_cmp && inf_a)) || (bad_b && !(is_cmp && inf_b)))) ||
                  (!vax && is_div && a_zero && b_zero);
     wire dze_c = !inv_c && is_div && b_zero;
     wire signed [12:0] L_c = Eb + 13'sd12;        // CVTxQ: shift of the 53-bit significand into 64.64

@@ -94,7 +94,7 @@ G -1024..1022, F -128..126 (bias 1025), D -128..126 (8-bit exponent, bias 129).
 
 | Condition | Result | fpcr_set | exc_sum (trap) |
 |---|---|---|---|
-| IEEE operand NaN, Inf or denormal; VAX reserved operand or dirty zero (every op; compares included; conversions check only Fb; CVTQx never) | 0 | INV | INV, always |
+| IEEE operand NaN, Inf or denormal; VAX reserved operand or dirty zero (every op; conversions check only Fb; CVTQx never; **CMPTxx takes +-Inf without a trap**, Alpha ARM 4.7.6.2: ARC 4.58's hardware display compares against +Inf) | 0 | INV | INV, always |
 | IEEE 0/0 | 0 | INV | INV |
 | x/0, x valid non-zero (IEEE); x/0 with x valid, including 0/0 (VAX) | 0 | DZE | DZE, always |
 | overflow | 0 | OVF, INE (not divides) | FOV always; INE too with /SUI |

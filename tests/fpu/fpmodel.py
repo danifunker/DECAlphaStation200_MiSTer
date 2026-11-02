@@ -12,7 +12,7 @@ it to the destination format with the ARM's definitions (4.7.5):
   that rounds up to MIN is MIN, inexact, and no underflow.
 
 On top of that the EV4 rules (HRM 2.6-2.7, cpu.md 8.4): every non-finite
-IEEE operand (NaN, Inf, denormal) and every VAX reserved operand or dirty zero
+IEEE operand (NaN, Inf, denormal; compares take Inf) and every VAX reserved operand or dirty zero
 is INV; IEEE 0/0 is INV, x/0 DZE (VAX 0/0 is DZE); underflow writes true zero
 (64 zero bits); INV, DZE, OVF always trap; the 21064's divider never sets
 FPCR[INE] and DIVx/SUI always traps INE; input exceptions take priority.
@@ -202,6 +202,18 @@ def model(ir, fa, fb, dyn, vax_rne=False):
         return out(round_fmt(s, m, x, False, fmt, mode, 0 if vax else s))
     # ---- two operands
     a, b = dec(fa), dec(fb)
+    # CMPTxx takes plus and minus infinity without a trap (Alpha ARM 4.7.6.2)
+    isinf = lambda r: (r >> 52) & 0x7FF == 0x7FF and r & ((1 << 52) - 1) == 0
+    if not vax and 4 <= op <= 7 and (isinf(fa) or isinf(fb)) and \
+            (isinf(fa) or a[0] != 'bad') and (isinf(fb) or b[0] != 'bad'):
+        def val(r, d):
+            if isinf(r):
+                return float('-inf') if r >> 63 else float('inf')
+            _, sx, mx, xx = d
+            return (-1) ** sx * mx * 2 ** (xx + 1100) if mx else 0
+        va, vb = val(fa, a), val(fb, b)
+        t = {4: False, 5: va == vb, 6: va < vb, 7: va <= vb}[op]
+        return fin(0x4000000000000000 if t else 0, 0, 0)
     if a[0] == 'bad' or b[0] == 'bad':
         return inexc(INV)
     _, sa, ma, xa = a
