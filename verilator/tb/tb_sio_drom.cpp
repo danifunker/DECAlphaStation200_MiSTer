@@ -12,9 +12,17 @@
 //     --log          every PCI configuration and ISA access, with the DROM's PC
 //     --calibrate    PA 0x70 = 2: the DROM times the CPU against 8254 counter 0
 //     --cycles N     give up after N cycles (default 600M)
+//     --floppy FILE  drive A:'s image (hps_io slot 3, modelled here), and the jumpers
+//                    set for the floppy loader (J2: 01h); --floppy-test makes a 1.44 MB
+//                    image here: a boot block (LBN 30, 20 blocks, its checksum) and
+//                    patterned blocks
+//     --jumpers N    the jumper byte (default 03h: no mini-console, flash loader)
 //
 // Passes when the LEDs show the POST steps 24 (NVRAM) .. 2A (interrupts) and
-// then 2E (the jump to the flash console) with no beep code. The image is
+// then 2E (the jump to the flash console) with no beep code; with a floppy, 2B
+// (the floppy loader), 2C and the jump to 0x100000 with the image's blocks
+// there (docs/design/floppy.md 5). The SIO's DMA master port goes to memory
+// here (PCI 0x40000000 = PA 0, the DROM's 1 GB window). The image is
 // DEC's, from scratch/ (not in git); this file holds none of it.
 #include <cstdio>
 #include <cstdlib>
@@ -27,14 +35,43 @@
 #include "verilated.h"
 typedef uint64_t u64; typedef int64_t s64; typedef uint32_t u32; typedef int32_t s32;
 
+static std::vector<uint8_t> mem;
+static std::vector<uint8_t> fimg;            // drive A:'s image
+static int fd_st, fd_lat, fd_i, fd_n, fd_sub, fd_wr_op; static uint32_t fd_lba;
+static int fd_dmapend;
 struct Dev {
     Vsio82378 *t; uint8_t ncr[256];
-    void tick() { t->clk = 0; t->eval(); t->clk = 1; t->eval(); }
+    void fd_step() {
+        // the SIO's DMA master port: memory, through the 21071's 1 GB window at PCI 1 GB
+        t->dm_ack = 0;
+        if (t->dm_req && !fd_dmapend) fd_dmapend = 1;
+        else if (t->dm_req) {
+            uint32_t a = (t->dm_addr & 0x3FFFFFFC) % mem.size(), q;
+            if (t->dm_we) for (int b = 0; b < 4; b++) if (t->dm_be >> b & 1) mem[a + b] = t->dm_wdata >> (8 * b);
+            memcpy(&q, &mem[a], 4); t->dm_rdata = q; t->dm_ack = 1; fd_dmapend = 0;
+        }
+        // hps_io's block device 3
+        t->fd_buff_wr = 0;
+        switch (fd_st) {
+        case 0: if (t->fd_rd || t->fd_wr) { fd_wr_op = t->fd_wr; fd_lba = t->fd_lba; fd_n = (t->fd_blk_cnt + 1) * 512; fd_i = 0; fd_sub = 0; fd_lat = 20000; fd_st = 1; } break;
+        case 1: if (--fd_lat == 0) { t->fd_ack = 1; fd_st = 2; } break;
+        case 2: {
+            size_t at = (size_t)fd_lba * 512 + fd_i;
+            if (!fd_wr_op) { if (fd_sub == 0) { t->fd_buff_addr = fd_i; t->fd_buff_dout = at < fimg.size() ? fimg[at] : 0; t->fd_buff_wr = 1; } }
+            else if (fd_sub == 0) t->fd_buff_addr = fd_i;
+            if (++fd_sub == 3) { if (fd_wr_op && at < fimg.size()) fimg[at] = t->fd_buff_din; fd_sub = 0; if (++fd_i == fd_n) fd_st = 3; }
+            break;
+        }
+        default: t->fd_ack = 0; fd_st = 0; break;
+        }
+    }
+    void tick() { fd_step(); t->clk = 0; t->eval(); t->clk = 1; t->eval(); }
     void reset() {
         t = new Vsio82378; memset(ncr, 0, sizeof ncr);
         t->pirq_n = 15; t->com1_rxd = 1; t->com2_rxd = 1; t->com1_cts_n = 0; t->com1_dsr_n = 0; t->com1_dcd_n = 0; t->com1_ri_n = 1;
         t->com2_cts_n = 0; t->com2_dsr_n = 0; t->com2_dcd_n = 0; t->com2_ri_n = 1;
         t->rst = 1; for (int i = 0; i < 8; i++) tick(); t->rst = 0;
+        if (!fimg.empty()) { t->fd_size = fimg.size(); t->fd_readonly = 0; t->fd_mounted = 1; tick(); t->fd_mounted = 0; for (int i = 0; i < 400; i++) tick(); }
     }
     int irqs() { return (t->intr << 2) | (t->nmi << 3) | (t->toy_irq << 4) | (t->kbrst << 5); }
     void run(u64 n) { for (u64 i = 0; i < n; i++) { tick(); if (t->com1_tx_stb) { putchar(t->com1_tx_byte); fflush(stdout); } } }
@@ -60,7 +97,7 @@ struct Dev {
 };
 
 static Dev *dev;
-static std::vector<uint8_t> mem;  static u64 memsize, instsize;
+static u64 memsize, instsize;
 static std::vector<uint8_t> fb(2u << 20, 0xFF);
 static u64 R[32], F[32], pc, cyc, dev_cyc;
 static u64 ipr[256];
@@ -174,7 +211,7 @@ static void sl_poll() {
 
 int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
-    const char *drom = nullptr, *flash = nullptr; u64 maxcyc = 600000000ULL; int calibrate = 0;
+    const char *drom = nullptr, *flash = nullptr, *floppy = nullptr; u64 maxcyc = 600000000ULL; int calibrate = 0, ftest = 0;
     verbose_io = 0;
     for (int i = 1; i < argc; i++) {
         std::string s = argv[i];
@@ -182,6 +219,9 @@ int main(int argc, char **argv) {
         else if (s == "--calibrate") calibrate = 1;
         else if (s == "--flash" && i + 1 < argc) flash = argv[++i];
         else if (s == "--cycles" && i + 1 < argc) maxcyc = strtoull(argv[++i], 0, 0);
+        else if (s == "--floppy" && i + 1 < argc) floppy = argv[++i];
+        else if (s == "--floppy-test") ftest = 1;
+        else if (s == "--jumpers" && i + 1 < argc) jumpers = strtoul(argv[++i], 0, 0);
         else if (s[0] == '+') ;
         else drom = argv[i];
     }
@@ -196,6 +236,20 @@ int main(int argc, char **argv) {
     q(0x08, instsize); q(0x10, 10000); q(0x18, 0xDECB0000ULL); q(0x20, 1); q(0x38, instsize >> 20);
     q(0x68, 100); q(0x70, calibrate ? 2 : 9);
     R[17] = instsize; R[18] = 10000; R[19] = 0xDECB0000ULL; R[20] = 1;
+    if (floppy) {
+        f = fopen(floppy, "rb"); if (!f) die("floppy");
+        fseek(f, 0, SEEK_END); fimg.resize(ftell(f)); fseek(f, 0, SEEK_SET);
+        if (fread(fimg.data(), 1, fimg.size(), f) != fimg.size()) die("floppy read"); fclose(f);
+    } else if (ftest) {
+        // a 1.44 MB floppy with an Alpha boot block: blocks 30..49 to 0x100000 (across cylinder 0 to 1)
+        fimg.assign(1474560, 0);
+        for (size_t k = 512; k < fimg.size(); k++) fimg[k] = (uint8_t)(k * 31 + (k >> 9) * 7 + 1);
+        u64 cnt = 20, lbn = 30, sum = 0;
+        memcpy(&fimg[0x1E0], &cnt, 8); memcpy(&fimg[0x1E8], &lbn, 8);
+        for (int k = 0; k < 63; k++) { u64 v; memcpy(&v, &fimg[8 * k], 8); sum += v; }
+        memcpy(&fimg[0x1F8], &sum, 8);
+    }
+    if (!fimg.empty() && jumpers == 0x03) jumpers = 0x01;     // J2: the floppy loader
     pc = 0x40000;
     dev = new Dev();
     dev->reset();
@@ -365,6 +419,7 @@ int main(int argc, char **argv) {
         // mini-console a failed test ends in; LED 2E is the jump to the flash console
         if (pc == 0x44158) { beep = R[25]; break; }
         if (pc == 0x40570) { minicon = 1; break; }
+        if (pc == 0x100000 && !fimg.empty()) break;                 // the floppy loader's jump
         if (leds != last_led) { seen.push_back(leds); last_led = leds; if (leds == 0x2E) break; }
     }
 done:
@@ -374,6 +429,26 @@ done:
         {0x28, "8242 test"}, {0x29, "87332 test"}, {0x2A, "Interrupts test"}, {0x2D, "flash loader"},
         {0x2E, "jump to the flash console"}};
     int ok = 1; size_t k = 0;
+    if (!fimg.empty()) {
+        // the floppy loader: LED 2B, the blocks the boot block names at 0x100000, LED 2C, the jump
+        static const struct { int led; const char *name; } fsteps[] = {
+            {0x24, "NVRAM test"}, {0x2A, "Interrupts test"}, {0x2B, "floppy loader"}, {0x2C, "floppy image loaded"}};
+        for (auto &st : fsteps) {
+            while (k < seen.size() && seen[k] != st.led) k++;
+            bool got = k < seen.size();
+            printf("%s LED %02X %s\n", got ? "PASS" : "FAIL", st.led, st.name);
+            if (!got) ok = 0;
+        }
+        u64 cnt, lbn; memcpy(&cnt, &fimg[0x1E0], 8); memcpy(&lbn, &fimg[0x1E8], 8);
+        bool at = pc == 0x100000, same = cnt < 2048 && !memcmp(&mem[0x100000], &fimg[lbn * 512], cnt * 512);
+        printf("%s the jump to 0x100000 (pc %05" PRIx64 ")\n", at ? "PASS" : "FAIL", pc);
+        printf("%s %" PRIu64 " blocks from LBN %" PRIu64 " at 0x100000\n", same ? "PASS" : "FAIL", cnt, lbn);
+        if (!at || !same) ok = 0;
+        if (beep) { printf("FAIL beep code %d-%d-%d at LED %02X\n", (int)(beep & 0xFFFF), (int)(beep >> 16 & 0xFFFF), (int)(beep >> 32), leds); ok = 0; }
+        if (minicon) { printf("FAIL the DROM fell into its mini-console at LED %02X\n", leds); ok = 0; }
+        printf("cycles %" PRIu64 "\n%s\n", cyc, ok ? "PASS: DROM V1.7 floppy loader" : "FAIL: DROM V1.7 floppy loader");
+        return ok ? 0 : 1;
+    }
     for (auto &st : steps) {
         while (k < seen.size() && seen[k] != st.led) k++;
         bool got = k < seen.size();

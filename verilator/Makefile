@@ -196,6 +196,13 @@ tb_sio_drom: obj_tb_sio_drom/Vsio82378 $(FLASH)
 
 .PHONY: tb_sio_drom
 
+# the same DROM with the J2 jumper set: its floppy loader reads a boot block and 20 blocks from a
+# 1.44 MB image made by the bench (docs/design/floppy.md 5), and jumps to them at 0x100000
+tb_sio_drom_floppy: obj_tb_sio_drom/Vsio82378 $(FLASH)
+	obj_tb_sio_drom/Vsio82378 $(DROM) --flash $(FLASH) --floppy-test --cycles 2000000000 $(DROMARGS)
+
+.PHONY: tb_sio_drom_floppy
+
 # ---------------------------------------------------------------- audio (the sound card and the mix)
 # rtl/audio on the SIO's xio bus (verilator/tb/tb_audio.cpp; docs/design/audio.md)
 
