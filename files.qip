@@ -24,6 +24,8 @@ set_global_assignment -name VERILOG_FILE rtl/audio/opl_isa.v
 set_global_assignment -name VERILOG_FILE rtl/audio/audio_mix.v
 set_global_assignment -name VERILOG_FILE rtl/audio/audio_cdc.v
 set_global_assignment -name VERILOG_FILE rtl/audio/as200_audio.v
+set_global_assignment -name VERILOG_FILE rtl/net/tulip_nb.v
+set_global_assignment -name VERILOG_FILE rtl/net/tulip21040.v
 set_global_assignment -name VERILOG_FILE rtl/as200_sys.v
 # MiSTer side
 set_global_assignment -name VERILOG_FILE rtl/mister/sdram_ctl.v

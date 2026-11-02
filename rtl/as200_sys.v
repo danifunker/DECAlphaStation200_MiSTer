@@ -44,6 +44,20 @@ module as200_sys #(
     input  wire        f_ack,
     input  wire  [7:0] f_rdata,
 
+    // the 21040's Ethernet ID ROM address, link, and the LAN mailbox with Main
+    // (DDR3 byte 0x1FF0_0000; docs/design/ethernet.md)
+    input  wire [47:0] enet_mac,
+    input  wire        enet_link_up,
+    output wire        nb_req,
+    output wire        nb_we,
+    output wire [12:0] nb_addr,
+    output wire [63:0] nb_wdata,
+    input  wire        nb_ack,
+    input  wire [63:0] nb_rdata,
+    output wire [47:0] nb_pmac,
+    output wire        nb_pmac_ok,
+    output wire        nb_link,
+
     // the 21064's SROM serial port (the DROM's console)
     output wire        srom_txd,
     input  wire        srom_rxd,
@@ -182,22 +196,41 @@ module as200_sys #(
     wire        scsi_dm_req, scsi_dm_we;
     wire [31:0] scsi_dm_addr, scsi_dm_wdata;
     wire  [3:0] scsi_dm_be;
-    reg         dm_own;                 // 0 the 53C810, 1 the SIO
+    wire        enet_dm_req, enet_dm_we;
+    wire [31:0] enet_dm_addr, enet_dm_wdata;
+    wire  [3:0] enet_dm_be;
+    reg   [1:0] dm_own;                 // 0 the 53C810, 1 the SIO, 2 the 21040
     reg         dm_busy;
     always @(posedge clk) begin
-        if (rst) begin dm_busy <= 1'b0; dm_own <= 1'b0; end
+        if (rst) begin dm_busy <= 1'b0; dm_own <= 2'd0; end
         else if (!dm_busy) begin
-            if (scsi_dm_req) begin dm_own <= 1'b0; dm_busy <= 1'b1; end
-            else if (sio_dm_req) begin dm_own <= 1'b1; dm_busy <= 1'b1; end
+            if (scsi_dm_req) begin dm_own <= 2'd0; dm_busy <= 1'b1; end
+            else if (sio_dm_req) begin dm_own <= 2'd1; dm_busy <= 1'b1; end
+            else if (enet_dm_req) begin dm_own <= 2'd2; dm_busy <= 1'b1; end
         end else if (dm_ack) dm_busy <= 1'b0;
     end
-    assign dm_req   = dm_busy && (dm_own ? sio_dm_req : scsi_dm_req) && !dm_ack;
-    assign dm_we    = dm_own ? sio_dm_we    : scsi_dm_we;
-    assign dm_addr  = dm_own ? sio_dm_addr  : scsi_dm_addr;
-    assign dm_be    = dm_own ? sio_dm_be    : scsi_dm_be;
-    assign dm_wdata = dm_own ? sio_dm_wdata : scsi_dm_wdata;
-    wire        scsi_dm_ack = dm_ack && !dm_own;
-    wire        sio_dm_ack  = dm_ack && dm_own;
+    assign dm_req   = dm_busy && (dm_own == 2'd2 ? enet_dm_req : dm_own == 2'd1 ? sio_dm_req : scsi_dm_req) && !dm_ack;
+    assign dm_we    = dm_own == 2'd2 ? enet_dm_we    : dm_own == 2'd1 ? sio_dm_we    : scsi_dm_we;
+    assign dm_addr  = dm_own == 2'd2 ? enet_dm_addr  : dm_own == 2'd1 ? sio_dm_addr  : scsi_dm_addr;
+    assign dm_be    = dm_own == 2'd2 ? enet_dm_be    : dm_own == 2'd1 ? sio_dm_be    : scsi_dm_be;
+    assign dm_wdata = dm_own == 2'd2 ? enet_dm_wdata : dm_own == 2'd1 ? sio_dm_wdata : scsi_dm_wdata;
+    wire        scsi_dm_ack = dm_ack && dm_own == 2'd0;
+    wire        sio_dm_ack  = dm_ack && dm_own == 2'd1;
+    wire        enet_dm_ack = dm_ack && dm_own == 2'd2;
+
+    // the 21040 Ethernet (device 11, IDSEL AD22, PIRQ0; rtl/net, docs/design/ethernet.md)
+    wire        enet_claim, enet_ack, enet_inta_n;
+    wire [31:0] enet_rdata;
+    tulip21040 #(.DEVNUM(11)) enet (
+        .clk(clk), .reset(rst),
+        .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
+        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(enet_claim), .pt_ack(enet_ack), .pt_rdata(enet_rdata),
+        .dm_req(enet_dm_req), .dm_we(enet_dm_we), .dm_addr(enet_dm_addr), .dm_be(enet_dm_be),
+        .dm_wdata(enet_dm_wdata), .dm_ack(enet_dm_ack), .dm_rdata(dm_rdata),
+        .inta_n(enet_inta_n), .mac(enet_mac), .link_up(enet_link_up),
+        .nb_req(nb_req), .nb_we(nb_we), .nb_addr(nb_addr), .nb_wdata(nb_wdata), .nb_ack(nb_ack), .nb_rdata(nb_rdata),
+        .nb_pmac(nb_pmac), .nb_pmac_ok(nb_pmac_ok), .nb_link(nb_link)
+    );
     wire        scsi_claim, scsi_ack, scsi_inta_n;
     wire [31:0] scsi_rdata;
     ncr53c810 #(.DEVNUM(6)) scsi (
@@ -222,11 +255,11 @@ module as200_sys #(
     sio82378 #(.CLK_HZ(100000000), .DEVNUM(5'd7), .RTC_FAST(SIM_FAST)) sio (
         .clk(clk), .rst(rst),
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
-        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_sub(pt_req && pt_cmd == 2'd1 && !scsi_claim),
+        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_sub(pt_req && pt_cmd == 2'd1 && !scsi_claim && !enet_claim),
         .pt_claim(sio_claim), .pt_ack(sio_ack), .pt_rdata(sio_rdata),
         .dm_req(sio_dm_req), .dm_we(sio_dm_we), .dm_addr(sio_dm_addr), .dm_be(sio_dm_be),
         .dm_wdata(sio_dm_wdata), .dm_ack(sio_dm_ack), .dm_rdata(dm_rdata),
-        .pirq_n({scsi_inta_n, 3'b111}), .serr(1'b0), .iochk(1'b0),
+        .pirq_n({scsi_inta_n, 2'b11, enet_inta_n}), .serr(1'b0), .iochk(1'b0),
         .intr(sio_intr), .nmi(sio_nmi), .toy_irq(sio_toy), .kbrst(sio_kbrst), .spk(speaker),
         .xio_addr(xio_addr), .xio_rd(xio_rd), .xio_wr(xio_wr), .xio_wdata(xio_wdata),
         .xio_claim(xio_claim), .xio_rdata(xio_rdata), .xio_irq(xio_irq), .xio_dreq(xio_dreq),
@@ -260,7 +293,7 @@ module as200_sys #(
         .speaker(speaker), .cd_audio_l(cd_audio_l), .cd_audio_r(cd_audio_r), .cd_audio_stb(cd_audio_stb),
         .mute(4'd0), .aud_l(aud_l), .aud_r(aud_r), .aud_tgl(aud_tgl)
     );
-    assign pt_claim = scsi_claim | sio_claim;
-    assign pt_ack   = scsi_ack | sio_ack;
-    assign pt_rdata = scsi_rdata | (sio_ack ? sio_rdata : 32'd0);
+    assign pt_claim = scsi_claim | sio_claim | enet_claim;
+    assign pt_ack   = scsi_ack | sio_ack | enet_ack;
+    assign pt_rdata = scsi_rdata | enet_rdata | (sio_ack ? sio_rdata : 32'd0);
 endmodule

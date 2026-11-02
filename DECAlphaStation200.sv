@@ -53,6 +53,7 @@ assign BUTTONS = 0;
 //   15:14    TOY year            (0 from the MiSTer RTC, 1 1999)
 //   16       Console             (0 SRM, 1 ARC: the TOY CMOS 3Fh at reset)
 //   20       Halt button         (T: an action)
+//   23:21    Network interface   (0 eth0, 1 None, 2 eth1, 3 macvlan, 4 tap0; read by Main, not latched)
 // Settings take effect at reset (cfg below); "Changes pending" shows while
 // the OSD differs from what is running.
 
@@ -68,6 +69,7 @@ localparam CONF_STR = {
 	"-;",
 	"H1O[2:1],Memory,64MB,32MB;",
 	"h1O[2:1],Memory,64MB,32MB,128MB;",
+	"O[23:21],Network interface,eth0,None,eth1,macvlan,tap0;",
 	"-;",
 	"P1,Machine;",
 	"P2,Video;",
@@ -258,6 +260,15 @@ wire       kbd_stb;
 wire [7:0] kbd_ascii;
 wire [7:0] leds;
 wire       srom_txd;
+// the 21040's LAN mailbox (DDR3 byte 0x1FF0_0000). STUB until the DDR3
+// arbiter (rtl/mister/ddr3_arb.v): acknowledged with zeros, so no frames flow
+wire        nb_req, nb_we, nb_pmac_ok;
+wire [12:0] nb_addr;
+wire [63:0] nb_wdata;
+wire [47:0] nb_pmac;
+reg         nb_ack;
+wire [63:0] nb_rdata = 64'd0;
+always @(posedge clk_sys) nb_ack <= nb_req && !nb_ack;
 // the OSD's Halt button (a trigger bit), stretched to 50 ms on CPU IRQ5
 reg [22:0] halt_cnt;
 wire       halt_btn = halt_cnt != 0;
@@ -290,6 +301,11 @@ as200_sys machine
 	.d_ack(d_ack), .d_rdata(d_rdata),
 	.f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata),
 	.f_ack(f_ack), .f_rdata(f_rdata),
+
+	.enet_mac(nb_pmac_ok ? nb_pmac : 48'h08002B_A50200),   // Main's PMAC, else a fixed DEC address
+	.enet_link_up(1'b1),
+	.nb_req(nb_req), .nb_we(nb_we), .nb_addr(nb_addr), .nb_wdata(nb_wdata), .nb_ack(nb_ack), .nb_rdata(nb_rdata),
+	.nb_pmac(nb_pmac), .nb_pmac_ok(nb_pmac_ok), .nb_link(),
 
 	.srom_txd(srom_txd),
 	.srom_rxd(1'b1),
