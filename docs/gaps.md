@@ -80,7 +80,8 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | Device | Status | Pri | Notes |
 |---|---|---|---|
 | **TGA graphics** (ZLXp-E1: DECchip 21030, 2 MB VRAM in DDR3, Bt485 RAMDAC, PCI slot 1) | open | P2 | The chosen video card; SRM console on the screen, NT/X11. Confirm the RAMDAC (CORE_SPEC open item 3) |
-| DECchip 21040 Ethernet (+ Ethernet ID ROM) | open | P3 | May start as present-but-no-link; AXPbox `DEC21143.cpp` as reference |
+| DECchip 21040 Ethernet (+ Ethernet ID ROM) | partial | P3 | `rtl/net/tulip21040.v` + `tulip_nb.v`, `docs/design/ethernet.md` (2026-11-01, `90b68df`): PCI header, CSR0-15, the ID ROM on CSR9, rings/chains, setup frames (perfect/hash/inverse), loopback, the wire on Main's DDR3 mailbox (`DAETH001`); bench `tb_tulip` (1526 checks). Main side `support/decalpha/decalpha_enet` (`e9ffb24` consolidated, `b551b82` dec-alphastation). Not yet wired into `as200_sys`, the top, the DDR3 arbiter or the OSD (`O[23:21]`): ethernet.md 8 |
+| 21040: error conditions, the guest's own station address for Main's filter, external loopback to the wire | open | P4 | ethernet.md 9 |
 | Sound: AD1848 (WSS 530h, IRQ/DMA by its command register; SRM's PCXBJ: IRQ 9, DMA 0/1) | partial | P4 | `rtl/audio/wss_ad1848.v`, `docs/design/audio.md` (2026-11-01): registers, playback by DMA, IRQ, capture as silence; unit bench `tb_audio`. Not yet wired into `as200_sys` / the top |
 | FM at 388h: an OPL2 (jtopl2) in place of the OPL3 | partial | P4 | `rtl/audio/opl_isa.v`: bank 1 (38Ah/38Bh) dropped, OPL2 status, so OPL3 detection finds an OPL2. A real OPL3 when jtopl's YMF262 exists |
 | Speaker (8254 counter 2) to the audio mix | partial | P4 | `rtl/audio/audio_mix.v` averages it per 48 kHz period; not yet wired |

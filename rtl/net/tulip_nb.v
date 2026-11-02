@@ -190,7 +190,7 @@ always @(posedge clk) begin
             else nb(slot + 13'd2 + {5'd0, k}, 1'b0, 64'd0, N_R3);
         end
         N_R5: begin rx_put <= 1'b1; rx_plen <= len; rx_req <= 1'b0; st <= N_R7; end
-        N_R7: begin rxr <= rxr + 32'd1; nb(W_RXR, 1'b1, {32'd0, rxr + 32'd1}, N_IDLE); end
+        N_R7: begin rxr <= rxr + 32'd1; poll <= 16'd0; nb(W_RXR, 1'b1, {32'd0, rxr + 32'd1}, N_IDLE); end   // more may wait
 
         default: st <= N_IDLE;
     endcase
