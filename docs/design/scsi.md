@@ -254,7 +254,7 @@ All registers are readable and writable as in the RS6K port.
 
 - **Block move**: direct, indirect and table indirect; all phases. ATN drops before the last
   MESSAGE OUT byte, and ACK is held after the last MESSAGE IN byte. SFBR takes the first byte. A
-  phase mismatch raises MA and UDC as appropriate. A count of 0 or CHMOV gives IID.
+  phase mismatch raises MA and UDC as appropriate. A count of 0 gives IID; CHMOV moves like MOVE (bit 27 means nothing on a narrow bus; ARC 4.58 moves data in with CHMOV).
 - **I/O**:
   - SELECT (absolute or table indirect, with ATN) with the STIME0 timeout giving SIST1.STO.
   - WAIT DISCONNECT.

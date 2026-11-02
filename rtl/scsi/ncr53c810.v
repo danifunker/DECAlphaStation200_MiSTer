@@ -528,7 +528,9 @@ always @(posedge clk) begin : engine
                 stepped <= 1'b1;
                 case (ins0[31:30])
                     2'b00: begin                                         // block move
-                        if (target_mode || !ins0[27]) begin set_ds[0] = 1'b1; est <= E_IDLE; end    // target mode / CHMOV
+                        // target mode: not modelled. Bit 27 (MOVE 1 / CHMOV 0) means nothing on a narrow
+                        // bus: a CHMOV moves like MOVE (ARC 4.58's NCRC8xx moves data in with CHMOV)
+                        if (target_mode) begin set_ds[0] = 1'b1; est <= E_IDLE; end
                         else if (ins0[28] || ins0[29]) begin
                             // table indirect (DSA + offset) or indirect: the count and address
                             dma_rd(ins0[28] ? dsa_rel : dsps);
@@ -630,6 +632,9 @@ always @(posedge clk) begin : engine
             // the indirect fetches: block move {count, address}, select {SCNTL3, ID, SXFER}
             E_IND: if (d_done) begin
                 w = dm_rdata;
+`ifdef NCR_TRACE
+                $display("ncr   table read %08X -> %08X (dsa %08X)", d_addr, w, dsa);
+`endif
                 if (ins0[31:30] == 2'b01) begin
                     scntl3 <= w[31:24]; sdid <= {4'd0, w[19:16]}; sxfer <= w[15:8]; est <= E_SEL;
                 end else if (fcnt == 3'd0 && ins0[28]) begin
