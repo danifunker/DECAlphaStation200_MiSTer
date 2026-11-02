@@ -259,3 +259,18 @@ tb_tulip: obj_tb_tulip/Vtulip21040
 	obj_tb_tulip/Vtulip21040
 
 .PHONY: tb_tulip
+
+# ---------------------------------------------------------------- TGA (rtl/tga, docs/design/tga.md)
+# the 21030 + Bt485 + display with rtl/mister/ddr3_arb.v and fbrom.v on a modelled
+# DDRAM bridge (tb/tb_tga.cpp); the displayed frame goes to TGA_PPM
+TGA_RTL = $(RTL)/tga/tga.v $(RTL)/tga/tga_bt485.v $(RTL)/tga/tga_video.v $(RTL)/tga/tga_vsel.v \
+	$(RTL)/mister/ddr3_arb.v $(RTL)/mister/fbrom.v tb/tb_tga_top.v
+TGA_PPM ?= ../scratch/tga_frame.ppm
+
+obj_tb_tga/Vtb_tga_top: $(TGA_RTL) tb/tb_tga.cpp
+	$(TB_V) --Mdir obj_tb_tga --top-module tb_tga_top -Wno-BLKSEQ $^
+
+tb_tga: obj_tb_tga/Vtb_tga_top
+	obj_tb_tga/Vtb_tga_top --ppm $(TGA_PPM)
+
+.PHONY: tb_tga
