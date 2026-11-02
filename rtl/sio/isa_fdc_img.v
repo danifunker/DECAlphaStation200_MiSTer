@@ -61,7 +61,7 @@ module isa_fdc_img (
     input  wire  [4:0] dirty_slot
 );
     // ---------------------------------------------------------------- the cache RAM (true dual port)
-    reg  [7:0] mem [0:12287];
+    (* ramstyle = "no_rw_check, M10K" *) reg [7:0] mem [0:12287];   // no port relies on read-during-write
     reg [13:0] a_base = 14'd0;          // port A: the request's first byte in the cache
     reg        a_load = 1'b0;                // the request in flight is a load (hps_io writes the cache)
     wire [13:0] a_addr = a_base + sd_buff_addr;
