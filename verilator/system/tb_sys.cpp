@@ -136,6 +136,7 @@ int main(int argc, char **argv) {
     int sd_slot = -1, sd_dir = 0, sd_pos = 0, sd_len = 0; uint32_t sd_lba_q = 0;
     t->ps2_key = 0; t->ps2_mouse = 0; t->console_arc = 0; t->halt = 0;
     t->fd_mounted = 0; t->fd_readonly = 0; t->fd_size = 0; t->fd_ack = 0;
+    t->vr_ack = 0; t->vr_rvalid = 0; t->vr_rdata = 0; t->sc_ack = 0; t->sc_rvalid = 0; t->sc_rdata = 0; t->clk_pix = 0;
     t->enet_mac = 0x08002BA50200ull; t->enet_link_up = 1; t->nb_ack = 0; t->nb_rdata = 0; t->year_ovr_en = 0; t->year_ovr = 0;
     {   // the TOY's time from the host clock, in hps_io's RTC layout (BCD:
         // sec, min, hour, day, month, year, weekday; bit 64 toggles on update)

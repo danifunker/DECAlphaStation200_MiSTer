@@ -120,7 +120,7 @@ SIO_RTL = $(RTL)/sio/ns16550.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/
 SIM_FAST ?= 1
 JTOPL_RTL = $(addprefix $(RTL)/audio/jtopl/,$(shell grep '^set_global' $(RTL)/audio/jtopl/jtopl.qip | grep -o 'jtopl[a-z0-9_]*\.v'))
 AUDIO_RTL = $(RTL)/audio/wss_ad1848.v $(RTL)/audio/opl_isa.v $(RTL)/audio/audio_mix.v $(RTL)/audio/as200_audio.v
-SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/scsi/cd_audio.v $(JTOPL_RTL) $(AUDIO_RTL) $(RTL)/net/tulip_nb.v $(RTL)/net/tulip21040.v $(RTL)/as200_sys.v
+SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/scsi/cd_audio.v $(JTOPL_RTL) $(AUDIO_RTL) $(RTL)/net/tulip_nb.v $(RTL)/net/tulip21040.v $(RTL)/tga/tga_bt485.v $(RTL)/tga/tga_video.v $(RTL)/tga/tga.v $(RTL)/as200_sys.v
 FLASH   ?= ../scratch/roms/archive_alpha-station-200-roms/flash_v7.0_arc4.58.bin
 DROM    ?= ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E47_DROM1.7.bin
 

@@ -44,6 +44,27 @@ module as200_sys #(
     input  wire        f_ack,
     input  wire  [7:0] f_rdata,
 
+    // the TGA (ZLXp-E1): its VRAM port and display fetch (to the DDR3 arbiter), video
+    output wire        vr_req,
+    output wire        vr_we,
+    output wire [17:0] vr_addr,
+    output wire  [4:0] vr_len,
+    output wire  [7:0] vr_be,
+    output wire [63:0] vr_wdata,
+    input  wire        vr_ack,
+    input  wire        vr_rvalid,
+    input  wire [63:0] vr_rdata,
+    output wire        sc_req,
+    output wire [17:0] sc_addr,
+    output wire  [5:0] sc_len,
+    input  wire        sc_ack,
+    input  wire        sc_rvalid,
+    input  wire [63:0] sc_rdata,
+    input  wire        clk_pix,
+    output wire        tga_ce, tga_hs, tga_vs, tga_de, tga_hb, tga_vb,
+    output wire  [7:0] tga_r, tga_g, tga_b,
+    output wire        tga_on,
+
     // the 21040's Ethernet ID ROM address, link, and the LAN mailbox with Main
     // (DDR3 byte 0x1FF0_0000; docs/design/ethernet.md)
     input  wire [47:0] enet_mac,
@@ -210,7 +231,10 @@ module as200_sys #(
     wire        enet_dm_req, enet_dm_we;
     wire [31:0] enet_dm_addr, enet_dm_wdata;
     wire  [3:0] enet_dm_be;
-    reg   [1:0] dm_own;                 // 0 the 53C810, 1 the SIO, 2 the 21040
+    wire        tga_dm_req, tga_dm_we;
+    wire [31:0] tga_dm_addr, tga_dm_wdata;
+    wire  [3:0] tga_dm_be;
+    reg   [1:0] dm_own;                 // 0 the 53C810, 1 the SIO, 2 the 21040, 3 the TGA
     reg         dm_busy;
     always @(posedge clk) begin
         if (rst) begin dm_busy <= 1'b0; dm_own <= 2'd0; end
@@ -218,16 +242,36 @@ module as200_sys #(
             if (scsi_dm_req) begin dm_own <= 2'd0; dm_busy <= 1'b1; end
             else if (sio_dm_req) begin dm_own <= 2'd1; dm_busy <= 1'b1; end
             else if (enet_dm_req) begin dm_own <= 2'd2; dm_busy <= 1'b1; end
+            else if (tga_dm_req) begin dm_own <= 2'd3; dm_busy <= 1'b1; end
         end else if (dm_ack) dm_busy <= 1'b0;
     end
-    assign dm_req   = dm_busy && (dm_own == 2'd2 ? enet_dm_req : dm_own == 2'd1 ? sio_dm_req : scsi_dm_req) && !dm_ack;
-    assign dm_we    = dm_own == 2'd2 ? enet_dm_we    : dm_own == 2'd1 ? sio_dm_we    : scsi_dm_we;
-    assign dm_addr  = dm_own == 2'd2 ? enet_dm_addr  : dm_own == 2'd1 ? sio_dm_addr  : scsi_dm_addr;
-    assign dm_be    = dm_own == 2'd2 ? enet_dm_be    : dm_own == 2'd1 ? sio_dm_be    : scsi_dm_be;
-    assign dm_wdata = dm_own == 2'd2 ? enet_dm_wdata : dm_own == 2'd1 ? sio_dm_wdata : scsi_dm_wdata;
+    assign dm_req   = dm_busy && (dm_own == 2'd3 ? tga_dm_req : dm_own == 2'd2 ? enet_dm_req :
+                                  dm_own == 2'd1 ? sio_dm_req : scsi_dm_req) && !dm_ack;
+    assign dm_we    = dm_own == 2'd3 ? tga_dm_we    : dm_own == 2'd2 ? enet_dm_we    : dm_own == 2'd1 ? sio_dm_we    : scsi_dm_we;
+    assign dm_addr  = dm_own == 2'd3 ? tga_dm_addr  : dm_own == 2'd2 ? enet_dm_addr  : dm_own == 2'd1 ? sio_dm_addr  : scsi_dm_addr;
+    assign dm_be    = dm_own == 2'd3 ? tga_dm_be    : dm_own == 2'd2 ? enet_dm_be    : dm_own == 2'd1 ? sio_dm_be    : scsi_dm_be;
+    assign dm_wdata = dm_own == 2'd3 ? tga_dm_wdata : dm_own == 2'd2 ? enet_dm_wdata : dm_own == 2'd1 ? sio_dm_wdata : scsi_dm_wdata;
     wire        scsi_dm_ack = dm_ack && dm_own == 2'd0;
     wire        sio_dm_ack  = dm_ack && dm_own == 2'd1;
     wire        enet_dm_ack = dm_ack && dm_own == 2'd2;
+    wire        tga_dm_ack  = dm_ack && dm_own == 2'd3;
+
+    // the TGA (ZLXp-E1, PCI slot 1 = device 12, PIRQ1; rtl/tga, docs/design/tga.md)
+    wire        tga_claim, tga_ack, tga_inta_n;
+    wire [31:0] tga_rdata;
+    tga #(.DEVNUM(5'd12)) tga (
+        .clk(clk), .rst(rst),
+        .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
+        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(tga_claim), .pt_ack(tga_ack), .pt_rdata(tga_rdata),
+        .dm_req(tga_dm_req), .dm_we(tga_dm_we), .dm_addr(tga_dm_addr), .dm_be(tga_dm_be),
+        .dm_wdata(tga_dm_wdata), .dm_ack(tga_dm_ack), .dm_rdata(dm_rdata),
+        .inta_n(tga_inta_n),
+        .vr_req(vr_req), .vr_we(vr_we), .vr_addr(vr_addr), .vr_len(vr_len), .vr_be(vr_be), .vr_wdata(vr_wdata),
+        .vr_ack(vr_ack), .vr_rvalid(vr_rvalid), .vr_rdata(vr_rdata),
+        .sc_req(sc_req), .sc_addr(sc_addr), .sc_len(sc_len), .sc_ack(sc_ack), .sc_rvalid(sc_rvalid), .sc_rdata(sc_rdata),
+        .clk_pix(clk_pix), .ce_pix(tga_ce), .hs(tga_hs), .vs(tga_vs), .de(tga_de), .hblank(tga_hb), .vblank(tga_vb),
+        .r(tga_r), .g(tga_g), .b(tga_b), .video_on(tga_on)
+    );
 
     // the 21040 Ethernet (device 11, IDSEL AD22, PIRQ0; rtl/net, docs/design/ethernet.md)
     wire        enet_claim, enet_ack, enet_inta_n;
@@ -266,11 +310,11 @@ module as200_sys #(
     sio82378 #(.CLK_HZ(100000000), .DEVNUM(5'd7), .RTC_FAST(SIM_FAST)) sio (
         .clk(clk), .rst(rst),
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
-        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_sub(pt_req && pt_cmd == 2'd1 && !scsi_claim && !enet_claim),
+        .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_sub(pt_req && pt_cmd == 2'd1 && !scsi_claim && !enet_claim && !tga_claim),
         .pt_claim(sio_claim), .pt_ack(sio_ack), .pt_rdata(sio_rdata),
         .dm_req(sio_dm_req), .dm_we(sio_dm_we), .dm_addr(sio_dm_addr), .dm_be(sio_dm_be),
         .dm_wdata(sio_dm_wdata), .dm_ack(sio_dm_ack), .dm_rdata(dm_rdata),
-        .pirq_n({scsi_inta_n, 2'b11, enet_inta_n}), .serr(1'b0), .iochk(1'b0),
+        .pirq_n({scsi_inta_n, 1'b1, tga_inta_n, enet_inta_n}), .serr(1'b0), .iochk(1'b0),
         .intr(sio_intr), .nmi(sio_nmi), .toy_irq(sio_toy), .kbrst(sio_kbrst), .spk(speaker),
         .xio_addr(xio_addr), .xio_rd(xio_rd), .xio_wr(xio_wr), .xio_wdata(xio_wdata),
         .xio_claim(xio_claim), .xio_rdata(xio_rdata), .xio_irq(xio_irq), .xio_dreq(xio_dreq),
@@ -308,7 +352,7 @@ module as200_sys #(
         .speaker(speaker), .cd_audio_l(cd_audio_l), .cd_audio_r(cd_audio_r), .cd_audio_stb(cd_audio_stb),
         .mute(4'd0), .aud_l(aud_l), .aud_r(aud_r), .aud_tgl(aud_tgl)
     );
-    assign pt_claim = scsi_claim | sio_claim | enet_claim;
-    assign pt_ack   = scsi_ack | sio_ack | enet_ack;
-    assign pt_rdata = scsi_rdata | enet_rdata | (sio_ack ? sio_rdata : 32'd0);
+    assign pt_claim = scsi_claim | sio_claim | enet_claim | tga_claim;
+    assign pt_ack   = scsi_ack | sio_ack | enet_ack | tga_ack;
+    assign pt_rdata = scsi_rdata | enet_rdata | tga_rdata | (sio_ack ? sio_rdata : 32'd0);
 endmodule

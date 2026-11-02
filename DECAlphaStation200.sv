@@ -266,15 +266,20 @@ wire       kbd_stb;
 wire [7:0] kbd_ascii;
 wire [7:0] leds;
 wire       srom_txd;
-// the 21040's LAN mailbox (DDR3 byte 0x1FF0_0000). STUB until the DDR3
-// arbiter (rtl/mister/ddr3_arb.v): acknowledged with zeros, so no frames flow
-wire        nb_req, nb_we, nb_pmac_ok;
+// the 21040's LAN mailbox (DDR3 byte 0x1FF0_0000, through the DDR3 arbiter)
+wire        nb_req, nb_we, nb_pmac_ok, nb_ack;
 wire [12:0] nb_addr;
-wire [63:0] nb_wdata;
+wire [63:0] nb_wdata, nb_rdata;
 wire [47:0] nb_pmac;
-reg         nb_ack;
-wire [63:0] nb_rdata = 64'd0;
-always @(posedge clk_sys) nb_ack <= nb_req && !nb_ack;
+// the TGA's VRAM and display fetch (DDR3 arbiter) and its video
+wire        vr_req, vr_we, vr_ack, vr_rvalid, sc_req, sc_ack, sc_rvalid;
+wire [17:0] vr_addr, sc_addr;
+wire  [4:0] vr_len;
+wire  [5:0] sc_len;
+wire  [7:0] vr_be;
+wire [63:0] vr_wdata, ddr_rdata;
+wire        tga_ce, tga_hs, tga_vs, tga_de, tga_hb, tga_vb, tga_on;
+wire  [7:0] tga_r, tga_g, tga_b;
 // the OSD's Halt button (a trigger bit), stretched to 50 ms on CPU IRQ5
 reg [22:0] halt_cnt;
 wire       halt_btn = halt_cnt != 0;
@@ -312,6 +317,12 @@ as200_sys machine
 	.enet_link_up(1'b1),
 	.nb_req(nb_req), .nb_we(nb_we), .nb_addr(nb_addr), .nb_wdata(nb_wdata), .nb_ack(nb_ack), .nb_rdata(nb_rdata),
 	.nb_pmac(nb_pmac), .nb_pmac_ok(nb_pmac_ok), .nb_link(),
+
+	.vr_req(vr_req), .vr_we(vr_we), .vr_addr(vr_addr), .vr_len(vr_len), .vr_be(vr_be), .vr_wdata(vr_wdata),
+	.vr_ack(vr_ack), .vr_rvalid(vr_rvalid), .vr_rdata(ddr_rdata),
+	.sc_req(sc_req), .sc_addr(sc_addr), .sc_len(sc_len), .sc_ack(sc_ack), .sc_rvalid(sc_rvalid), .sc_rdata(ddr_rdata),
+	.clk_pix(clk_pix), .tga_ce(tga_ce), .tga_hs(tga_hs), .tga_vs(tga_vs), .tga_de(tga_de), .tga_hb(tga_hb), .tga_vb(tga_vb),
+	.tga_r(tga_r), .tga_g(tga_g), .tga_b(tga_b), .tga_on(tga_on),
 
 	.srom_txd(srom_txd),
 	.srom_rxd(1'b1),
@@ -390,6 +401,25 @@ fbrom fbrom
 	.f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata), .f_ack(f_ack), .f_rdata(f_rdata),
 	.dl_wr(ioctl_download && ioctl_wr), .dl_index(ioctl_index[7:0]), .dl_addr(ioctl_addr[24:0]),
 	.dl_data(ioctl_dout), .dl_wait(ioctl_wait),
+	.DDRAM_BUSY(fb_busy), .DDRAM_BURSTCNT(fb_burstcnt), .DDRAM_ADDR(fb_addr),
+	.DDRAM_DOUT(fb_dout), .DDRAM_DOUT_READY(fb_dout_ready), .DDRAM_RD(fb_rd),
+	.DDRAM_DIN(fb_din), .DDRAM_BE(fb_be), .DDRAM_WE(fb_we)
+);
+
+// DDR3: the TGA's display fetch, its VRAM, the flash, the LAN mailbox (rtl/mister/ddr3_arb.v)
+wire        fb_busy, fb_dout_ready, fb_rd, fb_we;
+wire  [7:0] fb_burstcnt, fb_be;
+wire [28:0] fb_addr;
+wire [63:0] fb_dout, fb_din;
+ddr3_arb ddr3_arb
+(
+	.clk(clk_sys), .rst(~pll_locked),
+	.sc_req(sc_req), .sc_addr(sc_addr), .sc_len(sc_len), .sc_ack(sc_ack), .sc_rvalid(sc_rvalid),
+	.vr_req(vr_req), .vr_we(vr_we), .vr_addr(vr_addr), .vr_len(vr_len), .vr_be(vr_be), .vr_wdata(vr_wdata),
+	.vr_ack(vr_ack), .vr_rvalid(vr_rvalid), .vr_wq_empty(), .rdata(ddr_rdata),
+	.fb_busy(fb_busy), .fb_burstcnt(fb_burstcnt), .fb_addr(fb_addr), .fb_dout(fb_dout), .fb_dout_ready(fb_dout_ready),
+	.fb_rd(fb_rd), .fb_din(fb_din), .fb_be(fb_be), .fb_we(fb_we),
+	.nb_req(nb_req), .nb_we(nb_we), .nb_addr(nb_addr), .nb_wdata(nb_wdata), .nb_ack(nb_ack), .nb_rdata(nb_rdata),
 	.DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR),
 	.DDRAM_DOUT(DDRAM_DOUT), .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD),
 	.DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE)
@@ -443,7 +473,7 @@ video_freak video_freak
 	.CLK_VIDEO(CLK_VIDEO), .CE_PIXEL(CE_PIXEL), .VGA_VS(VGA_VS),
 	.HDMI_WIDTH(HDMI_WIDTH), .HDMI_HEIGHT(HDMI_HEIGHT),
 	.VGA_DE(VGA_DE), .VIDEO_ARX(VIDEO_ARX), .VIDEO_ARY(VIDEO_ARY),
-	.VGA_DE_IN(vt_de),
+	.VGA_DE_IN(vid_de),
 	.ARX((!ar) ? 12'd4 : (ar - 1'd1)),
 	.ARY((!ar) ? 12'd3 : 12'd0),
 	.CROP_SIZE(12'd0), .CROP_OFF(5'd0),
@@ -451,12 +481,24 @@ video_freak video_freak
 );
 
 assign CLK_VIDEO = clk_pix;
-assign CE_PIXEL  = 1'b1;
-assign VGA_HS = vt_hs;
-assign VGA_VS = vt_vs;
-assign VGA_R  = vt_r;
-assign VGA_G  = vt_g;
-assign VGA_B  = vt_b;
+// the picture: the TGA once it has video on (OSD Display: Graphics), else the terminal
+wire       vid_ce, vid_hs, vid_vs, vid_de, vid_hb, vid_vb;
+wire [7:0] vid_r, vid_g, vid_b;
+tga_vsel tga_vsel
+(
+	.clk_pix(clk_pix), .gfx(cfg[4:3] == 2'd0), .tga_on(tga_on),
+	.t_ce(tga_ce), .t_hs(tga_hs), .t_vs(tga_vs), .t_de(tga_de), .t_hb(tga_hb), .t_vb(tga_vb),
+	.t_r(tga_r), .t_g(tga_g), .t_b(tga_b),
+	.v_hs(vt_hs), .v_vs(vt_vs), .v_de(vt_de), .v_hb(vt_hb), .v_vb(vt_vb), .v_r(vt_r), .v_g(vt_g), .v_b(vt_b),
+	.ce(vid_ce), .hs(vid_hs), .vs(vid_vs), .de(vid_de), .hblank(vid_hb), .vblank(vid_vb),
+	.r(vid_r), .g(vid_g), .b(vid_b), .showing_tga()
+);
+assign CE_PIXEL  = vid_ce;
+assign VGA_HS = vid_hs;
+assign VGA_VS = vid_vs;
+assign VGA_R  = vid_r;
+assign VGA_G  = vid_g;
+assign VGA_B  = vid_b;
 
 //////////////////////////////////////////////////////////////////
 // LED: COM1 activity
