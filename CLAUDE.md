@@ -103,6 +103,13 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   `scsi-consolidated-2-decalpha`, local, with the backup `/media/fat/MiSTer.before-decalpha`), and
   dInvReq (DMA writes invalidate the D-cache). `boot dka400` reads the CD cleanly. 28.4k ALMs (68%),
   -1.327 ns at 100 MHz.
+- **Board build 16 (2026-11-01, `53584d1`):** the TGA (ZLXp-E1, VRAM in DDR3), the 21040, the
+  floppy, PCI scatter/gather. SRM's `show config` lists all four PCI devices (NCR 810, SIO, DECchip
+  21040 ewa0 08-00-2B-A5-02-00, Digital ZLXp); `show device`: dka400, dva0, ewa0, pka0. **`set console
+  graphics` + `init`: SRM draws its console on the TGA** (COM1 then stays silent) with PS/2 keyboard
+  input. `boot dka400` reads NetBSD's bootstraps and kernel off the CD. 33.9k ALMs (81%), 43.4k
+  registers, -1.897 ns at 100 MHz. (The first try of this build stalled the fitter: the floppy track
+  cache was uninferred, ~98k registers; `no_rw_check` fixed it. Check `Total registers` in map.)
 - **Fits from a worktree** while agents edit the tree: `git worktree add --detach
   ../DECAlphaStation200_fit HEAD` (refresh with `git -C ../DECAlphaStation200_fit checkout --detach
   <commit>`), fit there; the .rbf is in its `output_files/`.
