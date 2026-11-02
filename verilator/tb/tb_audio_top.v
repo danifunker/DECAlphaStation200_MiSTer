@@ -72,6 +72,8 @@ module tb_audio_top (
         .com2_txd(), .com2_rxd(1'b1), .com2_rts_n(), .com2_dtr_n(), .com2_cts_n(1'b1), .com2_dsr_n(1'b1),
         .com2_ri_n(1'b1), .com2_dcd_n(1'b1),
         .ps2_key(11'd0), .ps2_mouse(25'd0), .rtc(65'd0), .year_ovr_en(1'b0), .year_ovr(7'd0), .console_arc(1'b0),
+        .fd_mounted(1'b0), .fd_readonly(1'b0), .fd_size(64'd0), .fd_lba(), .fd_blk_cnt(), .fd_rd(), .fd_wr(),
+        .fd_ack(1'b0), .fd_buff_addr(14'd0), .fd_buff_dout(8'd0), .fd_buff_wr(1'b0), .fd_buff_din(), .fd_led(),
         .lpt_data()
     );
 
