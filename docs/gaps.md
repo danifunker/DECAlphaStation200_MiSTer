@@ -26,7 +26,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | A board cache (Bcache) | open | P4 | |
 | BIU_CTL / Bcache registers | partial | P4 | Stored as shadows only; no Bcache |
 | ITB/DTB: ASN tagging | partial | P2 | Entries have ASM only; no ASN compare (cpu.md 6.5) |
-| Timing: 100 MHz full-system closure | partial | P2 | Last fit -1.244 ns (`cpu-timing.md`) |
+| Timing: 100 MHz full-system closure | partial | P2 | Build 16 (`53584d1`): -1.897 ns, 33.9k ALMs (81%); runs on the board regardless (`cpu-timing.md`) |
 
 ## Firmware path (`docs/design/srom.md`)
 
@@ -52,10 +52,10 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
-| Targets (disk ID 0/1, CD ID 4) on hps_io block devices | partial | P1/P2 | Wired in `as200_sys` and the top (2026-11-01); SRM lists dka400 on the board. The command set for SRM/NT/Unix was done 2026-11-01 (`64d57ae`: TOC 0/1/2, sub-channel, media change, NOT READY, READ CD, the (12) forms, mode pages). `cd_change` is still to be wired from `img_mounted[2]` |
-| ~~Main_MiSTer support (write buffering, CD layer) on branch `dec-alphastation`~~ | **done** 2026-11-01 | P2 | `support/decalpha` (Main `3520ddd`): ISO/CUE/BIN/CHD, the track table, audio frames, the disk write buffer. It builds; the board test is pending (`cdrom.md`) |
+| Targets (disk ID 0/1, CD ID 4) on hps_io block devices | partial | P1/P2 | Wired in `as200_sys` and the top (2026-11-01); SRM lists dka400 on the board. The command set for SRM/NT/Unix was done 2026-11-01 (`64d57ae`: TOC 0/1/2, sub-channel, media change, NOT READY, READ CD, the (12) forms, mode pages). `cd_change` wired from `img_mounted[2]`. Hard-disk images not yet tried on the board |
+| ~~Main_MiSTer support (write buffering, CD layer) on branch `dec-alphastation`~~ | **done** 2026-11-01 | P2 | `support/decalpha` (Main `3520ddd`): ISO/CUE/BIN/CHD, the track table, audio frames, the disk write buffer. On the board since build 15; with the Ethernet bridge since 2026-11-01 (consolidated `e9ffb24`). The disk write buffer is untested (no disk image mounted yet) |
 | Disconnect/reselect, target mode, parity, DMA FIFO, SEL/RSL/CMP interrupts | open | P3 | scsi.md 4 |
-| CD audio | partial | P4 | `rtl/scsi/cd_audio.v` (2026-11-01, `64d57ae`): PLAY/PAUSE/STOP, page 0E, `cd_audio_l/r/stb` checked in the bench. Its outputs are to replace the ties at the mixer (audio.md 4). Limits: `cdrom.md` 4 |
+| CD audio | partial | P4 | `rtl/scsi/cd_audio.v`: PLAY/PAUSE/STOP, page 0E, into the mixer (build 15). Not yet heard on the board. Limits: `cdrom.md` 4 |
 
 ## SIO and ISA (`rtl/sio/`, `docs/design/sio.md`)
 
@@ -63,8 +63,8 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | Flashbus NVRAM persistence (SRM env vars, ISA table) | partial | P2 | `rtl/mister/nvsave.v` on OSD slot SC4 (8 KB file): load on mount, save 2 s after a change (2026-11-01); board test pending |
 | TOY CMOS persistence (beyond 3Fh) | open | P3 | |
-| ~~Floppy controller (82077AA in the PC87332), drive A on an image~~ | **done** 2026-11-01 | P3 | `rtl/sio/isa_fdc.v`, `isa_fdc_img.v` (`floppy.md`): every 82077AA command, DMA and non-DMA, media change, write protect, 720K-2.88M; `tb_fdc` (172 checks) and DROM V1.7's J2 floppy loader in `tb_sio_drom_floppy`. To wire into `as200_sys`/the top (floppy.md 1); not yet tried with SRM on the board |
-| DMA window 1 at PCI 1 GB from the SROM (DROM floppy boot) | open | P3 | The DROM's floppy DMA uses high page 40h and programs no 21071 window; our SROM leaves PBR1 = 0 (floppy.md 1) |
+| ~~Floppy controller (82077AA in the PC87332), drive A on an image~~ | **done** 2026-11-01 | P3 | `rtl/sio/isa_fdc.v`, `isa_fdc_img.v` (`floppy.md`): every 82077AA command, DMA and non-DMA, media change, write protect, 720K-2.88M; `tb_fdc` (172 checks) and DROM V1.7's J2 floppy loader in `tb_sio_drom_floppy`. In the machine (`b57521b`, OSD slot 3); SRM lists dva0 on the board (build 16); not yet read from an image there |
+| ~~DMA window 1 at PCI 1 GB from the SROM (DROM floppy boot)~~ | **done** 2026-11-01 | P3 | The SROM opens window 1 (PCI 4000.0000 + 1 GB -> PA 0) (`b57521b`) |
 | Floppy: overrun, deleted marks, non-standard formats, FIFO threshold | open | P4 | floppy.md 6 |
 | TOY year base for SRM vs ARC/NT | open | P3 | `year_ovr` gives OSD control meanwhile |
 | Parallel port EPP/ECP, interrupt | open | P4 | |
@@ -81,13 +81,13 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Device | Status | Pri | Notes |
 |---|---|---|---|
-| **TGA graphics** (ZLXp-E1: DECchip 21030, 2 MB VRAM in DDR3, Bt485 RAMDAC, PCI slot 1) | partial | P2 | `rtl/tga/` + `rtl/mister/ddr3_arb.v`, `docs/design/tga.md` (2026-11-01): PCI header, registers, simple/stipple/fill/copy/COPY64/DMA copy modes, rop, plane and pixel masks, Bt485 palette and cursor, display from VHCR/VVCR, end-of-frame interrupt; bench `tb_tga` passes. Not yet wired into `as200_sys` / the top (tga.md 8). Missing: pixel shift, line and Z modes, the TGA cursor, ICS1562 (no pixel clock above 65 MHz) |
-| DECchip 21040 Ethernet (+ Ethernet ID ROM) | partial | P3 | `rtl/net/tulip21040.v` + `tulip_nb.v`, `docs/design/ethernet.md` (2026-11-01, `90b68df`): PCI header, CSR0-15, the ID ROM on CSR9, rings/chains, setup frames (perfect/hash/inverse), loopback, the wire on Main's DDR3 mailbox (`DAETH001`); bench `tb_tulip` (1526 checks). Main side `support/decalpha/decalpha_enet` (`e9ffb24` consolidated, `b551b82` dec-alphastation). Not yet wired into `as200_sys`, the top, the DDR3 arbiter or the OSD (`O[23:21]`): ethernet.md 8 |
+| **TGA graphics** (ZLXp-E1: DECchip 21030, 2 MB VRAM in DDR3, Bt485 RAMDAC) | partial | P2 | `rtl/tga/` + `rtl/mister/ddr3_arb.v`, `docs/design/tga.md`: in the machine as PCI device 12 (`0a4d3f6`). **Board build 16: SRM's graphics console runs on it**, NetBSD's kernel reprograms it. Missing: pixel shift, line and Z modes, the TGA cursor, ICS1562 (no pixel clock above 65 MHz) |
+| DECchip 21040 Ethernet (+ Ethernet ID ROM) | partial | P3 | `rtl/net/tulip21040.v` + `tulip_nb.v`, `docs/design/ethernet.md`: PCI device 11 (`a25bdb2`), OSD Network interface; SRM lists ewa0 (build 16). Main's bridge installed on the board 2026-11-01; no traffic tested yet |
 | 21040: error conditions, the guest's own station address for Main's filter, external loopback to the wire | open | P4 | ethernet.md 9 |
-| Sound: AD1848 (WSS 530h, IRQ/DMA by its command register; SRM's PCXBJ: IRQ 9, DMA 0/1) | partial | P4 | `rtl/audio/wss_ad1848.v`, `docs/design/audio.md` (2026-11-01): registers, playback by DMA, IRQ, capture as silence; unit bench `tb_audio`. Not yet wired into `as200_sys` / the top |
+| Sound: AD1848 (WSS 530h; SRM's PCXBJ: IRQ 9, DMA 0/1) | partial | P4 | `rtl/audio/wss_ad1848.v`, `docs/design/audio.md`: in the machine since build 15 (playback by DMA, IRQ; capture is silence). Not yet heard on the board (needs an OS driver) |
 | FM at 388h: an OPL2 (jtopl2) in place of the OPL3 | partial | P4 | `rtl/audio/opl_isa.v`: bank 1 (38Ah/38Bh) dropped, OPL2 status, so OPL3 detection finds an OPL2. A real OPL3 when jtopl's YMF262 exists |
-| Speaker (8254 counter 2) to the audio mix | partial | P4 | `rtl/audio/audio_mix.v` averages it per 48 kHz period; not yet wired |
-| Audio mix to the MiSTer (WSS + FM + CD + speaker, `audio_cdc.v` into CLK_AUDIO) | partial | P4 | Built and bench-tested; integration steps in audio.md 5; no OSD volume/mute page yet (`mute[3:0]` is ready) |
+| ~~Speaker (8254 counter 2) to the audio mix~~ | **done** build 15 | P4 | `audio_mix.v` |
+| Audio mix to the MiSTer (WSS + FM + CD + speaker) | partial | P4 | Wired (build 15, `audio_cdc.v`); no OSD P4 Audio page yet (volume/mute; `mute[3:0]` is ready) |
 | COM2 on a MiSTer pin | open | P4 | |
 | PS/2 keyboard and mouse into the 8242 from hps_io | partial | P2 | Wired into the SIO; the top still also types the keyboard into COM1 |
 
@@ -97,4 +97,4 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | OSD options wired to the machine (memory size, jumpers, year) | partial | P3 | cfg_mem, J1/J2 and the year override are; check the rest against the status map |
 | Load ROM (replace boot0.rom for the session) | open | P4 | |
-| Video: the terminal (SROM port, COM1, LEDs) until TGA | partial | P2 | `rtl/tga/tga_vsel.v` picks the TGA (Display = Graphics and TGA video on) or the terminal; to be wired in the top (tga.md 8) |
+| ~~Video: TGA or the terminal~~ | **done** 2026-11-01 | P2 | `tga_vsel` in the top: OSD Display Graphics shows the TGA once it has video on, else the terminal |
