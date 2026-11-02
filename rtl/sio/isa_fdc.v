@@ -218,7 +218,7 @@ module isa_fdc #(
                X_FIND = 5'd6, X_RFETCH = 5'd7, X_RW1 = 5'd8, X_RW2 = 5'd9, X_RHOLD = 5'd10, X_WREQ = 5'd11,
                X_WPAD = 5'd12, X_SECEND = 5'd13, X_RES = 5'd14, X_ERRWAIT = 5'd15, X_RID = 5'd16,
                X_FMT_IDX = 5'd17, X_FMT_ID = 5'd18, X_FMT_FILL = 5'd19, X_FMT_NEXT = 5'd20, X_VWAIT = 5'd21,
-               X_SEEKCMD = 5'd22, X_FMT_SLOT = 5'd23;
+               X_SEEKCMD = 5'd22, X_FMT_SLOT = 5'd23, X_PREP4 = 5'd24;
     reg  [4:0] xs;
     reg  [2:0] xk;                      // the kind
     reg  [4:0] xop;
@@ -260,7 +260,7 @@ module isa_fdc #(
 
     // the group (track, or half of a 36-sector one) and slot of sector xr
     wire        half2 = spt == 6'd36 && xr > 8'd18;
-    reg  [12:0] grp_mul;
+    reg  [12:0] grp_mul, grp_q;
     always @* begin
         case (spt)
         6'd9:    grp_mul = {2'b0, trk2, 3'b0} + {5'b0, trk2};
@@ -468,13 +468,17 @@ module isa_fdc #(
             xs <= xk == K_RID ? X_RID : xk == K_FMT ? X_FMT_IDX : X_PREP2;
         end
         X_PREP2: begin
-            want_lba <= half2 ? grp_mul + 13'd18 : grp_mul;
-            want_cnt <= spt == 6'd36 ? 6'd18 : spt;
-            want     <= id_ok || (xk == K_FMT && fmt_ok);
-            slot     <= half2 ? xr[4:0] - 5'd19 : xr[4:0] - 5'd1;
+            grp_q <= grp_mul;                                   // (C x 2 + H) x spt
+            slot  <= half2 ? xr[4:0] - 5'd19 : xr[4:0] - 5'd1;
             xs <= X_PREP3;
         end
-        X_PREP3: xs <= xk == K_FMT ? X_FMT_SLOT : X_FIND;      // (trk_rdy follows want_lba a clock late)
+        X_PREP3: begin
+            want_lba <= half2 ? grp_q + 13'd18 : grp_q;
+            want_cnt <= spt == 6'd36 ? 6'd18 : spt;
+            want     <= id_ok || (xk == K_FMT && fmt_ok);
+            xs <= X_PREP4;
+        end
+        X_PREP4: xs <= xk == K_FMT ? X_FMT_SLOT : X_FIND;      // (trk_rdy follows want_lba a clock late)
         X_FIND: begin
             // the sector's ID, or two index pulses without it
             if (idx_ev && !id_ok) begin
