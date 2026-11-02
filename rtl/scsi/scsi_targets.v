@@ -470,7 +470,7 @@ module scsi_targets #(
         input [15:0] rl;
         begin
             dal <= alloc; drl <= rl; din_synth <= 1'b1;
-            st <= T_DLEN; req <= 1'b0; phase <= P_DIN;
+            st <= T_DLEN; req <= 1'b0;      // DATA IN only once there are bytes (T_DLEN)
         end
     endtask
 
@@ -946,8 +946,11 @@ module scsi_targets #(
                 T_DLEN: begin
                     n = {16'd0, (dal < drl) ? dal : drl};
                     d_left <= n[15:0];
+                    // an allocation length of 0 goes from COMMAND straight to STATUS: a DATA IN
+                    // on the lines, even without REQ, is taken by a JUMP IF DATA_IN (ARC 4.58's
+                    // NCRC8xx then moves its 0-byte entry: IID, bus reset, no devices)
                     if (n[15:0] == 16'd0) go_status(8'h00);
-                    else begin st <= T_DIN; pend <= 2'd2; end
+                    else begin st <= T_DIN; phase <= P_DIN; pend <= 2'd2; end
                 end
 
                 // PLAY AUDIO (10), (12), MSF: the start and end LBAs, a step a clock
