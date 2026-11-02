@@ -411,9 +411,14 @@ corelogic:
 	hw_stl/p $2, 0($3)		// DCSR: clear errors; TLB, prefetch off
 	hw_stl/p $31, 0xC0($3)		// TBR1
 	hw_stl/p $31, 0xE0($3)		// TBR2
-	hw_stl/p $31, 0x100($3)		// PBR1: window off (WENB = 0)
+	// window 1: PCI 4000.0000 + 1 GB -> PA 0, direct. The DROM's floppy
+	// loader DMAs with ISA high page 40h and sets no window of its own
+	// (docs/design/floppy.md; SRM sets its own windows later)
+	ldah	$2, 0x3FF0($31)
+	hw_stl/p $2, 0x140($3)		// PMR1: 1 GB
+	ldah	$2, 0x4008($31)
+	hw_stl/p $2, 0x100($3)		// PBR1: base 4000.0000, WENB
 	hw_stl/p $31, 0x120($3)		// PBR2
-	hw_stl/p $31, 0x140($3)		// PMR1
 	hw_stl/p $31, 0x160($3)		// PMR2
 	hw_stl/p $31, 0x1A0($3)		// HAXR1
 	hw_stl/p $31, 0x1C0($3)		// HAXR2

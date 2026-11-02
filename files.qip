@@ -13,6 +13,8 @@ set_global_assignment -name VERILOG_FILE rtl/sio/isa_pit.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_dma.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_rtc.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_kbc.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_fdc_img.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_fdc.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_superio.v
 set_global_assignment -name VERILOG_FILE rtl/sio/sio82378.v
 set_global_assignment -name VERILOG_FILE rtl/scsi/ncr53c810.v

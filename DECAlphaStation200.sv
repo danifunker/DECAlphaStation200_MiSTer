@@ -35,7 +35,6 @@ assign HDMI_BOB_DEINT = 0;
 assign AUDIO_S = 1;
 assign AUDIO_MIX = 0;
 
-assign LED_DISK = 0;
 assign LED_POWER = 0;
 assign BUTTONS = 0;
 
@@ -129,13 +128,20 @@ wire  [17:0] scsi_blk_cnt;
 wire   [2:0] scsi_rd, scsi_wr;
 wire   [7:0] scsi_buff_din;
 assign sd_lba[0] = scsi_lba[31:0];   assign sd_lba[1] = scsi_lba[63:32];   assign sd_lba[2] = scsi_lba[95:64];
-assign sd_lba[3] = 32'd0;            assign sd_lba[4] = nv_lba;
+assign sd_lba[3] = fd_lba;           assign sd_lba[4] = nv_lba;
 assign sd_blk_cnt[0] = scsi_blk_cnt[5:0]; assign sd_blk_cnt[1] = scsi_blk_cnt[11:6]; assign sd_blk_cnt[2] = scsi_blk_cnt[17:12];
-assign sd_blk_cnt[3] = 6'd0;         assign sd_blk_cnt[4] = nv_blk_cnt;
-assign sd_rd = {nv_rd, 1'b0, scsi_rd};
-assign sd_wr = {nv_wr, 1'b0, scsi_wr};
+assign sd_blk_cnt[3] = fd_blk_cnt;   assign sd_blk_cnt[4] = nv_blk_cnt;
+assign sd_rd = {nv_rd, fd_rd, scsi_rd};
+assign sd_wr = {nv_wr, fd_wr, scsi_wr};
 assign sd_buff_din[0] = scsi_buff_din; assign sd_buff_din[1] = scsi_buff_din; assign sd_buff_din[2] = scsi_buff_din;
-assign sd_buff_din[3] = 8'd0;        assign sd_buff_din[4] = nv_buff_din;
+assign sd_buff_din[3] = fd_buff_din;  assign sd_buff_din[4] = nv_buff_din;
+// slot 3: the floppy (the 82077AA's image cache, inside the SIO)
+wire  [31:0] fd_lba;
+wire   [5:0] fd_blk_cnt;
+wire         fd_rd, fd_wr, fd_led;
+wire   [7:0] fd_buff_din;
+wire         img_readonly;
+assign LED_DISK  = {1'b0, fd_led};       // the floppy's activity
 
 // slot 4: the flashbus NVRAM image (rtl/mister/nvsave.v)
 wire  [31:0] nv_lba;
@@ -196,7 +202,7 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(5)) hps_io
 	.sd_buff_din(sd_buff_din),
 	.sd_buff_wr(sd_buff_wr),
 	.img_mounted(img_mounted),
-	.img_readonly(),
+	.img_readonly(img_readonly),
 	.img_size(img_size),
 
 	.ioctl_download(ioctl_download),
@@ -331,6 +337,9 @@ as200_sys machine
 	.sd_buff_din(scsi_buff_din),
 	.sd_buff_wr(sd_buff_wr),
 	.cd_change(cd_change),
+	.fd_mounted(img_mounted[3]), .fd_readonly(img_readonly), .fd_size(img_size),
+	.fd_lba(fd_lba), .fd_blk_cnt(fd_blk_cnt), .fd_rd(fd_rd), .fd_wr(fd_wr), .fd_ack(sd_ack[3]),
+	.fd_buff_din(fd_buff_din), .fd_led(fd_led),
 
 	.ps2_key(ps2_key),
 	.ps2_mouse(ps2_mouse),
