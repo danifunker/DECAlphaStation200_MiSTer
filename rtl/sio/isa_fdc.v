@@ -102,13 +102,14 @@ module isa_fdc #(
     // ================================================================ time
     localparam integer US_DIV0 = CLK_HZ / 1000000 / SPEED;
     localparam integer US_DIV  = US_DIV0 < 1 ? 1 : US_DIV0;
+    localparam [7:0]   US_DIV8 = US_DIV;
     reg  [7:0] pre;
     reg        tick_us;                 // a microsecond (of the drive's time)
     reg  [8:0] hm_cnt;
     reg        tick_hm;                 // half a millisecond
     always @(posedge clk) begin
         tick_us <= 1'b0; tick_hm <= 1'b0;
-        if (pre == 8'd0) begin pre <= US_DIV[7:0] - 8'd1; tick_us <= 1'b1; end else pre <= pre - 8'd1;
+        if (pre == 8'd0) begin pre <= US_DIV8 - 8'd1; tick_us <= 1'b1; end else pre <= pre - 8'd1;
         if (tick_us) begin
             if (hm_cnt == 9'd0) begin hm_cnt <= 9'd499; tick_hm <= 1'b1; end else hm_cnt <= hm_cnt - 9'd1;
         end
