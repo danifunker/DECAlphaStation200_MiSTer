@@ -17,6 +17,14 @@
 //     --type STR       type STR into COM1 (\n = Return), one character every
 //                      2 ms of machine time, starting --type-at cycles in
 //                      (default: at once); more --type options queue up
+//     --arc            the OSD Console = ARC (TOY CMOS 3Fh at reset)
+//     --flash-wp       J6 flash write disabled (the flashROMs ignore writes)
+//     --save-every N   a checkpoint every N cycles (the same --ckpt file)
+//     --key STR        type STR on the PS/2 keyboard (into the 8242): ASCII, \n = Enter,
+//                      {up} {down} {left} {right} {esc} {f1}..{f12} {tab} {bs};
+//                      one key every 20 ms of machine time from --key-at cycles
+//     --vram-every N   every N cycles write the TGA's 2 MB VRAM to --vram FILE
+//                      (default ../scratch/vram.bin; tools/vram2png.py shows it)
 //
 // Prints every LED change (with the TI Table 8-1 meaning of the SROM codes),
 // the SROM serial port's output (the DROM's console: SL_XMIT decoded as a
@@ -69,7 +77,10 @@ int main(int argc, char **argv) {
     int mem = 0, until_led = -1, jumpers = 0x03, save_led = -1;
     uint64_t save_at = 0;
     std::string ckpt = "../scratch/sys.ckpt", restore, typed;
-    uint64_t type_at = 0;
+    uint64_t type_at = 0, key_at = 0, vram_every = 0;
+    bool arc = false, flash_wp = false;
+    uint64_t save_every = 0;
+    std::string keys, vram_file = "../scratch/vram.bin";
     std::vector<uint8_t> img[3];
     bool img_on[3] = {false, false, false};
     for (int i = 1; i < argc; i++) {
@@ -95,6 +106,13 @@ int main(int argc, char **argv) {
             }
         }
         else if (a == "--type-at") type_at = strtoull(next(), 0, 0);
+        else if (a == "--arc") arc = true;
+        else if (a == "--flash-wp") flash_wp = true;
+        else if (a == "--save-every") save_every = strtoull(next(), 0, 0);
+        else if (a == "--key") keys += next();
+        else if (a == "--key-at") key_at = strtoull(next(), 0, 0);
+        else if (a == "--vram-every") vram_every = strtoull(next(), 0, 0);
+        else if (a == "--vram") vram_file = next();
         else if (a == "--disk0" || a == "--disk1" || a == "--cd") {
             int sl = a == "--disk0" ? 0 : a == "--disk1" ? 1 : 2;
             const char *fn = next();
@@ -112,6 +130,7 @@ int main(int argc, char **argv) {
 
     std::vector<uint8_t> dram(128u << 20, 0);
     std::vector<uint8_t> fb(2u << 20, 0xFF);       // flashbus offsets 0..1F.FFFF
+    std::vector<uint64_t> vram(1u << 18, 0);       // the TGA's 2 MB (DDR3 on the board)
     if (flash && !load(flash, fb, 0, 1u << 20)) return 2;
     if (drom && !load(drom, fb, 0x180000, 0x10000)) return 2;
     FILE *tf = trace ? fopen(trace, "w") : nullptr;
@@ -134,7 +153,7 @@ int main(int argc, char **argv) {
     t->sd_ack = 0; t->sd_buff_wr = 0; t->cd_change = 0;
     t->nvb_addr = 0; t->nvb_we = 0; t->nvb_wdata = 0;
     int sd_slot = -1, sd_dir = 0, sd_pos = 0, sd_len = 0; uint32_t sd_lba_q = 0;
-    t->ps2_key = 0; t->ps2_mouse = 0; t->console_arc = 0; t->halt = 0;
+    t->ps2_key = 0; t->ps2_mouse = 0; t->console_arc = arc; t->flash_wp = flash_wp; t->halt = 0;
     t->fd_mounted = 0; t->fd_readonly = 0; t->fd_size = 0; t->fd_ack = 0;
     t->vr_ack = 0; t->vr_rvalid = 0; t->vr_rdata = 0; t->sc_ack = 0; t->sc_rvalid = 0; t->sc_rdata = 0; t->clk_pix = 0;
     t->enet_mac = 0x08002BA50200ull; t->enet_link_up = 1; t->nb_ack = 0; t->nb_rdata = 0; t->year_ovr_en = 0; t->year_ovr = 0;
@@ -158,7 +177,8 @@ int main(int argc, char **argv) {
         VerilatedRestore rs; rs.open((restore + ".v").c_str()); rs >> *t; rs.close();
         FILE *f = fopen((restore + ".mem").c_str(), "rb");
         if (!f || fread(&cyc, 8, 1, f) != 1 || fread(&retired, 8, 1, f) != 1 ||
-            fread(dram.data(), 1, dram.size(), f) != dram.size() || fread(fb.data(), 1, fb.size(), f) != fb.size()) {
+            fread(dram.data(), 1, dram.size(), f) != dram.size() || fread(fb.data(), 1, fb.size(), f) != fb.size() ||
+            fread(vram.data(), 8, vram.size(), f) != vram.size()) {
             fprintf(stderr, "cannot restore %s\n", restore.c_str()); return 2;
         }
         fclose(f);
@@ -169,10 +189,39 @@ int main(int argc, char **argv) {
         VerilatedSave os; os.open((ckpt + ".v").c_str()); os << *t; os.close();
         FILE *f = fopen((ckpt + ".mem").c_str(), "wb");
         fwrite(&cyc, 8, 1, f); fwrite(&retired, 8, 1, f);
-        fwrite(dram.data(), 1, dram.size(), f); fwrite(fb.data(), 1, fb.size(), f); fclose(f);
+        fwrite(dram.data(), 1, dram.size(), f); fwrite(fb.data(), 1, fb.size(), f);
+        fwrite(vram.data(), 8, vram.size(), f); fclose(f);
         fprintf(stderr, "checkpoint %s at cycle %" PRIu64 ", %" PRIu64 " instructions\n", ckpt.c_str(), cyc, retired);
     };
+    // the PS/2 key list: {code, extended} presses (a release follows each)
+    std::vector<std::pair<int,int>> kseq;
+    {
+        static const char *lc = "abcdefghijklmnopqrstuvwxyz";
+        static const int lcode[26] = {0x1C,0x32,0x21,0x23,0x24,0x2B,0x34,0x33,0x43,0x3B,0x42,0x4B,0x3A,
+                                      0x31,0x44,0x4D,0x15,0x2D,0x1B,0x2C,0x3C,0x2A,0x1D,0x22,0x35,0x1A};
+        static const int dcode[10] = {0x45,0x16,0x1E,0x26,0x25,0x2E,0x36,0x3D,0x3E,0x46};
+        static const int fcode[12] = {0x05,0x06,0x04,0x0C,0x03,0x0B,0x83,0x0A,0x01,0x09,0x78,0x07};
+        for (size_t k = 0; k < keys.size(); k++) {
+            char c = keys[k];
+            if (c == '{') {
+                size_t e = keys.find('}', k); std::string n = keys.substr(k + 1, e - k - 1); k = e;
+                if (n == "up") kseq.push_back({0x75, 1}); else if (n == "down") kseq.push_back({0x72, 1});
+                else if (n == "left") kseq.push_back({0x6B, 1}); else if (n == "right") kseq.push_back({0x74, 1});
+                else if (n == "esc") kseq.push_back({0x76, 0}); else if (n == "tab") kseq.push_back({0x0D, 0});
+                else if (n == "bs") kseq.push_back({0x66, 0}); else if (n == "enter") kseq.push_back({0x5A, 0});
+                else if (n[0] == 'f') kseq.push_back({fcode[atoi(n.c_str() + 1) - 1], 0});
+            } else if (c == '\\' && k + 1 < keys.size() && keys[k + 1] == 'n') { kseq.push_back({0x5A, 0}); k++; }
+            else if (c >= 'a' && c <= 'z') kseq.push_back({lcode[c - 'a'], 0});
+            else if (c >= 'A' && c <= 'Z') kseq.push_back({lcode[c - 'A'], 0});
+            else if (c >= '0' && c <= '9') kseq.push_back({dcode[c - '0'], 0});
+            else if (c == ' ') kseq.push_back({0x29, 0});
+            else if (c == '.') kseq.push_back({0x49, 0});
+            else if (c == '-') kseq.push_back({0x4E, 0});
+            (void)lc;
+        }
+    }
     int last_led = -1;
+    bool vpend = false; int vr_left = 0; uint32_t vr_ra = 0;
     bool dpend = false, fpend = false;
     std::string line;
     while (cyc < cycles) {
@@ -197,8 +246,42 @@ int main(int argc, char **argv) {
         if (t->f_req && !fpend) fpend = true;
         else if (t->f_req && fpend) {
             uint32_t a = t->f_addr & 0x1FFFFF;
-            if (t->f_we) { /* flash programming: not modelled yet */ }
+            if (t->f_we) {      // a programmed byte or the erase's FFs (rtl/apecs/flash28f020.v)
+                static uint64_t nw = 0;
+                if (a < 0x100000) fb[a] = t->f_wdata;
+                if (++nw <= 64 || (a & 0x3FFFF) == 0) fprintf(stderr, "[%10" PRIu64 " cyc] flash write %05x = %02x\n", cyc, a, t->f_wdata);
+            }
             t->f_rdata = fb[a]; t->f_ack = 1; fpend = false;
+        }
+        // the TGA's VRAM port (rtl/mister/ddr3_arb.v's handshake): ack the cycle after
+        // the request; a read's words follow, one a cycle
+        t->vr_ack = 0; t->vr_rvalid = 0; t->sc_ack = 0; t->sc_rvalid = 0;
+        if (vr_left) { t->vr_rdata = vram[vr_ra++ & 0x3FFFF]; t->vr_rvalid = 1; vr_left--; }
+        else if (t->vr_req && !vpend) vpend = true;
+        else if (t->vr_req && vpend) {
+            uint32_t a = t->vr_addr & 0x3FFFF;
+            if (t->vr_we) {
+                uint64_t m = 0;
+                for (int b = 0; b < 8; b++) if (t->vr_be >> b & 1) m |= 0xFFull << (8 * b);
+                vram[a] = (vram[a] & ~m) | (t->vr_wdata & m);
+            } else { vr_ra = a; vr_left = t->vr_len ? t->vr_len : 16; }
+            t->vr_ack = 1; vpend = false;
+        }
+        if (vram_every && cyc && cyc % vram_every == 0) {
+            FILE *vf = fopen(vram_file.c_str(), "wb");
+            if (vf) { fwrite(vram.data(), 8, vram.size(), vf); fclose(vf); }
+            fprintf(stderr, "[%10" PRIu64 " cyc] VRAM written to %s\n", cyc, vram_file.c_str());
+        }
+        // PS/2 keys: press, then release 10 ms later, then the next key 10 ms on
+        {
+            static size_t kpos = 0; static uint64_t knext = 0; static int kph = 0;
+            if (kpos < kseq.size() && cyc >= key_at && cyc >= knext) {
+                int code = kseq[kpos].first, ext = kseq[kpos].second;
+                uint32_t tog = ((t->ps2_key >> 10) & 1) ^ 1;
+                t->ps2_key = tog << 10 | (kph == 0 ? 1 : 0) << 9 | ext << 8 | code;
+                if (kph == 0) kph = 1; else { kph = 0; kpos++; fprintf(stderr, "[%10" PRIu64 " cyc] key %02X%s\n", cyc, code, ext ? " (E0)" : ""); }
+                knext = cyc + 1000000;
+            }
         }
         tick();
         cyc++;
@@ -238,7 +321,7 @@ int main(int argc, char **argv) {
                 tnext = cyc + 200000;
             }
         }
-        if (save_at && cyc == save_at) save();
+        if ((save_at && cyc == save_at) || (save_every && cyc % save_every == 0)) save();
         if (t->leds != last_led && (int)t->leds == save_led) { save(); save_led = -1; }
         if (t->leds != last_led) {
             fprintf(stderr, "[%10" PRIu64 " cyc, %9" PRIu64 " insns] LED %02X %s\n", cyc, retired, t->leds, led_name(t->leds));

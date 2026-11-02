@@ -7,6 +7,7 @@ set_global_assignment -name VERILOG_FILE rtl/cpu/ev4_fpu_dec.v
 set_global_assignment -name VERILOG_FILE rtl/cpu/ev4_core.v
 # The machine (rtl/as200_sys.v and below)
 set_global_assignment -name VERILOG_FILE rtl/apecs/apecs.v
+set_global_assignment -name VERILOG_FILE rtl/apecs/flash28f020.v
 set_global_assignment -name VERILOG_FILE rtl/sio/ns16550.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_pic.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_pit.v

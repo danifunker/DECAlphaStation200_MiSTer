@@ -36,7 +36,8 @@ module as200_sys #(
     input  wire        d_ack,
     input  wire [63:0] d_rdata,
 
-    // flash + DROM bytes (flashbus offset)
+    // flash + DROM bytes (flashbus offset), after the 28F020 command layer
+    input  wire        flash_wp,        // J6 flash write disabled
     output wire        f_req,
     output wire        f_we,
     output wire [20:0] f_addr,
@@ -185,6 +186,16 @@ module as200_sys #(
     wire        pt_claim, pt_ack;
     wire [31:0] pt_rdata;
 
+    // the flashROMs' command interface (rtl/apecs/flash28f020.v)
+    wire        fu_req, fu_we, fu_ack;
+    wire [20:0] fu_addr;
+    wire  [7:0] fu_wdata, fu_rdata;
+    flash28f020 flash_cmd (
+        .clk(clk), .rst(rst), .wp(flash_wp),
+        .u_req(fu_req), .u_we(fu_we), .u_addr(fu_addr), .u_wdata(fu_wdata), .u_ack(fu_ack), .u_rdata(fu_rdata),
+        .f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata), .f_ack(f_ack), .f_rdata(f_rdata)
+    );
+
     apecs core_logic (
         .clk(clk), .rst(rst), .cfg_mem(cfg_mem), .jumpers(jumpers), .leds(leds),
         .nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
@@ -192,8 +203,8 @@ module as200_sys #(
         .c_ack(c_ack), .c_rdata(c_rdata),
         .d_req(d_req), .d_we(d_we), .d_line(d_line), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
         .d_ack(d_ack), .d_rdata(d_rdata),
-        .f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata),
-        .f_ack(f_ack), .f_rdata(f_rdata),
+        .f_req(fu_req), .f_we(fu_we), .f_addr(fu_addr), .f_wdata(fu_wdata),
+        .f_ack(fu_ack), .f_rdata(fu_rdata),
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
         .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(pt_claim), .pt_ack(pt_ack), .pt_rdata(pt_rdata),
         .dm_req(dm_req), .dm_we(dm_we), .dm_addr(dm_addr), .dm_be(dm_be), .dm_wdata(dm_wdata),

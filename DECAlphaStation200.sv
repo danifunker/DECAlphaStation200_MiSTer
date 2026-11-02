@@ -312,6 +312,7 @@ as200_sys machine
 	.d_ack(d_ack), .d_rdata(d_rdata),
 	.f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata),
 	.f_ack(f_ack), .f_rdata(f_rdata),
+	.flash_wp(cfg[13]),                    // OSD J6 flash write: Disabled = no Vpp
 
 	.enet_mac(nb_pmac_ok ? nb_pmac : 48'h08002B_A50200),   // Main's PMAC, else a fixed DEC address
 	.enet_link_up(1'b1),
