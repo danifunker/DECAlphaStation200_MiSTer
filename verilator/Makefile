@@ -137,7 +137,17 @@ $(FLASH):
 system: obj_sys/Vas200_sys $(FLASH)
 	obj_sys/Vas200_sys --flash $(FLASH) --drom $(DROM) $(SYSARGS)
 
-.PHONY: system
+# the same machine for long firmware runs: no FM synthesizer (about 20% faster), the SCRIPTS and
+# SCSI command trace; run with +ccstep=16 to shorten RPCC delay loops 16x, +iolog for the 8259/8242
+obj_sys_fast/Vas200_sys: $(SYS_RTL) system/tb_sys.cpp
+	$(TB_V) --Mdir obj_sys_fast --top-module as200_sys -Wno-BLKSEQ --savable \
+		-GSROM_HEX='"../srom/build/avanti_srom.bitstream.hex"' -GSIM_FAST=$(SIM_FAST) +define+SIM_PCILOG \
+		+define+NCR_TRACE +define+SIM_NOFM $^
+
+system-fast: obj_sys_fast/Vas200_sys $(FLASH)
+	obj_sys_fast/Vas200_sys --flash $(FLASH) --drom $(DROM) +ccstep=16 $(SYSARGS)
+
+.PHONY: system system-fast
 
 # the SDRAM controller against a behavioural chip
 obj_tb_sdram/Vtb_sdram_top: $(RTL)/mister/sdram_ctl.v tb/sdram_model.v tb/tb_sdram_top.v tb/tb_sdram.cpp

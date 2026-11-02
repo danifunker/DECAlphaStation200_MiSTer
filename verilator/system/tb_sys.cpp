@@ -221,6 +221,7 @@ int main(int argc, char **argv) {
             (void)lc;
         }
     }
+    const bool srom_edges = getenv("SROM_EDGES") != nullptr;
     int last_led = -1;
     bool vpend = false; int vr_left = 0; uint32_t vr_ra = 0;
     bool dpend = false, fpend = false;
@@ -334,7 +335,7 @@ int main(int argc, char **argv) {
         {
             int v = t->srom_txd;
             static int ntr = 0; static uint64_t lastt = 0;
-            if (getenv("SROM_EDGES") && v != s_last && ntr < 60) { fprintf(stderr, "edge %d->%d after %" PRIu64 "\n", s_last, v, cyc - lastt); lastt = cyc; ntr++; }
+            if (srom_edges && v != s_last && ntr < 60) { fprintf(stderr, "edge %d->%d after %" PRIu64 "\n", s_last, v, cyc - lastt); lastt = cyc; ntr++; }
             if (s_nbit < 0) {
                 if (s_last && !v) { s_nbit = 0; s_t0 = cyc; s_byte = 0; }
             } else {

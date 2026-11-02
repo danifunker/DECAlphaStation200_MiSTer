@@ -93,6 +93,12 @@ module ev4_core (
     reg  [14:0] mm_csr;
     reg         mm_lock;
     reg  [31:0] cc;                     // CC[31:0]: counts while cc_en (CC_CTL)
+`ifdef SIM_PCILOG
+    // the system simulation's +ccstep=N: CC advances N a cycle, so RPCC delay loops run N times
+    // shorter (firmware takes the CPU speed from the console's table, not from CC)
+    reg  [31:0] cc_step;
+    initial if (!$value$plusargs("ccstep=%d", cc_step)) cc_step = 32'd1;
+`endif
     reg  [31:0] cc_hi;                  // CC[63:32]: written through CC, returned by RPCC
     reg         cc_en;
     reg         intr_flag;
@@ -889,7 +895,11 @@ module ev4_core (
         // its state machine, or the fetch never leaves FS_FILL; the sweep holds fetch)
         ifill_done <= ict_we && ict_v && !rst && !ld_active;
         mul_go <= 1'b0;
+`ifdef SIM_PCILOG
+        if (cc_en) cc <= cc + cc_step;
+`else
         if (cc_en) cc <= cc + 32'd1;
+`endif
         if (rst) begin
             pal <= 1'b1; iccsr_fpe <= 1'b0; iccsr_map <= 1'b0; iccsr_hwe <= 1'b0;
             pal_base <= 20'd0; abox_ctl <= 16'd0; ps_cm <= 2'd0; alt_cm <= 2'd0;

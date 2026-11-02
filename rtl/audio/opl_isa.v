@@ -76,11 +76,16 @@ module opl_isa #(
 
     wire [7:0] dout;
     wire signed [15:0] snd_w;
+`ifdef SIM_NOFM
+    // the system simulation without the FM synthesizer (speed): status 06h-clear, silence
+    assign dout = 8'h06; assign snd_w = 16'sd0;
+`else
     jtopl2 u_opl (
         .rst(!rcnt[7]), .clk(clk), .cen(cen),
         .din(w_d), .addr(w_a0), .cs_n(!w_go), .wr_n(!w_go),
         .dout(dout), .irq_n(), .snd(snd_w), .sample()
     );
+`endif
 
     reg [7:0] st_q;
     always @(posedge clk) begin
