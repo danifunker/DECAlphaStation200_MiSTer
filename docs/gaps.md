@@ -46,7 +46,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | Error reporting (EDSR/PEAR/SEAR, master-abort bits, error interrupt to irq_h[0]) | partial | P2 | DCSR ndev_err (CPU master abort, with the PCI command) and ptl_inv (invalid S/G entry), PEAR, RW1C (2026-11-01). No error interrupt or machine check yet; SEAR, the CA's EDSR errors not raised |
 | ~~D-cache invalidation on DMA writes (dInvReq)~~ | **done** 2026-11-01 | P1 | apecs sends PA[12:5] of every DMA write, the core invalidates that line. Found as SRM's "bad SCSI status (b8)" at `boot dka400` (stale cached status byte and buffer) |
 | PCI type-1 configuration (bus != 0) | open | P4 | No bridges in this config |
-| Sparse-memory HAXR1 high bits, dense-memory quadword ordering | partial | P3 | Check against the TGA's use |
+| Sparse-memory HAXR1 high bits, dense-memory quadword ordering | partial | P3 | SRM's and Linux's TGA drivers use dense longwords only (tga.md 1); the TGA handles any byte enables |
 
 ## SCSI (`rtl/scsi/`, `docs/design/scsi.md`)
 
@@ -81,7 +81,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Device | Status | Pri | Notes |
 |---|---|---|---|
-| **TGA graphics** (ZLXp-E1: DECchip 21030, 2 MB VRAM in DDR3, Bt485 RAMDAC, PCI slot 1) | open | P2 | The chosen video card; SRM console on the screen, NT/X11. Confirm the RAMDAC (CORE_SPEC open item 3) |
+| **TGA graphics** (ZLXp-E1: DECchip 21030, 2 MB VRAM in DDR3, Bt485 RAMDAC, PCI slot 1) | partial | P2 | `rtl/tga/` + `rtl/mister/ddr3_arb.v`, `docs/design/tga.md` (2026-11-01): PCI header, registers, simple/stipple/fill/copy/COPY64/DMA copy modes, rop, plane and pixel masks, Bt485 palette and cursor, display from VHCR/VVCR, end-of-frame interrupt; bench `tb_tga` passes. Not yet wired into `as200_sys` / the top (tga.md 8). Missing: pixel shift, line and Z modes, the TGA cursor, ICS1562 (no pixel clock above 65 MHz) |
 | DECchip 21040 Ethernet (+ Ethernet ID ROM) | partial | P3 | `rtl/net/tulip21040.v` + `tulip_nb.v`, `docs/design/ethernet.md` (2026-11-01, `90b68df`): PCI header, CSR0-15, the ID ROM on CSR9, rings/chains, setup frames (perfect/hash/inverse), loopback, the wire on Main's DDR3 mailbox (`DAETH001`); bench `tb_tulip` (1526 checks). Main side `support/decalpha/decalpha_enet` (`e9ffb24` consolidated, `b551b82` dec-alphastation). Not yet wired into `as200_sys`, the top, the DDR3 arbiter or the OSD (`O[23:21]`): ethernet.md 8 |
 | 21040: error conditions, the guest's own station address for Main's filter, external loopback to the wire | open | P4 | ethernet.md 9 |
 | Sound: AD1848 (WSS 530h, IRQ/DMA by its command register; SRM's PCXBJ: IRQ 9, DMA 0/1) | partial | P4 | `rtl/audio/wss_ad1848.v`, `docs/design/audio.md` (2026-11-01): registers, playback by DMA, IRQ, capture as silence; unit bench `tb_audio`. Not yet wired into `as200_sys` / the top |
@@ -97,4 +97,4 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | OSD options wired to the machine (memory size, jumpers, year) | partial | P3 | cfg_mem, J1/J2 and the year override are; check the rest against the status map |
 | Load ROM (replace boot0.rom for the session) | open | P4 | |
-| Video: the terminal (SROM port, COM1, LEDs) until TGA | partial | P2 | Replace/overlay with TGA output |
+| Video: the terminal (SROM port, COM1, LEDs) until TGA | partial | P2 | `rtl/tga/tga_vsel.v` picks the TGA (Display = Graphics and TGA video on) or the terminal; to be wired in the top (tga.md 8) |
