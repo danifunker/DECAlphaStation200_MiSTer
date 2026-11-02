@@ -42,7 +42,7 @@ assign BUTTONS = 0;
 // OSD (docs/osd-standard.md). Status bits:
 //   0        Apply and reset
 //   2:1      Memory              (0 64MB, 1 32MB, 2 128MB)
-//   4:3      Display             (0 Graphics, 1 Serial console)
+//   4:3      Display             (0 Graphics, 1 Serial console; live, not latched)
 //   6:5      Aspect ratio
 //   9:7      Scale
 //   10       Swap Alt/Win keys   (Input: applies at once)
@@ -493,7 +493,7 @@ wire       vid_ce, vid_hs, vid_vs, vid_de, vid_hb, vid_vb;
 wire [7:0] vid_r, vid_g, vid_b;
 tga_vsel tga_vsel
 (
-	.clk_pix(clk_pix), .gfx(cfg[4:3] == 2'd0), .tga_on(tga_on),
+	.clk_pix(clk_pix), .gfx(status[4:3] == 2'd0), .tga_on(tga_on),
 	.t_ce(tga_ce), .t_hs(tga_hs), .t_vs(tga_vs), .t_de(tga_de), .t_hb(tga_hb), .t_vb(tga_vb),
 	.t_r(tga_r), .t_g(tga_g), .t_b(tga_b),
 	.v_hs(vt_hs), .v_vs(vt_vs), .v_de(vt_de), .v_hb(vt_hb), .v_vb(vt_vb), .v_r(vt_r), .v_g(vt_g), .v_b(vt_b),

@@ -7,6 +7,7 @@
 //     --until-led XX   stop when the LEDs show XX (hex)
 //     --trace FILE     retire trace (alphaemu -T format)
 //     --trace-from N   start the trace at retired instruction N
+//     --trace-pc LO HI only retires with LO <= PC < HI
 //     --jumpers XX     flashbus jumper byte (default 03: J1, J2 normal)
 //     --save-at N      at cycle N write a checkpoint (FILE.v: the RTL; FILE.mem: DRAM,
 //                      flashbus, the cycle and instruction counts) to --ckpt FILE
@@ -77,7 +78,7 @@ int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);
     setvbuf(stdout, nullptr, _IOLBF, 0);   // the logs are read while the run goes on
     const char *flash = nullptr, *drom = nullptr, *trace = nullptr;
-    uint64_t cycles = 200000000, trace_from = 0;
+    uint64_t cycles = 200000000, trace_from = 0, trace_lo = 0, trace_hi = ~0ull;
     int mem = 0, until_led = -1, jumpers = 0x03, save_led = -1;
     uint64_t save_at = 0;
     std::string ckpt = "../scratch/sys.ckpt", restore, typed;
@@ -97,6 +98,7 @@ int main(int argc, char **argv) {
         else if (a == "--until-led") until_led = strtol(next(), 0, 16);
         else if (a == "--trace") trace = next();
         else if (a == "--trace-from") trace_from = strtoull(next(), 0, 0);
+        else if (a == "--trace-pc") { trace_lo = strtoull(next(), 0, 0); trace_hi = strtoull(next(), 0, 0); }
         else if (a == "--jumpers") jumpers = strtol(next(), 0, 16);
         else if (a == "--save-at") save_at = strtoull(next(), 0, 0);
         else if (a == "--save-led") save_led = strtol(next(), 0, 16);
@@ -382,7 +384,7 @@ int main(int argc, char **argv) {
         }
         if (t->dbg_retire) {
             retired++;
-            if (tf && retired >= trace_from) {
+            if (tf && retired >= trace_from && (uint64_t)t->dbg_pc >= trace_lo && (uint64_t)t->dbg_pc < trace_hi) {
                 fprintf(tf, "%016" PRIx64 " %08x", (uint64_t)t->dbg_pc, t->dbg_insn);
                 if (t->dbg_rwr) fprintf(tf, " r%d=%016" PRIx64, t->dbg_rnum, (uint64_t)t->dbg_rval);
                 if (t->dbg_mwr) fprintf(tf, " m%016" PRIx64 "=%016" PRIx64 "/%d", (uint64_t)t->dbg_maddr, (uint64_t)t->dbg_mval, t->dbg_msize);
