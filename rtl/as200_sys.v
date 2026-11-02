@@ -159,6 +159,13 @@ module as200_sys #(
     wire  [7:0] dinv_idx;
     wire        sio_intr, sio_nmi, sio_toy, sio_kbrst;
     assign irq_h = {sio_kbrst | halt, sio_toy, sio_nmi, sio_intr, 2'b00};
+`ifdef SIM_PCILOG
+    reg [5:0] irq_h_q;
+    always @(posedge clk) begin
+        irq_h_q <= irq_h;
+        if ($test$plusargs("iolog") && irq_h_q != irq_h) $display("IRQH %b", irq_h);
+    end
+`endif
     wire        c_req, c_we, c_ist, c_ack, c_line;
     wire [33:3] c_addr;
     wire  [7:0] c_be;

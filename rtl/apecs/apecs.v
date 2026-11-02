@@ -431,6 +431,10 @@ module apecs (
             pt_req <= 1'b0;
 `ifdef SIM_PCILOG
             if (pt_cmd == 2'd0 && !pt_we) $display("PCICFG   -> %h", pt_rdata);
+            // +iolog: the 8259s, the 8242 and IACK (the keyboard and interrupt path)
+            if ($test$plusargs("iolog") && (pt_cmd == 2'd3 || (pt_cmd == 2'd1 &&
+                (pt_addr[15:1] == 15'h0010 || pt_addr[15:1] == 15'h0050 || pt_addr[15:0] == 16'h0060 || pt_addr[15:0] == 16'h0064))))
+                $display("IO %s %h be %h w %h r %h", pt_cmd == 2'd3 ? "IACK" : pt_we ? "W" : "R", pt_addr, pt_be, pt_wdata, pt_rdata);
 `endif
             if (pci_hi) begin
                 // dense quadword: now the upper longword

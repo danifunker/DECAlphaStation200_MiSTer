@@ -73,8 +73,8 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
-| 28F020 command set (ID read, erase, program, status) | stub | P3 | Writes go straight into DDR3; SRM/ARC flash updates and the ARC NVRAM area need the command set |
-| Flash changes saved back to the SD card | open | P3 | |
+| 28F020 command set (ID read, erase, program, verify) | **done** 2026-11-02 | P2 | `rtl/apecs/flash28f020.v` (`e88411e`): ID 89/BD, program, chip erase, verify; J6 (OSD P5) as write protect. ARC writes the flash at start-up: before, those commands landed in the image as data and SRM's next boot failed DROM's checksum |
+| Flash changes saved back to the SD card | open | P2 | Anything ARC stores in flash is lost at power-off until fbrom writes boot0.rom back |
 
 ## Devices not built yet (CORE_SPEC)
 
