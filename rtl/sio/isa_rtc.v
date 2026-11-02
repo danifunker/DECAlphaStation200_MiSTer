@@ -248,7 +248,8 @@ module isa_rtc #(
             hour  <= b_hour[4:0];
             date  <= b_date[4:0];
             month <= b_mon[3:0];
-            year  <= year_ovr_en ? year_ovr : b_year;
+            // ARC and NT count the two-digit year from 1980 (SRM from 1900/2000): 2026 is 46 for them
+            year  <= year_ovr_en ? year_ovr : console_arc ? (b_year >= 7'd80 ? b_year - 7'd80 : b_year + 7'd20) : b_year;
             dow   <= rtc[50:48] + 3'd1;                         // the MiSTer's 0-6 from Sunday; the chip's 1-7
         end
 

@@ -454,7 +454,11 @@ module scsi_targets #(
 
     task go_status;
         input [7:0] s;
-        begin st <= T_STAT; req <= 1'b1; phase <= P_STAT; tdata <= s; end
+        begin st <= T_STAT; req <= 1'b1; phase <= P_STAT; tdata <= s;
+`ifdef NCR_TRACE
+            $display("tgt %0d status %02x", dev, s);
+`endif
+        end
     endtask
     task check;                          // CHECK CONDITION with sense key / ASC
         input [3:0] key;
@@ -576,6 +580,10 @@ module scsi_targets #(
 
                 T_PRE1: begin
                     op = cdb[0];
+`ifdef NCR_TRACE
+                    $display("tgt %0d lun %0d cdb %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x", dev, lun,
+                             cdb[0], cdb[1], cdb[2], cdb[3], cdb[4], cdb[5], cdb[6], cdb[7], cdb[8], cdb[9]);
+`endif
                     // block address and count of the READ/WRITE forms
                     if (op[7:5] == 3'd0) begin
                         lba_r <= {11'd0, cdb[1][4:0], cdb[2], cdb[3]};
