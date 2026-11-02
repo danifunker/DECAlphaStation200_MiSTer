@@ -153,7 +153,9 @@ module isa_rtc #(
         v_hour <= show_hour(hour, bin, h24);
         v_date <= show({2'd0, date}, bin);
         v_mon  <= show({3'd0, month}, bin);
-        v_year <= show(year, bin);
+        // ARC and NT count the two-digit year from 1980, SRM from 1900/2000: with the ARC console
+        // the register reads 20 more (2026: 46) and a write stores 20 less
+        v_year <= show(console_arc ? (year >= 7'd80 ? year - 7'd80 : year + 7'd20) : year, bin);
     end
 
     reg [7:0] rd71;
@@ -231,7 +233,7 @@ module isa_rtc #(
             7'h06: dow   <= io_din[2:0];
             7'h07: date  <= tk[4:0];
             7'h08: month <= tk[3:0];
-            7'h09: year  <= tk;
+            7'h09: year  <= console_arc ? (tk >= 7'd20 ? tk - 7'd20 : tk + 7'd80) : tk;
             7'h0A: begin
                 reg_a <= io_din[6:0];
                 if (io_din[6:4] != 3'b010) div <= 15'd0;            // the divider held in reset
@@ -248,8 +250,7 @@ module isa_rtc #(
             hour  <= b_hour[4:0];
             date  <= b_date[4:0];
             month <= b_mon[3:0];
-            // ARC and NT count the two-digit year from 1980 (SRM from 1900/2000): 2026 is 46 for them
-            year  <= year_ovr_en ? year_ovr : console_arc ? (b_year >= 7'd80 ? b_year - 7'd80 : b_year + 7'd20) : b_year;
+            year  <= year_ovr_en ? year_ovr : b_year;
             dow   <= rtc[50:48] + 3'd1;                         // the MiSTer's 0-6 from Sunday; the chip's 1-7
         end
 
