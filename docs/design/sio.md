@@ -14,7 +14,7 @@ existing `rtl/sio/ns16550.v`.
 | `isa_dma.v` | 8237 x2, page and high-page registers, the 82378's extended mode and scatter/gather registers, the transfer engine on the PCI master port |
 | `isa_rtc.v` | BQ4285 TOY (MC146818 registers, 114 bytes of CMOS), set from hps_io's `rtc`, with the OSD year override |
 | `isa_kbc.v` | 8242 (8042 host interface) with a PS/2 keyboard and mouse made from hps_io's `ps2_key` / `ps2_mouse` |
-| `isa_superio.v` | PC87332 configuration (398h/399h), parallel port, **FDC stub** |
+| `isa_superio.v` | PC87332 configuration (398h/399h), parallel port; the FDC (`isa_fdc.v`, `isa_fdc_img.v`: docs/design/floppy.md) |
 | `verilator/tb/tb_sio.cpp` | unit bench, `make -C verilator tb_sio` (119 checks) |
 | `verilator/tb/tb_sio_drom.cpp` | DEC's DROM V1.7 POST against the SIO, `make -C verilator tb_sio_drom` |
 
@@ -27,7 +27,8 @@ Parameters: `CLK_HZ` (100 MHz), `RTC_FAST` (benches only), `DEVNUM` (7), `REVID`
 | PCI target (pci.md 2) | `pt_req pt_cmd[1:0] pt_dev[4:0] pt_addr[31:0] pt_be[3:0] pt_we pt_wdata[31:0]` in; `pt_claim` (combinational), `pt_ack`, `pt_rdata` out | plus **`pt_sub`** in: an I/O cycle that no other device claims. `as200_sys.v` drives it as `pt_req && pt_cmd == 1 && !other_claim`, with `other_claim` excluding the SIO |
 | PCI master (pci.md 3) | `dm_req dm_we dm_addr dm_be dm_wdata` out, `dm_ack dm_rdata` in | the ISA DMA |
 | Interrupts | `pirq_n[3:0]`, `serr`, `iochk` in; `intr` (CPU IRQ2), `nmi` (IRQ3), `toy_irq` (IRQ4), `kbrst` (OR it with HALT for IRQ5), `spk` out | `serr`/`iochk` are active high. The four CPU lines come straight from flip-flops (one clock of latency) |
-| Other ISA devices | `xio_addr xio_rd xio_wr xio_wdata` out, `xio_claim` (combinational from `xio_addr`) and `xio_rdata` in, `xio_irq[15:0]` in, DMA: `xio_dreq[7:0]` in, `xio_dack xio_dack_ch xio_dack_data xio_dma_ch xio_tc` out, `xio_dev_data` in | for the sound card, a real FDC, and so on. Same strobe rules as the internal devices |
+| Other ISA devices | `xio_addr xio_rd xio_wr xio_wdata` out, `xio_claim` (combinational from `xio_addr`) and `xio_rdata` in, `xio_irq[15:0]` in, DMA: `xio_dreq[7:0]` in, `xio_dack xio_dack_ch xio_dack_data xio_dma_ch xio_tc` out, `xio_dev_data` in | for the sound card and so on. Same strobe rules as the internal devices. Channel 2 is shared with the FDC |
+| Floppy image | `fd_mounted fd_readonly fd_size` in, `fd_lba fd_blk_cnt fd_rd fd_wr` out, `fd_ack fd_buff_addr fd_buff_dout fd_buff_wr` in, `fd_buff_din fd_led` out | hps_io slot 3 (floppy.md 1). Parameter `FD_SPEED` (4) |
 | COM1, COM2 | `comN_txd/rxd/rts_n/dtr_n/cts_n/dsr_n/ri_n/dcd_n`; COM1 also has `com1_tx_stb/tx_byte` (vterm) and `com1_rx_inj_stb/byte` (keyboard into the console) | ns16550's own ports |
 | Keyboard, mouse | `ps2_key[10:0]`, `ps2_mouse[24:0]` | hps_io format |
 | TOY | `rtc[64:0]` (hps_io), `year_ovr_en`, `year_ovr[6:0]` (binary 0-99) | |
@@ -112,7 +113,9 @@ disabled).
   the acknowledge's IRR/ISR updates. A request reaches a chip's INT 3 clocks after its line rises.
   Through the slave and the master that is 6 clocks, plus 1 for the SIO's `intr` flop. For 2 clocks
   after any write, acknowledge or poll, the stale resolution is masked: INT is low, and an
-  acknowledge gets the spurious vector.
+  acknowledge gets the spurious vector. An edge-mode request that falls before the acknowledge
+  clears its IRR bit, as on the 8259A (DEC's DROM floppy loader polls IRR 6; floppy.md 4); the
+  master's IRQ2 (the cascade) keeps the latch until the acknowledge.
 - **8254** (`isa_pit.v`): 1.193182 MHz by phase accumulation, all six modes, latch and read-back,
   counter 2's gate and speaker on port 61h. Mode 3 counts by two down **through 0** before it
   reloads, so the MSB-only polling of DROM's calibration sees 0 for one tick.
@@ -134,12 +137,9 @@ disabled).
   8 SID reads 10h, and the index reads back. FER/FAR place the UARTs (COM1-4), the parallel port and
   the FDC. Out of reset: FER 0Fh, FAR 10h (COM1, COM2, LPT 378h, FDC 3F0h, IDE off; **the AS200's
   jumper strapping is assumed**). The parallel port has its data latch, status DFh and control.
-- **FDC stub**: an 82077AA whose single drive never has a medium. DOR reset causes IRQ6, answered by
-  four SENSE INTERRUPTs (C0h-C3h). MSR/DSR, TDR, DIR (bit 7, disk changed), CCR. All commands accept
-  their parameter counts and give their result counts: VERSION 90h, SPECIFY, CONFIGURE, LOCK,
-  DUMPREG, PERPENDICULAR, SENSE DRIVE STATUS, RECALIBRATE/SEEK (immediate, IRQ6, seek end), and the
-  data commands (IRQ6, ST0 40h abnormal termination, ST1 01h missing address mark; no DMA). A real
-  FDC with the floppy image comes later (`IBMRS6K7248_fdc.sv`).
+- **FDC**: an 82077AA with drive A: on the OSD's floppy image (hps_io slot 3), IRQ 6 and DMA
+  channel 2 (its DREQ ORed into the 8237's channel 2, its byte on `dev_data` while it requests).
+  See docs/design/floppy.md.
 
 ## 3. What DEC's DROM V1.7 POST does to the SIO
 
@@ -267,7 +267,8 @@ core uses V1.7.
 3. **TOY epoch**: the MiSTer's two-digit year goes in as is. Which year base SRM, ARC/NT and the
    OSes assume (1900/2000 vs ARC's 1980) has not been checked. `year_ovr` gives the OSD full
    control.
-4. **FDC is a stub** (no medium, no DMA). The parallel port has no EPP/ECP and no interrupt.
+4. The parallel port has no EPP/ECP and no interrupt. (The FDC is real since 2026-11-01:
+   docs/design/floppy.md.)
 5. **Not modelled**: the BIOS timer (80h), SMI/APM (A0h-AFh), the configuration RAM at 0C00h/0800h
    (UBCSB[7]), ISA memory cycles (`pt_cmd == 2` is never claimed, so an ISA VGA's A0000h would need
    it), 16-bit ISA I/O cycles (split into bytes), port 92h effects, IRQ13 from FERR#, the PC87332's

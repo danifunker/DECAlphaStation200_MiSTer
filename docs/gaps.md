@@ -63,7 +63,9 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | Flashbus NVRAM persistence (SRM env vars, ISA table) | partial | P2 | `rtl/mister/nvsave.v` on OSD slot SC4 (8 KB file): load on mount, save 2 s after a change (2026-11-01); board test pending |
 | TOY CMOS persistence (beyond 3Fh) | open | P3 | |
-| Floppy controller (82077AA in the PC87332), drive A on an image | stub | P3 | Firmware updates, DROM floppy boot (J2) |
+| ~~Floppy controller (82077AA in the PC87332), drive A on an image~~ | **done** 2026-11-01 | P3 | `rtl/sio/isa_fdc.v`, `isa_fdc_img.v` (`floppy.md`): every 82077AA command, DMA and non-DMA, media change, write protect, 720K-2.88M; `tb_fdc` (172 checks) and DROM V1.7's J2 floppy loader in `tb_sio_drom_floppy`. To wire into `as200_sys`/the top (floppy.md 1); not yet tried with SRM on the board |
+| DMA window 1 at PCI 1 GB from the SROM (DROM floppy boot) | open | P3 | The DROM's floppy DMA uses high page 40h and programs no 21071 window; our SROM leaves PBR1 = 0 (floppy.md 1) |
+| Floppy: overrun, deleted marks, non-standard formats, FIFO threshold | open | P4 | floppy.md 6 |
 | TOY year base for SRM vs ARC/NT | open | P3 | `year_ovr` gives OSD control meanwhile |
 | Parallel port EPP/ECP, interrupt | open | P4 | |
 | ISA memory cycles, 16-bit I/O cycles, port 92h, IRQ13 | open | P4 | sio.md 5 |
