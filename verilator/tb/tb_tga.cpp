@@ -379,12 +379,21 @@ int main(int argc, char **argv) {
         uint32_t s = 0x40000 + (rng() % 0x8000), d = 0x50000 + (rng() % 0x8000);
         if (i < 20) { s &= ~7u; d &= ~7u; }
         std::vector<uint8_t> src(ref.begin() + s, ref.begin() + s + 64);
-        reg_wr(0x160 + 8 * (i & 1), s); reg_wr(0x164 + 8 * (i & 1), d);
+        reg_wr(0x160 + 8 * (i & 3), s); reg_wr(0x164 + 8 * (i & 3), d);   // all four pairs (NT)
         for (int k = 0; k < 64; k++) put(d + k, src[k], true);
         if (i % 8 == 0) { set_mode(0); CHECK(reg_rd(0x30) == 0, "copy flag after a mode write"); }
         wait_idle();
     }
     set_rop(3); compare("COPY64");
+    // NT's tga.dll restoring a save-under: rows of 256 bytes as four back-to-back COPY64 pairs
+    // (160/164 .. 178/17C), source stride 336 (off-screen), destination stride 640, misaligned
+    for (int row = 0; row < 24; row++) {
+        uint32_t s = 0x4C060 + row * 336, d = 0x13A78 + row * 640;
+        std::vector<uint8_t> src(ref.begin() + s, ref.begin() + s + 256);
+        for (int p = 0; p < 4; p++) { reg_wr(0x160 + 8 * p, s + 64 * p); reg_wr(0x164 + 8 * p, d + 64 * p); }
+        for (int k = 0; k < 256; k++) put(d + k, src[k], true);
+    }
+    wait_idle(); compare("COPY64 rows (NT)");
     set_mode(0x07);
     for (int i = 0; i < 60; i++) {
         set_rop(i % 4 ? 3 : rng() % 16);

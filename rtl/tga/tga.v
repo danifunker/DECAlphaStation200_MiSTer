@@ -372,8 +372,10 @@ module tga #(
                 8'h30: epsr <= c_d;
                 8'h50: bc0 <= c_d;
                 8'h51: bc1 <= c_d;
-                8'h58, 8'h5A: begin c64s <= c_d; copy_flag <= 1'b0; end
-                8'h59, 8'h5B: begin
+                // COPY64: four source/destination pairs at 160-17C (NT's tga.dll uses all four,
+                // 256 bytes a row; SRM only 160/164 and their aliases)
+                8'h58, 8'h5A, 8'h5C, 8'h5E: begin c64s <= c_d; copy_flag <= 1'b0; end
+                8'h59, 8'h5B, 8'h5D, 8'h5F: begin
                     // COPY64: 64 bytes from c64s to c_d (frame buffer offsets)
                     c64d <= c_d; copy_flag <= 1'b1;
                     sr_q <= c64s[20:3]; sr_lo <= 1'b0; sr_k <= 5'd0; sr_next <= 2'd1;
@@ -613,8 +615,8 @@ module tga #(
         8'h30: reg_rd = epsr;
         8'h50: reg_rd = bc0;
         8'h51: reg_rd = bc1;
-        8'h58, 8'h5A: reg_rd = c64s;
-        8'h59, 8'h5B: reg_rd = c64d;
+        8'h58, 8'h5A, 8'h5C, 8'h5E: reg_rd = c64s;
+        8'h59, 8'h5B, 8'h5D, 8'h5F: reg_rd = c64d;
         default: reg_rd = gram_q;
         endcase
     end

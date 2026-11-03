@@ -84,7 +84,7 @@ That covers the copy buffer 000-01C, Bresenham, stencil, the Z and colour regist
 | 098 | DMA base | PCI address of the DMA buffer |
 | 0C0 | RAMDAC setup | <4:1> RS for reads |
 | 140/144 | block colour 0/1 | block fill/stipple data, pixel `addr & 7` |
-| 160/168, 164/16C | COPY64 source, destination | a destination write copies 64 bytes (any byte alignment); toggle 0 / 1 |
+| 160/168/170/178, 164/16C/174/17C | COPY64 source, destination (four pairs; NT's tga.dll uses all four for 256-byte rows) | a destination write copies 64 bytes (any byte alignment); toggle 0 / 1 |
 | 1E8 | ICS1562 | ignored (6) |
 | 1F0 | RAMDAC data | write with <8> = 0: Bt485 RS <12:9> = <7:0>; read: Bt485 register EPSR<4:1> in <23:16> |
 | 1F8, 1FC | command status | <0> busy (queue or engine); reads 0 when idle |
