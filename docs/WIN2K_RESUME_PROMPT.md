@@ -93,3 +93,14 @@ installs and runs (core `a6e76de` and later, 2026-11-03).
   place).
 - NTFS on the board: busybox `losetup -o <partition offset> /dev/loopN IMG`, then ntfs-3g tools
   (`ntfsls`, `ntfscat`, `ntfscp`). The `-r --show` form ignores the offset.
+
+## Lead: machine checks (2026-11-03)
+
+The core never raises a machine check: the CPU has no MCHK path, and apecs answers non-existent
+memory, PCI master aborts and unmapped DMA windows with all ones and no error (`docs/design/cpu.md` Q15).
+NT handles an MCHK by calling the HAL's machine-check handler first. If the HAL claims it, execution
+resumes; otherwise a correctable/retryable error resumes and anything else bugchecks DATA_BUS_ERROR (0x2E).
+If RC1's `halavant.dll` probes hardware and expects a master abort to arrive as a machine check it
+swallows, a silent all-ones answer may change what it concludes. Read its machine-check handler and
+probe code (`scratch/nt_drivers/2072_rc1/disasm/halavant.dll.dis.txt`) before adding MCHK and the
+21071 error registers (EDSR, DCSR, PEAR) for real.
