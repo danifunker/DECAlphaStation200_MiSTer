@@ -243,7 +243,7 @@ endfunction
 // are registered (q_*) before they are stacked into DSTAT/SIST0/SIST1.
 localparam [4:0] E_IDLE = 5'd0, E_FETCH = 5'd1, E_DECODE = 5'd2, E_IND = 5'd3,
                  E_BM_WAIT = 5'd4, E_BM_BYTE = 5'd5, E_BM_RD = 5'd6, E_BM_GIVE = 5'd7, E_BM_END = 5'd8,
-                 E_SEL = 5'd9, E_SEL_WAIT = 5'd10, E_STO = 5'd11, E_WDISC = 5'd12, E_WRESEL = 5'd13,
+                 E_SEL = 5'd9, E_WDISC = 5'd12, E_WRESEL = 5'd13,
                  E_TC_WAIT = 5'd14, E_TC_EVAL = 5'd15,
                  E_MM_RD = 5'd16, E_MM_WR = 5'd17, E_FLUSH = 5'd18,
                  E_PRE = 5'd19, E_REG_RD = 5'd20, E_REG_ALU = 5'd21, E_REG_WR = 5'd22, E_TC_DO = 5'd23;
@@ -256,6 +256,9 @@ reg         fl_next;                            // after E_FLUSH: the next instr
 reg         stepped;                            // an instruction ran since the start (single step)
 reg  [31:0] sto_cnt, sto_lim, gen_cnt, gen_lim;
 reg         sto_hit, gen_hit, gen_on;
+// a SELECT in progress: SCRIPTS go on meanwhile (as on the chip, until an instruction that needs
+// the bus); a selection timeout raises STO and halts them at the next instruction boundary
+reg         selecting, sto_run, sto_pend;
 // E_PRE's results
 reg  [31:0] dsa_rel;                            // DSA + DSPS<23:0> (table indirect, LOAD/STORE)
 reg  [31:0] sel_rel;                            // DSA + DBC (SELECT table indirect)
@@ -422,6 +425,7 @@ always @(posedge clk) begin : engine
         sigp <= 1'b0; sem <= 1'b0; intf <= 1'b0; abrt_req <= 1'b0; carry <= 1'b0; con <= 1'b0; target_mode <= 1'b0;
         bsy_q <= 1'b0; gen_on <= 1'b0; gen_cnt <= 32'd0; stepped <= 1'b0;
         sb_atn <= 1'b0; sb_ackhold <= 1'b0; sb_rst <= 1'b0;
+        selecting <= 1'b0; sto_run <= 1'b0; sto_pend <= 1'b0;
         est <= E_IDLE; wb_valid <= 1'b0; rc_valid <= 1'b0; fcnt <= 3'd0;
     end
     if (reset) ;
@@ -483,7 +487,34 @@ always @(posedge clk) begin : engine
             if (gen_hit && gen_cnt != 32'd0) begin gen_on <= 1'b0; set_s1[1] = 1'b1; end
         end
 
+        // ------------------------------------------------ the selection, in the background
+        // The chip's SELECT ends once arbitration is won (here at once): the SCRIPTS processor
+        // goes on with instructions that do not need the bus (memory moves, register ops, jumps
+        // without a phase test) and stops at the first one that does until the target answers
+        // or the selection times out. NT 4.0 SP6's symc810 depends on it: the moves after its
+        // SELECT take the request off the queue, and with a SELECT that held them until the
+        // timeout, the timed-out requests stayed queued and ran again later.
+        if (selecting) begin
+            if (sb_sel_done) begin
+                selecting <= 1'b0;
+                con <= 1'b1;
+                scntl2[7] <= 1'b1;                                  // SDU: a disconnect now is unexpected
+                if (sb_sel_atn) sb_atn <= 1'b1;
+            end else if (sb_sel_fail) begin
+                selecting <= 1'b0; sto_run <= 1'b1; sto_cnt <= 32'd0;
+            end
+        end
+        if (sto_run) begin
+            // sto_hit: the compare of the cycle before
+            sto_cnt <= sto_cnt + 32'd1;
+            if (sto_hit && sto_cnt != 32'd0) begin sto_run <= 1'b0; sto_pend <= 1'b1; end
+        end
+
         // ------------------------------------------------ the engine
+        if (sto_pend && (est == E_IDLE || est == E_BM_WAIT || est == E_TC_WAIT || est == E_WDISC ||
+                         (est == E_FETCH && fcnt == 3'd0 && !wb_valid && d_idle))) begin
+            set_s1[2] = 1'b1; sto_pend <= 1'b0; est <= E_IDLE;     // STO: the SCRIPTS stop
+        end else
         case (est)
             E_IDLE: fcnt <= 3'd0;
 
@@ -567,7 +598,7 @@ always @(posedge clk) begin : engine
                     end
                     2'b10: begin                                         // transfer control
                         if (ins0[29:27] > 3'b011) begin set_ds[0] = 1'b1; est <= E_IDLE; end
-                        else if (ins0[16] && con) est <= E_TC_WAIT;
+                        else if ((ins0[16] && con) || (selecting && (ins0[16] || ins0[17]))) est <= E_TC_WAIT;
                         else est <= E_TC_EVAL;
                     end
                     default: begin
@@ -650,7 +681,8 @@ always @(posedge clk) begin : engine
 
             // ---- block move: wait for REQ, compare the phase, move the bytes
             E_BM_WAIT: begin
-                if (!sb_bsy) begin set_s0[2] = 1'b1; con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FLUSH; fl_next <= 1'b0; end   // UDC
+                if (selecting) ;                                    // the selection first
+                else if (!sb_bsy) begin set_s0[2] = 1'b1; con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FLUSH; fl_next <= 1'b0; end   // UDC
                 else if (sb_req) begin
                     if (sb_phase != ins0[26:24]) begin set_s0[7] = 1'b1; est <= E_FLUSH; fl_next <= 1'b0; end      // phase mismatch
                     else begin
@@ -702,28 +734,15 @@ always @(posedge clk) begin : engine
                 else est <= E_BM_WAIT;
             end
 
-            // ---- SELECT: the target answers, or the time runs out
+            // ---- SELECT: start it and go on (the selection completes in the background above)
             E_SEL: begin
                 sb_sel <= 1'b1;
                 sb_sel_id <= sdid[2:0];
                 sb_sel_atn <= ins0[24];
-                sto_cnt <= 32'd0;
-                est <= E_SEL_WAIT;
+                selecting <= 1'b1;
+                est <= E_FETCH;
             end
-            E_SEL_WAIT: begin
-                if (sb_sel_done) begin
-                    con <= 1'b1;
-                    scntl2[7] <= 1'b1;                              // SDU: a disconnect now is unexpected
-                    if (ins0[24]) sb_atn <= 1'b1;
-                    est <= E_FETCH;
-                end else if (sb_sel_fail) est <= E_STO;
-            end
-            E_STO: begin
-                // sto_hit: the compare of the cycle before (sto_cnt is 0 through E_SEL_WAIT)
-                sto_cnt <= sto_cnt + 32'd1;
-                if (sto_hit) begin set_s1[2] = 1'b1; est <= E_IDLE; end
-            end
-            E_WDISC: if (!sb_bsy) begin con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FETCH; end
+            E_WDISC: if (!selecting && !sb_bsy) begin con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FETCH; end
             E_WRESEL: if (sigp) begin
                 // SIGP: the alternate address (nothing reselects)
                 dsp <= jmp_tgt;

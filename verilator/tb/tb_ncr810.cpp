@@ -466,15 +466,43 @@ int main(int argc, char **argv) {
     CHECK(r == 0x600D && sts == 0 && mem[DATA] == 0x70 && mem[DATA + 2] == 5 && mem[DATA + 12] == 0x20,
           "REQUEST SENSE %02X %02X %02X", mem[DATA], mem[DATA + 2], mem[DATA + 12]);
 
-    // ---- selection timeout: nobody at ID 1
+    // ---- selection timeout: nobody at ID 1. As on the chip, the SCRIPTS go on after the SELECT
+    // until an instruction that needs the bus: NT 4.0 SP6's symc810 dequeues the request with
+    // memory moves right after its SELECT (here: clear the "slot" at 0x5100), then JUMP WHEN
+    // MSG_OUT waits; STO stops it there, so the INT after it never runs
     {
         uint32_t p = SCRIPT;
-        put32(p, 0x41010000); put32(p + 4, 0); put32(p + 8, 0x98080000); put32(p + 12, 0xBAD);
+        auto ins = [&](uint32_t a, uint32_t b) { put32(p, a); put32(p + 4, b); p += 8; };
+        put32(0x5100, 0xA0000031); put32(0x5104, 0xA0000030);
+        ins(0x41010000, 0);                                      // SELECT ATN 1
+        put32(p, 0xC0000004); put32(p + 4, 0x5104); put32(p + 8, 0x5100); p += 12;   // MEMORY MOVE 4, 0x5104 -> 0x5100
+        ins(0x86830000, SCRIPT);                                 // JUMP SCRIPT, WHEN NOT MSG_OUT
+        ins(0x98080000, 0xBAD);                                  // INT 0xBAD
         wl(DSP, SCRIPT);
         uint8_t i = wait_int();
         CHECK(i == 0x02, "STO ISTAT %02X", i);
         CHECK(rb(SIST0) == 0 && rb(SIST1) == 0x04, "SIST1.STO");
-        printf("SELECT ID 1 (absent): selection timeout, SIST1.STO\n");
+        CHECK(rb(DSTAT) == 0x80, "DSTAT after STO %02X (no SIR)", rb(DSTAT));
+        CHECK(get32(0x5100) == 0xA0000030, "the move after SELECT did not run before STO: %08X", get32(0x5100));
+        printf("SELECT ID 1 (absent): the move after it ran, then STO at the phase test\n");
+    }
+    {   // the same with the disk at ID 0: the phase test waits for the selection, then MESSAGE OUT
+        uint32_t p = SCRIPT;
+        auto ins = [&](uint32_t a, uint32_t b) { put32(p, a); put32(p + 4, b); p += 8; };
+        put32(0x5100, 0xA0000031);
+        ins(0x41000000, 0);                                      // SELECT ATN 0
+        put32(p, 0xC0000004); put32(p + 4, 0x5104); put32(p + 8, 0x5100); p += 12;
+        ins(0x98000000 | P_MOUT << 24 | 0x30000, 0xBAD);        // INT 0xBAD, WHEN NOT MSG_OUT
+        ins(0x98080000, 0x600D);                                 // INT 0x600D
+        wl(DSP, SCRIPT);
+        uint8_t i = wait_int();
+        uint8_t ds = rb(DSTAT);
+        CHECK((i & 1) && (ds & 4) && rl(DSPS) == 0x600D, "select ID 0 with a move: istat %02X dstat %02X dsps %X", i, ds, rl(DSPS));
+        CHECK(get32(0x5100) == 0xA0000030, "the move after SELECT ID 0: %08X", get32(0x5100));
+        // leave the target: reset the bus
+        wb(SCNTL1, 0x08); for (int k = 0; k < 20; k++) tick(); wb(SCNTL1, 0x80);
+        wait_int(); rb(SIST0); rb(SIST1); rb(DSTAT);
+        printf("SELECT ID 0 with a move after it: MESSAGE OUT seen\n");
     }
 
     // ---- register instructions, LOAD/STORE, memory move, single step
