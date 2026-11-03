@@ -130,6 +130,21 @@ changing behaviour beyond a few cycles of latency.
 - **Interrupt status**: the bits an engine cycle raises are registered once (`q_*`) before they
   are stacked into DSTAT, SIST0 and SIST1.
 - **Timers**: the STO and GEN timer compares are registered.
+- **SELECT** (2026-11-03): it ends once arbitration is won (on our bus, at once), as on the chip.
+  The selection completes in the background (`selecting`), and the SCRIPTS go on meanwhile:
+  - memory moves, LOAD/STORE, register instructions and jumps without a phase test run;
+  - a block move, a jump that tests or waits for the phase, and WAIT DISCONNECT wait for the
+    target to answer;
+  - a selection timeout sets `sto_pend`, then STO is raised and the SCRIPTS halt at the next
+    instruction boundary (or wherever they wait).
+
+  NT 4.0 SP6's symc810 (FLINT-4.04.01a) needs this. Its scheduler keeps a ring of tagged request
+  pointers, and the memory moves right after its SELECT take the request off the ring (they
+  clear the tag and advance the pointer). The old SELECT held the SCRIPTS until the timeout, so
+  the request of every empty ID stayed queued. Each one later ran again with whatever the shared
+  SrbExtension held, which during the bus scan was the CD's finished INQUIRY. Its SDTR then
+  ping-ponged with the target forever (a hang at the kernel banner), or the driver used the
+  reused SRB (STOP 0xA in symc810).
 
 ## 2. What DEC's firmware does to the chip
 
