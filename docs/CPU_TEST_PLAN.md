@@ -73,3 +73,44 @@ a test of the SROM serial port and its timing.
 
 Simulation first, FPGA second: build T0–T3 into a Verilator testbench so failures are reproducible and
 trace-diffable before anything goes on the DE10-Nano.
+
+## 4. Instruction census from the operating systems (planned, 2026-11-03)
+
+The tests above are written from the manuals. A census of what shipping software actually executes
+tells us which encodings matter and finds the ones nobody thought of. NT 4.0 SP6 was the example: its
+COMCTL32 asks `AMASK` before using BWX, our ALU decoded `AMASK` as OPCDEC (`cpu.md` Q7 already said
+it must not), and Explorer died under Dr. Watson. A scan of the SP6 system binaries' function bodies
+found it in two minutes.
+
+**Method, per OS** (scripts in `tests/census/`, outputs in `scratch/census/<os>/`):
+
+1. Take the binaries off the install media or an installed disk image (ntfsprogs, rb-cli, isoinfo).
+   Only third-party binaries' *statistics* go in git, never the binaries.
+2. Disassemble **only code**: function bodies from the PE `.pdata` table (NT), ELF symbols and
+   `.text` (NetBSD, Linux, Tru64 COFF/ELF), image sections (OpenVMS). Raw `.text` is not enough: NT
+   keeps read-only data and import tables there, and the first SP6 scan counted hundreds of false BWX,
+   FIX and MVI words.
+3. Count every encoding: opcode and function code, FP qualifiers (`/C /M /D /U /V /S /I` and the VAX
+   ones), memory format and displacement sign, CALL_PAL numbers, and in PALcode (`A321064.PAL`,
+   SRM/ARC PAL) the `HW_MFPR`/`HW_MTPR` IPR numbers and `HW_LD`/`HW_ST` modes.
+4. Compare with the core and the suites. Each encoding is one of: covered by T0/FP/T3, implemented
+   but not tested, OPCDEC on our core, or not EV4 (BWX, FIX, CIX, MVI). For the last group, record
+   whether the code is guarded by `AMASK`/`IMPLVER`.
+5. Output: a table per OS and a merged table. "Used, not tested" becomes new T0/FP/T3 cases, and
+   "used, OPCDEC here" becomes a bug unless the EV4 traps there too.
+
+**Order:** NT 4.0 (SP1 and SP6 disks, the SP6 ISO, MSVC 6.0 for Alpha, the DDK and the samples),
+then Windows 2000 RC1, NetBSD 10.2, Tru64 4.0G, OpenVMS 6.2/7.3/8.4, and Linux if we get a distribution.
+
+**What the SDKs and OSes add beyond the census:**
+- MSVC 6.0 for Alpha (`msvc60pro_en-us_alpha.iso`) and the NT DDK: a native compiler for
+  self-checking test programs under NT. Its run-time library and math routines are T4 material.
+- OpenVMS **UETP** (User Environment Test Package): DEC's own system exerciser for the CPU, FP and
+  devices, with pass/fail reports.
+- NetBSD's ATF suite (`/usr/tests`: libc, libm, IEEE FP, signals, threads), run with `atf-run` on
+  the core.
+- Tru64's libm and any test packages on the Associated Products discs.
+- Each OS's FP software completion (trap handlers) shows which FP qualifiers and trap shadows real
+  code depends on (`TRAPB` placement, `/SUI` on conversions).
+
+The census goes before T1 (random streams): it tells the generator which instruction mix to weight.
