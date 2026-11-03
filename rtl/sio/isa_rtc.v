@@ -268,7 +268,9 @@ module isa_rtc #(
     initial begin
         for (i = 0; i < 128; i = i + 1) cram[i] = 8'h00;
         sec = 6'd0; min = 6'd0; hour = 5'd12; date = 5'd1; month = 4'd1; year = 7'd26; dow = 3'd5;
-        reg_a = 7'b010_0110; reg_b = 8'b0000_0010; div = 15'd0; flags = 3'd0; index = 7'd0;
+        // register B: binary, 24 hour, what ARC, NT's HAL (0x46) and the BSDs use (BCD here
+        // made ARC read 14:45 as 20:69 after a core load)
+        reg_a = 7'b010_0110; reg_b = 8'b0000_0110; div = 15'd0; flags = 3'd0; index = 7'd0;
         sec_a_raw = 8'd0; min_a_raw = 8'd0; hour_a_raw = 8'd0; sec_a = 6'd0; min_a = 6'd0; hour_a = 5'd0;
         acc = 32'd0; tog = 3'd0;
     end
