@@ -394,6 +394,38 @@ int main(int argc, char **argv) {
         for (int k = 0; k < 256; k++) put(d + k, src[k], true);
     }
     wait_idle(); compare("COPY64 rows (NT)");
+
+    // lines (modes 02/06) as NT's tga.dll draws them: width 09C, address 03C, pattern 080,
+    // slope register 120 + 4 octant = |dy|<<16 | |dx| (draws <= 16 pixels), continue 04C
+    {
+        const uint32_t W = 640, base = 0x60000;
+        reg_wr(0x9C, W);
+        for (int i = 0; i < 48; i++) {
+            int mode = i & 1 ? 0x06 : 0x02;
+            set_fg(rng()); set_bg(rng()); set_rop(i % 5 == 4 ? 6 : 3);
+            int oct = rng() % 8;
+            int maj = 1 + rng() % 60, mnr = i < 16 ? 0 : rng() % (maj + 1);
+            int dx = oct & 4 ? maj : mnr, dy = oct & 4 ? mnr : maj;
+            uint32_t a = base + (100 + rng() % 200) * W + 100 + rng() % 400;
+            uint32_t pat0 = i % 3 ? 0xFFFF : rng() & 0xFFFF;
+            set_mode(mode); reg_wr(0x3C, a); set_data(pat0);
+            reg_wr(0x120 + 4 * oct, (uint32_t)dy << 16 | dx);
+            // the reference: e = 2 minor - major; step major, and minor when e > 0
+            int e = 2 * mnr - maj, left = maj; uint32_t p = a, pat = pat0; int seg = 0;
+            while (left > 0) {
+                if (seg == 16) { pat = rng() & 0xFFFF; if (i % 3) pat = 0xFFFF; reg_wr(0x4C, pat); seg = 0; }
+                int bit = pat >> seg & 1;
+                if (mode == 0x02) put(p, bit ? fgb(p) : bgb(p), true);
+                else if (bit) put(p, fgb(p), true);
+                int sx = oct & 2 ? 1 : -1; int sy = oct & 1 ? (int)W : -(int)W;
+                if (e > 0) { p += sx + sy; e += 2 * mnr - 2 * maj; }
+                else { p += oct & 4 ? sx : sy; e += 2 * mnr; }
+                left--; seg++;
+            }
+            wait_idle();
+        }
+        set_mode(0); set_rop(3); compare("lines");
+    }
     set_mode(0x07);
     for (int i = 0; i < 60; i++) {
         set_rop(i % 4 ? 3 : rng() % 16);

@@ -249,7 +249,7 @@ Result 2026-11-01: **PASS** (seeds 1-4), with 6.6 M cycles and 5 frames.
 ## 10. Gaps
 
 - **Pixel shift:** stored but not applied, and the copy buffer registers 000-01C are not the engine's buffer. Unaligned copies with a shift come out wrong; Linux and NetBSD do not use them.
-- **Line modes:** 02/06/0E (Bresenham) and the Z and stencil modes are not drawn. They are only in the X server and the uncompiled SRM code.
+- **Line modes:** 02/06 are drawn (2026-11-03, from NT 4.0 tga.dll's register stream: width 09C, address 03C, pattern 080, slope 100-13C with the octant in the register number, continue 04C). The Bresenham tie rule (step the minor axis when e > 0) is a guess. 0E and the Z and stencil modes are not drawn.
 - **24-plane:** no 24-plane visuals or rotate/visual fields. The ZLXp-E1 has none.
 - **TGA cursor:** CCBR/CXYR/VVVR<2> is not displayed. NetBSD's X server uses it.
 - **ICS1562:** not decoded, and no pixel clock above 65 MHz. 1280x1024 runs at a lower refresh rate.

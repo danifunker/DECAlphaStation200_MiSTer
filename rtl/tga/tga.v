@@ -130,7 +130,7 @@ module tga #(
 
     localparam [3:0] E_IDLE = 4'd0, E_DEC = 4'd1, E_GEN = 4'd2, E_PRDW = 4'd3, E_PWR = 4'd4,
                      E_SRD = 4'd5, E_SRW = 4'd6, E_DMAW = 4'd7, E_DMAR = 4'd8,
-                     E_RD1 = 4'd9, E_RD2 = 4'd10, E_FBRD = 4'd11, E_RD3 = 4'd12;
+                     E_RD1 = 4'd9, E_RD2 = 4'd10, E_FBRD = 4'd11, E_RD3 = 4'd12, E_LINE = 4'd13;
     reg   [3:0] est;
     wire        busy = est != E_IDLE || cq_n != 4'd0;
 
@@ -241,6 +241,7 @@ module tga #(
     reg         g_rot;                      // fill: g_st[31:0] rotates (the data register repeats)
     reg         g_use_pw, g_use_st, g_rop_en, g_ret;
     reg   [2:0] g_dsel;
+    reg         g_rl;                       // the pixel operation belongs to a line: back to E_LINE
     reg  [31:0] g_w;                        // simple mode data
     reg  [63:0] s [0:9];                    // source quadwords (copy, COPY64, DMA)
     reg  [63:0] s_prev;
@@ -289,6 +290,20 @@ module tga #(
     // transparent is mode bit 2 (21030: 05 transparent stipple, 25 transparent fill, as 0D/2D block;
     // Linux tgafb's values, and what NT's tga.dll draws its text with); 03/23 are kept as the same
     wire        m_fill = m8 == 8'h2D || m8 == 8'h21 || m8 == 8'h23 || m8 == 8'h25;
+    // lines (02 opaque, 06 transparent): a write to slope register 100-11C (set up) or 120-13C (set
+    // up and draw) starts a Bresenham line at the address register 03C. Octant = register<2:0>:
+    // <2> x major, <1> +x, <0> +y; the value is |dy|<<16 | |dx|, the length max(|dx|,|dy|) pixels
+    // (the end point not drawn). Each draw takes up to 16 pixels from a pattern (bit i = pixel i):
+    // the data register 080 for the first, the value written to 04C (continue) for the next ones.
+    // Line width (the y step) is 09C. Worked out from NT 4.0 tga.dll's register stream.
+    wire        m_line = m8 == 8'h02 || m8 == 8'h06;
+    reg  [20:0] l_a;
+    reg  [12:0] l_w;
+    reg  signed [17:0] l_e, l_i1, l_i2;     // error, its increments (minor step / no minor step)
+    reg  [15:0] l_left, l_pat;
+    reg   [4:0] l_seg;
+    reg   [2:0] l_oct;
+    reg         l_tr;
 
     // source reads
     reg  [17:0] sr_q;
@@ -368,6 +383,32 @@ module tga #(
                 8'h1D: cxyr <= c_d;
                 8'h1F: begin sisr_st <= sisr_st & ~c_d[4:0]; sisr_en <= c_d[20:16]; end
                 8'h20: datar <= c_d;
+                8'h27: l_w <= c_d[12:0];
+                8'h13: if (l_left != 16'd0) begin                 // 04C: continue the line
+                    l_pat <= c_d[15:0]; l_seg <= l_left > 16'd16 ? 5'd16 : l_left[4:0]; est <= E_LINE;
+                end
+                8'h40, 8'h41, 8'h42, 8'h43, 8'h44, 8'h45, 8'h46, 8'h47,
+                8'h48, 8'h49, 8'h4A, 8'h4B, 8'h4C, 8'h4D, 8'h4E, 8'h4F: if (m_line) begin
+                    l_oct <= c_idx[2:0]; l_a <= gadr[20:0]; l_tr <= m8[2];
+                    // major/minor from the octant: e = 2 minor - major
+                    if (c_idx[2]) begin
+                        l_left <= c_d[15:0];
+                        l_e  <= $signed({1'b0, c_d[31:16], 1'b0}) - $signed({2'b0, c_d[15:0]});
+                        l_i1 <= $signed({1'b0, c_d[31:16], 1'b0}) - $signed({1'b0, c_d[15:0], 1'b0});
+                        l_i2 <= $signed({1'b0, c_d[31:16], 1'b0});
+                    end else begin
+                        l_left <= c_d[31:16];
+                        l_e  <= $signed({1'b0, c_d[15:0], 1'b0}) - $signed({2'b0, c_d[31:16]});
+                        l_i1 <= $signed({1'b0, c_d[15:0], 1'b0}) - $signed({1'b0, c_d[31:16], 1'b0});
+                        l_i2 <= $signed({1'b0, c_d[15:0], 1'b0});
+                    end
+                    if (c_idx[3]) begin
+                        l_pat <= datar[15:0];
+                        l_seg <= (c_idx[2] ? c_d[15:0] : c_d[31:16]) > 16'd16 ? 5'd16 :
+                                 (c_idx[2] ? c_d[4:0] : c_d[20:16]);
+                        est <= E_LINE;
+                    end else l_seg <= 5'd0;
+                end
                 8'h26: gdbr <= c_d;
                 8'h30: epsr <= c_d;
                 8'h50: bc0 <= c_d;
@@ -455,7 +496,7 @@ module tga #(
         E_GEN, E_PWR: if (est == E_GEN || vr_ack) begin
             if (g_n == 10'd0) begin
                 vr_req <= 1'b0;
-                est <= g_ret ? E_DMAR : E_IDLE;
+                est <= g_ret ? E_DMAR : g_rl ? E_LINE : E_IDLE;
             end else begin
                 // step to the next quadword
                 g_q <= g_q + 18'd1; g_n <= g_n - 10'd1; g_first <= 1'b0;
@@ -473,6 +514,28 @@ module tga #(
                     vr_req <= 1'b1; vr_we <= 1'b1; vr_addr <= g_q; vr_be <= cur_be; vr_wdata <= cur_wd;
                     est <= E_PWR;
                 end
+            end
+        end
+        // ---------------------------------------------------- lines: a pixel at a time
+        E_LINE: if (l_seg == 5'd0 || l_left == 16'd0) begin
+            g_rl <= 1'b0; est <= E_IDLE;
+        end else begin
+            l_pat <= l_pat >> 1; l_seg <= l_seg - 5'd1; l_left <= l_left - 16'd1;
+            if (l_pat[0] || !l_tr) begin
+                g_q <= l_a[20:3]; g_n <= 10'd1; g_first <= 1'b1;
+                g_bef <= 8'h01 << l_a[2:0]; g_bel <= 8'hFF;
+                g_st <= {32'd0, l_pat[0] ? (8'h01 << l_a[2:0]) : 8'h00}; g_rot <= 1'b0;
+                g_use_pw <= 1'b0; g_use_st <= 1'b0; g_rop_en <= 1'b1; g_dsel <= D_OPQ;
+                g_ret <= 1'b0; g_rl <= 1'b1; g_m1 <= 1'b0; g_fs <= 3'd0;
+                est <= E_GEN;
+            end
+            // step: always the major axis, the minor one when the error is positive
+            if (l_e > 0) begin
+                l_e <= l_e + l_i1;
+                l_a <= l_a + (l_oct[1] ? 21'd1 : -21'd1) + (l_oct[0] ? {8'd0, l_w} : -{8'd0, l_w});
+            end else begin
+                l_e <= l_e + l_i2;
+                l_a <= l_a + (l_oct[2] ? (l_oct[1] ? 21'd1 : -21'd1) : (l_oct[0] ? {8'd0, l_w} : -{8'd0, l_w}));
             end
         end
         E_PRDW: if (vr_rvalid) begin
@@ -578,6 +641,7 @@ module tga #(
             deep <= 32'd0; ccbr <= 32'd0; vhcr <= 32'd0; vvcr <= 32'd0; vvbr <= 9'd0; vvvr <= 32'd0;
             cxyr <= 32'd0; sisr_st <= 5'd0; sisr_en <= 5'd0; datar <= 32'hFFFFFFFF; gdbr <= 32'd0;
             epsr <= 32'd0; gadr <= 32'd0; c64s <= 32'd0; c64d <= 32'd0; bc0 <= 32'd0; bc1 <= 32'd0;
+            g_rl <= 1'b0; l_left <= 16'd0; l_seg <= 5'd0; l_w <= 13'd1024;
         end
     end
 
