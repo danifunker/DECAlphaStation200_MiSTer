@@ -1108,7 +1108,9 @@ module ev4_core (
                     end
                 end
                 if (m2_lock) begin lock_flag <= 1'b1; lock_addr <= m2_pa[33:4]; end
-                if (m2_stc) lock_flag <= 1'b0;
+                // the 21071-CA's lock (cpu.md 9.1) is cleared by any STx_C and any CPU write
+                // to I/O space: an interrupt's 8259 EOI between LDx_L and STx_C makes it fail
+                if (m2_stc || (m2_store && m2_pa[33:32] != 2'd0)) lock_flag <= 1'b0;
             end
 
             // ------------------------------------------------ M2 -> W
@@ -1306,6 +1308,7 @@ module ev4_core (
             // (a newer one replaces it only once the older is done: the 21071
             // model sends at most one per DMA quadword, many cycles apart)
             if (dinv) begin dinv_p <= 1'b1; dinv_pi <= dinv_idx; end
+            if (dinv && lock_addr[12:5] == dinv_idx) lock_flag <= 1'b0;   // a DMA write to the locked block (by index: may clear more often)
             if ((dinv_p || dinv) && !tagw) begin
                 dct_we <= 1'b1; dct_wa <= dinv_p ? dinv_pi : dinv_idx; dct_v <= 1'b0; dct_wd <= 21'd0;
                 if (!(dinv && dinv_p)) dinv_p <= 1'b0;
