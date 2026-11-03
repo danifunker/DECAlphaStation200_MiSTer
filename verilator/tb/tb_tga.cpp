@@ -232,7 +232,7 @@ static void ref_stip(uint32_t o, uint32_t m, int mode) {
 static void ref_simple(uint32_t o, uint32_t w, int be) {
     for (int b = 0; b < 4; b++) {
         uint32_t p = (o & ~3u) + b;
-        if ((be >> b & 1) && (r_pxm >> (p & 31) & 1)) put(p, w >> (8 * b), true);
+        if ((be >> b & 1) && (r_pxm >> b & 1)) put(p, w >> (8 * b), true);   // mask bit k = byte k
     }
 }
 

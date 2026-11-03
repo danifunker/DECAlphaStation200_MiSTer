@@ -102,7 +102,7 @@ fill are 05 and 25 (Linux tgafb; NT's tga.dll draws text in 05); 03 and 23 are a
 
 | Mode | Write at A, data D |
 |---|---|
-| 00 (and anything not below) simple | the longword, its byte enables, the pixel mask bits `(A & 31) + k` (NetBSD's "stripes"), rop, plane mask |
+| 00 (and anything not below) simple | the longword, its byte enables, pixel mask bit k for byte k of the longword (NT's one-shot masks 0F/1E/3C/78 then 01/03/07: a 4-pixel group at `x & 3`; was `(A & 31) + k`, which blocked NT's masked writes in 7 of 8 longwords), rop, plane mask |
 | 01 / 05 (03) opaque / transparent stipple | 32 pixels from `A & ~3`: pixel i gets FG if D<i>, else BG (opaque) or stays (transparent); pixel mask bit i |
 | 0D block stipple | as 03 with block colours, no rop |
 | 2D block fill | `D<10:0> + 1` pixels from `(A & ~3) + D<17:16>`, block colours, data register stipple, plane mask, no rop |

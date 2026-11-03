@@ -488,7 +488,9 @@ module tga #(
                     // simple: the longword, its byte enables, the pixel mask
                     g_q <= c_off[20:3]; g_n <= 10'd1;
                     g_bef <= c_off[2] ? {c_be, 4'd0} : {4'd0, c_be}; g_bel <= 8'hFF;
-                    g_pw <= {32'd0, pxm[{c_off[4:3], 3'b000} +: 8]};
+                    // the pixel mask bits are relative to the longword: bit k = byte k (NT's tga.dll
+                    // writes 0F, 1E<<n, then the rest (01, 03, 07) for a 4-pixel group at x & 3)
+                    g_pw <= {32'd0, c_off[2] ? {pxm[3:0], 4'b0000} : {4'b0000, pxm[3:0]}};
                     g_w <= c_d; g_use_pw <= 1'b1; g_use_st <= 1'b0; g_rop_en <= 1'b1; g_dsel <= D_W;
                     est <= E_GEN;
                 end
