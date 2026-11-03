@@ -18,6 +18,7 @@
 // after which the CPU spins on a branch to itself.
 
 #define T0_TOHOST_HI	0x80		// TOHOST = T0_TOHOST_HI << 16
+#define T0_IRQACK_HI	0x70		// T0_IRQ: the interrupt acknowledge, PA 0x700000
 
 	.macro	T0_VEC off
 	.org	\off
@@ -39,7 +40,19 @@ _start:
 	br	$31, t0_init
 	T0_VEC	0x0020			// MCHK
 	T0_VEC	0x0060			// ARITH
+#ifdef T0_IRQ
+	// T0_IRQ: a transparent handler for irq_h[0] (tb_cpu IRQRATE): $1 saved in
+	// PAL_TEMP 0, a physical store to T0_IRQACK drops the line, nothing else changes
+	.org	0x00E0
+	hw_mtpr	$1, 0x80
+	lda	$1, T0_IRQACK_HI($31)
+	sll	$1, 16, $1
+	hw_stq/p $31, 0($1)
+	hw_mfpr	$1, 0x80
+	hw_rei
+#else
 	T0_VEC	0x00E0			// INTERRUPT
+#endif
 	T0_VEC	0x01E0			// D_FAULT
 	T0_VEC	0x03E0			// ITB_MISS
 	T0_VEC	0x07E0			// ITB_ACV
@@ -80,6 +93,10 @@ t0_init:
 	sll	$1, 41, $1		// ICCSR: MAP (write bit 41); FP off
 	hw_mtpr	$1, 0x22
 	hw_mtpr	$31, 0x29		// PS: kernel
+#ifdef T0_IRQ
+	lda	$1, 0x200($31)		// HIER: irq_h[0] (write bit 9)
+	hw_mtpr	$1, 0x30
+#endif
 	lda	$3, -1($31)
 	sll	$3, 42, $3		// KSEG base 0xFFFFFC0000000000
 	br	$2, 1f

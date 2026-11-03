@@ -80,7 +80,18 @@ int main(int argc, char **argv) {
     uint32_t rs = getenv("MEMSEED") ? (uint32_t)atoi(getenv("MEMSEED")) : 1u;
     auto rng = [&rs]() { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; return rs; };
     int mdelay = 0;
+    // IRQRATE=N (pipelined core): irq_h[0] rises at random, about once every N cycles while
+    // low (IRQSEED); a write to PA 0x700000 (rt/t0_pal.h T0_IRQ's handler) drops it
+    const int irqrate = getenv("IRQRATE") ? atoi(getenv("IRQRATE")) : 0;
+    uint32_t is = getenv("IRQSEED") ? (uint32_t)atoi(getenv("IRQSEED")) : 7u;
+    auto irng = [&is]() { is ^= is << 13; is ^= is >> 17; is ^= is << 5; return is; };
+    bool irq = false;
+    uint64_t nirq = 0;
     while (cyc < maxcyc) {
+#ifdef CPU_PIPE
+        if (irqrate && !irq && irng() % (uint32_t)irqrate == 0) { irq = true; nirq++; }
+        c->irq_h = irq ? 1 : 0;
+#endif
         // memory: answer a request on the cycle after it appears
         c->mem_ack = 0;
         if (c->mem_req && !pend) { pend = true; mdelay = memdelay ? (int)(rng() % (memdelay + 1)) : 0; }
@@ -103,6 +114,7 @@ int main(int argc, char **argv) {
                 for (int b = 0; b < 8; b++) if (c->mem_be >> b & 1) m |= 0xFFull << (8 * b);
                 q = (q & ~m) | (w & m);
                 memcpy(&mem[a], &q, 8);
+                if (a == 0x700000) irq = false;
                 if (a == tohost) {
                     uint64_t r1, r2; memcpy(&r1, &mem[a + 8], 8); memcpy(&r2, &mem[a + 16], 8);
                     printf("TOHOST %#" PRIx64 " (+8 %#" PRIx64 ", +16 %#" PRIx64 ") after %" PRIu64 " instructions, %" PRIu64 " cycles\n",
@@ -132,6 +144,7 @@ int main(int argc, char **argv) {
         }
         if (rc != 3) break;
     }
+    if (irqrate) printf("%" PRIu64 " interrupts raised\n", nirq);
     if (rc == 3) { printf("no TOHOST after %" PRIu64 " cycles (pc %#" PRIx64 ")\n", cyc, (uint64_t)c->dbg_pc); rc = 1; }
     if (tf) fclose(tf);
     delete c;

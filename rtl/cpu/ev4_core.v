@@ -271,7 +271,10 @@ module ev4_core (
     reg  [63:0] npc_o;
     reg         nv_o;
     reg         kill_o;
-    wire        x_take = x_redir && !w_redir && !ld_active && !ld_start && !isweep && fstate == FS_FETCH;
+    // a redirect in the cycle the I-fill ends (ifill_done) is taken at once: restart_pc
+    // catches only the redirects before it, and the fill's restart would be lost (fetch
+    // stopped for good: an interrupt at W as the fill of its own line finished)
+    wire        x_take = x_redir && !w_redir && !ld_active && !ld_start && !isweep && (fstate == FS_FETCH || ifill_done);
     wire [63:0] npc  = x_take ? x_target_r : npc_o;
     wire        nv   = x_take ? 1'b1 : nv_o;
     wire        kill_f2 = kill_o || x_redir;
@@ -283,7 +286,7 @@ module ev4_core (
             npc_o = restart_after; nv_o = 1'b1; kill_o = 1'b1;
         end else if (w_redir) begin
             kill_o = 1'b1;
-            if (fstate == FS_FILL) nv_o = 1'b0;
+            if (fstate == FS_FILL && !ifill_done) nv_o = 1'b0;
             else begin npc_o = w_target; nv_o = 1'b1; end
         end else if (x_redir) begin
             // only reached in FS_FILL (otherwise x_take wins): the fill finishes first
