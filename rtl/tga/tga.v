@@ -286,7 +286,9 @@ module tga #(
     reg  [31:0] c_d;
     wire  [7:0] c_idx = c_off[9:2];
     wire  [7:0] m8 = mode[7:0];
-    wire        m_fill = m8 == 8'h2D || m8 == 8'h21 || m8 == 8'h23;
+    // transparent is mode bit 2 (21030: 05 transparent stipple, 25 transparent fill, as 0D/2D block;
+    // Linux tgafb's values, and what NT's tga.dll draws its text with); 03/23 are kept as the same
+    wire        m_fill = m8 == 8'h2D || m8 == 8'h21 || m8 == 8'h23 || m8 == 8'h25;
 
     // source reads
     reg  [17:0] sr_q;
@@ -387,17 +389,17 @@ module tga #(
                 os_v <= 1'b0;
                 g_first <= 1'b1; g_rot <= 1'b0; g_ret <= 1'b0; g_m1 <= 1'b0; g_fs <= 3'd0;
                 case (m8)
-                8'h01, 8'h03, 8'h0D: begin
+                8'h01, 8'h03, 8'h05, 8'h0D: begin
                     // stipple: 32 pixels from the longword, bit i = pixel i
                     g_q <= c_off[20:3]; g_n <= c_off[2] ? 10'd5 : 10'd4;
                     g_bef <= 8'hFF; g_bel <= 8'hFF;
                     g_st <= {8'd0, c_d} << {c_off[2], 2'b00};
                     g_pw <= {8'd0, pxm} << {c_off[2], 2'b00};
                     g_use_pw <= 1'b1; g_use_st <= m8 != 8'h01; g_rop_en <= m8 != 8'h0D;
-                    g_dsel <= m8 == 8'h01 ? D_OPQ : m8 == 8'h03 ? D_FG : D_BC;
+                    g_dsel <= m8 == 8'h01 ? D_OPQ : m8 == 8'h0D ? D_BC : D_FG;
                     est <= E_GEN;
                 end
-                8'h2D, 8'h21, 8'h23: begin
+                8'h2D, 8'h21, 8'h23, 8'h25: begin
                     // fill: data<10:0> + 1 pixels from the longword (+ data<17:16>)
                     fill_start({c_off[20:2], 2'b00} + {19'd0, c_d[17:16]}, {1'b0, c_d[10:0]} + 12'd1);
                     est <= E_GEN;

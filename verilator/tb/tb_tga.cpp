@@ -225,7 +225,7 @@ static void ref_stip(uint32_t o, uint32_t m, int mode) {
         if (!(r_pxm >> i & 1)) continue;
         uint32_t p = p0 + i; bool bit = m >> i & 1;
         if (mode == 0x01) put(p, bit ? fgb(p) : bgb(p), true);
-        else if (mode == 0x03) { if (bit) put(p, fgb(p), true); }
+        else if (mode == 0x03 || mode == 0x05) { if (bit) put(p, fgb(p), true); }
         else if (bit) put(p, bcb(p), false);
     }
 }
@@ -298,7 +298,7 @@ int main(int argc, char **argv) {
 
     // ------------------------------------------------ 3. fills
     for (int i = 0; i < 40; i++) {
-        int mode = (i % 3 == 0) ? 0x2D : (i % 3 == 1) ? 0x21 : 0x23;
+        int mode = (i % 4 == 0) ? 0x2D : (i % 4 == 1) ? 0x21 : (i % 4 == 2) ? 0x23 : 0x25;   // 25: transparent (NT)
         set_fg(rng()); set_bg(rng()); set_bc(rng(), rng());
         set_data(i < 6 ? 0xFFFFFFFF : (uint32_t)rng());
         set_rop(i & 1 ? 3 : rng() % 16);
@@ -327,7 +327,7 @@ int main(int argc, char **argv) {
 
     // ------------------------------------------------ 4. stipple (SRM's text) and simple writes
     for (int i = 0; i < 60; i++) {
-        int mode = (i % 3 == 0) ? 0x01 : (i % 3 == 1) ? 0x03 : 0x0D;
+        int mode = (i % 4 == 0) ? 0x01 : (i % 4 == 1) ? 0x03 : (i % 4 == 2) ? 0x05 : 0x0D;   // 05: transparent (NT)
         set_fg(rng()); set_bg(rng()); set_bc(rng(), rng());
         set_rop(i % 5 ? 3 : rng() % 16);
         set_pm(i % 7 == 6 ? (uint32_t)rng() : 0xFFFFFFFF);

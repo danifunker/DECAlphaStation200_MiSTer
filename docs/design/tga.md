@@ -97,13 +97,16 @@ the quadword is read first, then
 `new = (rop(src, old) & pm) | (old & ~pm)`. Otherwise it is a byte-masked write, which costs 2 cycles a
 quadword at the arbiter. A fill of 2048 pixels is 257 quadwords.
 
+Mode bits: <0> not simple, <1> line, <2> transparent, <3> block, <4> Z, <5> fill. Transparent stipple and
+fill are 05 and 25 (Linux tgafb; NT's tga.dll draws text in 05); 03 and 23 are accepted as the same.
+
 | Mode | Write at A, data D |
 |---|---|
 | 00 (and anything not below) simple | the longword, its byte enables, the pixel mask bits `(A & 31) + k` (NetBSD's "stripes"), rop, plane mask |
-| 01 / 03 opaque / transparent stipple | 32 pixels from `A & ~3`: pixel i gets FG if D<i>, else BG (opaque) or stays (transparent); pixel mask bit i |
+| 01 / 05 (03) opaque / transparent stipple | 32 pixels from `A & ~3`: pixel i gets FG if D<i>, else BG (opaque) or stays (transparent); pixel mask bit i |
 | 0D block stipple | as 03 with block colours, no rop |
 | 2D block fill | `D<10:0> + 1` pixels from `(A & ~3) + D<17:16>`, block colours, data register stipple, plane mask, no rop |
-| 21 / 23 opaque / transparent fill | as 2D with FG/BG (opaque) or FG where the stipple is set, rop |
+| 21 / 25 (23) opaque / transparent fill | as 2D with FG/BG (opaque) or FG where the stipple is set, rop |
 | 07 copy | the first write reads 32 bytes from `A & ~3` (its mask ignored). The second writes them at `A2 & ~3` where D<i> and the pixel mask allow, rop, plane mask (the pixel shift is not applied) |
 | 1F DMA write copy | reads `D<31:16> + 1` quadwords from `A & ~7` and drops the first (the shifter primer). The rest go to host memory at 098 as longword DMA writes |
 | 17 / 37 DMA read copy | `D<31:16> + 1` longwords from host memory at 098 are written from `A & ~3` with rop and plane mask. Edge masks: left1 D<3:0> (first), left2 D<7:4> (second, if 3 or more), right1 D<11:8> (last). right2 (the residue) is not modelled |
