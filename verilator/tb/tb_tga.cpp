@@ -453,6 +453,22 @@ int main(int argc, char **argv) {
     }
     set_mode(0); set_rop(3); set_pxm(0xFFFFFFFF);
     compare("copy mode");
+    // copy mode with the pixel shift, as NT's vSSCopy8to8 does window edges:
+    // destination byte (D & ~3) + k comes from source byte (S & ~3) - shift + k
+    set_mode(0x07);
+    for (int i = 0; i < 64; i++) {
+        int sh = i & 7;
+        reg_wr(0x38, sh);
+        set_rop(i % 4 ? 3 : rng() % 16);
+        uint32_t s = 0x62000 + (rng() % 0x6000 & ~3u), d = 0x72000 + (rng() % 0x6000 & ~3u);
+        uint32_t md = i % 3 ? 0xFFFFFFFF : (uint32_t)rng();
+        std::vector<uint8_t> src(ref.begin() + s - sh, ref.begin() + s - sh + 32);
+        fb_wr(s, 0xFFFFFFFF); fb_wr(d, md);
+        for (int k = 0; k < 32; k++) if (md >> k & 1) put(d + k, src[k], true);
+        wait_idle();
+    }
+    reg_wr(0x38, 0); set_mode(0); set_rop(3);
+    compare("copy mode with pixel shift");
     printf("tb_tga: copies done\n");
 
     // ------------------------------------------------ 6. DMA: SRM's scroll of one 1028-byte line

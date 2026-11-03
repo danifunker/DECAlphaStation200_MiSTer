@@ -290,6 +290,7 @@ module tga #(
     reg   [3:0] c_be;
     reg  [31:0] c_d;
     wire  [7:0] c_idx = c_off[9:2];
+    wire [20:0] cp_src = {c_off[20:2], 2'b00} - {17'd0, pshift};   // copy mode's source start
     wire  [7:0] m8 = mode[7:0];
     // transparent is mode bit 2 (21030: 05 transparent stipple, 25 transparent fill, as 0D/2D block;
     // Linux tgafb's values, and what NT's tga.dll draws its text with); 03/23 are kept as the same
@@ -452,9 +453,10 @@ module tga #(
                     est <= E_GEN;
                 end
                 8'h07: if (!copy_flag) begin
-                    // copy, source: 32 bytes from the longword
-                    copy_flag <= 1'b1; cp_p0 <= {c_off[20:2], 2'b00};
-                    sr_q <= c_off[20:3]; sr_n <= 5'd5; sr_k <= 5'd0; sr_lo <= 1'b0; sr_next <= 2'd0;
+                    // copy, source: 32 bytes from the longword less the pixel shift (as COPY64:
+                    // NT's vSSCopy8to8 does its window edges this way with the shift set)
+                    copy_flag <= 1'b1; cp_p0 <= cp_src;
+                    sr_q <= cp_src[20:3]; sr_n <= 5'd5; sr_k <= 5'd0; sr_lo <= 1'b0; sr_next <= 2'd0;
                     est <= E_SRD;
                 end else begin
                     // copy, destination: the 32 pixels the data selects (and the pixel mask)
@@ -464,8 +466,8 @@ module tga #(
                     g_st <= {8'd0, c_d} << {c_off[2], 2'b00};
                     g_pw <= {8'd0, pxm} << {c_off[2], 2'b00};
                     g_use_pw <= 1'b1; g_use_st <= 1'b1; g_rop_en <= 1'b1; g_dsel <= D_CPY;
-                    g_fs <= {cp_p0[2] ^ c_off[2], 2'b00};
-                    g_m1 <= !cp_p0[2] && c_off[2];
+                    g_fs <= cp_p0[2:0] - {c_off[2], 2'b00};
+                    g_m1 <= cp_p0[2:0] < {c_off[2], 2'b00};
                     s_prev <= 64'd0;
                     est <= E_GEN;
                 end
