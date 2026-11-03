@@ -72,7 +72,7 @@ That covers the copy buffer 000-01C, Bresenham, stencil, the Z and colour regist
 | 02C / 05C | pixel mask one-shot / persistent | one-shot until the next frame buffer write; 02C reads the mask in force |
 | 030 | mode | <15:0> stored; reads `{copy toggle <20>, mode}`; a write clears the toggle |
 | 034 | raster op | <3:0> the X11 function code (0 clear ... 3 copy ... 15 set); <11:8> stored |
-| 038 | pixel shift | <3:0>; COPY64 reads from source - shift (NT gives aligned addresses and the offset here; SRM byte addresses with 0). Copy mode 07 reads its source from (S & ~3) - shift the same way |
+| 038 | pixel shift | <3:0>, signed (-8..7: NT writes negative shifts for right-to-left copies); COPY64 reads from source - shift (NT gives aligned addresses and the offset here; SRM byte addresses with 0). Copy mode 07 reads its source from (S & ~3) - shift the same way |
 | 03C, 054 | address, start | a write of 054 in a fill mode fills from VRAM byte 03C; 054 reads the revision (03) |
 | 050 | deep | stored; <9> picks the VVBR unit (0: 4 KB, 1: 2 KB, NetBSD's T8-02/T8-01) |
 | 060, 074 | TGA cursor base, XY | stored (060 reads <3:0> = 0); the TGA cursor is **not displayed** (SRM and NetBSD use the Bt485 cursor) |

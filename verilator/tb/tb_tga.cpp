@@ -490,6 +490,22 @@ int main(int argc, char **argv) {
     }
     reg_wr(0x38, 0); wait_idle(); set_mode(0);
     compare("copy pairs around COPY64 (NT)");
+    // right-to-left rows (a window moved right over itself): the pixel shift is negative (-8..-1,
+    // written as 4-bit two's complement) and the blocks go down; half the rows overlap (d = s + 20)
+    set_mode(0x07);
+    for (int row = 0; row < 32; row++) {
+        int sh = -1 - (row & 7);
+        reg_wr(0x38, (uint32_t)sh & 0xF);
+        uint32_t s = 0x66000 + row * 800, d = row & 1 ? s + 24 : 0x76000 + row * 800;
+        for (int p = 3; p >= 0; p--) {
+            uint32_t sp = s + 64 * p, dp = d + 64 * p;
+            std::vector<uint8_t> src(ref.begin() + sp - sh, ref.begin() + sp - sh + 64);
+            reg_wr(0x160 + 8 * (3 - p), sp); reg_wr(0x164 + 8 * (3 - p), dp);
+            for (int k = 0; k < 64; k++) put(dp + k, src[k], true);
+        }
+    }
+    reg_wr(0x38, 0); wait_idle(); set_mode(0);
+    compare("COPY64 right to left, negative shift (NT)");
     printf("tb_tga: copies done\n");
 
     // ------------------------------------------------ 6. DMA: SRM's scroll of one 1028-byte line

@@ -214,7 +214,10 @@ module tga #(
     // COPY64's effective source: the source register less the pixel shift. NT's tga.dll gives
     // 8-byte aligned addresses and the byte offset in the pixel shift (038); SRM gives byte
     // addresses with the shift 0
-    wire [20:0] c64e = c64s[20:0] - {17'd0, pshift};
+    // the shift is signed (-8..7): NT's right-to-left copies (a window moved right over itself)
+    // write (dst_end & 7) - (src_end & 7), less 8 when not negative
+    wire [20:0] psx  = {{17{pshift[3]}}, pshift};
+    wire [20:0] c64e = c64s[20:0] - psx;
     reg   [8:0] vvbr;
     reg   [4:0] sisr_st, sisr_en;
     reg  [31:0] bc0, bc1;
@@ -293,7 +296,7 @@ module tga #(
     reg   [3:0] c_be;
     reg  [31:0] c_d;
     wire  [7:0] c_idx = c_off[9:2];
-    wire [20:0] cp_src = {c_off[20:2], 2'b00} - {17'd0, pshift};   // copy mode's source start
+    wire [20:0] cp_src = {c_off[20:2], 2'b00} - psx;   // copy mode's source start
     wire  [7:0] m8 = mode[7:0];
     // transparent is mode bit 2 (21030: 05 transparent stipple, 25 transparent fill, as 0D/2D block;
     // Linux tgafb's values, and what NT's tga.dll draws its text with); 03/23 are kept as the same
