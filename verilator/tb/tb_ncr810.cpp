@@ -476,15 +476,32 @@ int main(int argc, char **argv) {
         put32(0x5100, 0xA0000031); put32(0x5104, 0xA0000030);
         ins(0x41010000, 0);                                      // SELECT ATN 1
         put32(p, 0xC0000004); put32(p + 4, 0x5104); put32(p + 8, 0x5100); p += 12;   // MEMORY MOVE 4, 0x5104 -> 0x5100
-        ins(0x86830000, SCRIPT);                                 // JUMP SCRIPT, WHEN NOT MSG_OUT
-        ins(0x98080000, 0xBAD);                                  // INT 0xBAD
+        ins(0x98000000 | P_MOUT << 24 | 0x30000, 0xBAD);        // INT 0xBAD, WHEN NOT MSG_OUT
+        ins(0x98080000, 0xBAD2);                                 // INT 0xBAD2
         wl(DSP, SCRIPT);
         uint8_t i = wait_int();
         CHECK(i == 0x02, "STO ISTAT %02X", i);
-        CHECK(rb(SIST0) == 0 && rb(SIST1) == 0x04, "SIST1.STO");
+        uint8_t s0 = rb(SIST0), s1 = rb(SIST1);
+        CHECK(s0 == 0 && s1 == 0x04, "SIST0 %02X (no UDC) SIST1 %02X (STO)", s0, s1);
         CHECK(rb(DSTAT) == 0x80, "DSTAT after STO %02X (no SIR)", rb(DSTAT));
         CHECK(get32(0x5100) == 0xA0000030, "the move after SELECT did not run before STO: %08X", get32(0x5100));
         printf("SELECT ID 1 (absent): the move after it ran, then STO at the phase test\n");
+    }
+    {   // ARC 4.58's NCRC8xx: SELECT, an unconditional JUMP, then INT WHEN NOT MSG_OUT. The phase
+        // test waits for the selection to be resolved: an absent target is a selection timeout,
+        // not an unexpected disconnect (that sent ARC's driver into a long wait per empty ID and
+        // TSE's symc810 into STOP 0xA)
+        uint32_t p = SCRIPT;
+        auto ins = [&](uint32_t a, uint32_t b) { put32(p, a); put32(p + 4, b); p += 8; };
+        ins(0x41010000, 0);                                      // SELECT ATN 1
+        ins(0x80880000, 0);                                      // JUMP +0
+        ins(0x98000000 | P_MOUT << 24 | 0x30000, 0xBAD);        // INT 0xBAD, WHEN NOT MSG_OUT
+        ins(0x98080000, 0xBAD2);
+        wl(DSP, SCRIPT);
+        uint8_t i = wait_int();
+        uint8_t s0 = rb(SIST0), s1 = rb(SIST1), ds = rb(DSTAT);
+        CHECK(i == 0x02 && s0 == 0 && s1 == 0x04 && ds == 0x80, "ARC pattern: ISTAT %02X SIST0 %02X SIST1 %02X DSTAT %02X", i, s0, s1, ds);
+        printf("SELECT ID 1 (absent), JUMP, INT WHEN NOT MSG_OUT: STO, no UDC\n");
     }
     {   // the same with the disk at ID 0: the phase test waits for the selection, then MESSAGE OUT
         uint32_t p = SCRIPT;

@@ -259,6 +259,9 @@ reg         sto_hit, gen_hit, gen_on;
 // a SELECT in progress: SCRIPTS go on meanwhile (as on the chip, until an instruction that needs
 // the bus); a selection timeout raises STO and halts them at the next instruction boundary
 reg         selecting, sto_run, sto_pend;
+// the SELECT is not resolved yet: no answer, or no target and the timeout still running; the
+// instructions that need the bus wait meanwhile (a target that did not answer is no disconnect)
+wire        sel_unres = selecting || sto_run || sto_pend;
 // E_PRE's results
 reg  [31:0] dsa_rel;                            // DSA + DSPS<23:0> (table indirect, LOAD/STORE)
 reg  [31:0] sel_rel;                            // DSA + DBC (SELECT table indirect)
@@ -598,7 +601,7 @@ always @(posedge clk) begin : engine
                     end
                     2'b10: begin                                         // transfer control
                         if (ins0[29:27] > 3'b011) begin set_ds[0] = 1'b1; est <= E_IDLE; end
-                        else if ((ins0[16] && con) || (selecting && (ins0[16] || ins0[17]))) est <= E_TC_WAIT;
+                        else if ((ins0[16] && con) || (sel_unres && (ins0[16] || ins0[17]))) est <= E_TC_WAIT;
                         else est <= E_TC_EVAL;
                     end
                     default: begin
@@ -681,7 +684,7 @@ always @(posedge clk) begin : engine
 
             // ---- block move: wait for REQ, compare the phase, move the bytes
             E_BM_WAIT: begin
-                if (selecting) ;                                    // the selection first
+                if (sel_unres) ;                                    // the selection first
                 else if (!sb_bsy) begin set_s0[2] = 1'b1; con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FLUSH; fl_next <= 1'b0; end   // UDC
                 else if (sb_req) begin
                     if (sb_phase != ins0[26:24]) begin set_s0[7] = 1'b1; est <= E_FLUSH; fl_next <= 1'b0; end      // phase mismatch
@@ -742,7 +745,7 @@ always @(posedge clk) begin : engine
                 selecting <= 1'b1;
                 est <= E_FETCH;
             end
-            E_WDISC: if (!selecting && !sb_bsy) begin con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FETCH; end
+            E_WDISC: if (!sel_unres && !sb_bsy) begin con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FETCH; end
             E_WRESEL: if (sigp) begin
                 // SIGP: the alternate address (nothing reselects)
                 dsp <= jmp_tgt;
@@ -751,7 +754,8 @@ always @(posedge clk) begin : engine
 
             // ---- transfer control: the condition, then the action
             E_TC_WAIT: begin
-                if (!sb_bsy) begin set_s0[2] = 1'b1; con <= 1'b0; est <= E_IDLE; end
+                if (sel_unres) ;                                    // the selection first
+                else if (!sb_bsy) begin set_s0[2] = 1'b1; con <= 1'b0; est <= E_IDLE; end
                 else if (sb_req && !sb_ackhold) est <= E_TC_EVAL;
             end
             E_TC_EVAL: begin
