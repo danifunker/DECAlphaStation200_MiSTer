@@ -5,6 +5,8 @@ image in an NTFS partition image's system32 and system32/drivers (needs ntfsprog
 
     scan_nt_ext.py NTFS_PARTITION_IMAGE
 """
+import collections, struct, subprocess, sys
+
 img = sys.argv[1]
 def files(d):
     out = subprocess.run(['ntfsls', '-p', d, img], capture_output=True, text=True).stdout.split()
