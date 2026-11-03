@@ -120,7 +120,11 @@ module ev4_ialu (
             7'h46: begin res = b; wr = !a[63]; end
             7'h64: begin res = b; wr =  a[63] || a == 64'd0; end
             7'h66: begin res = b; wr = !a[63] && a != 64'd0; end
-            default: illegal = 1'b1;   // AMASK (61) and IMPLVER (6C) are post-EV4
+            // added to the architecture after the 21064, which runs them as no extensions
+            // and implementation version 0 (docs/design/cpu.md Q7; SP6's COMCTL32 asks AMASK)
+            7'h61: res = b;                                             // AMASK
+            7'h6C: res = 64'd0;                                         // IMPLVER
+            default: illegal = 1'b1;
             endcase
         6'h12: case (func)
             7'h02, 7'h12, 7'h22, 7'h32: res = zapnot(a, ~bm16[7:0]);    // MSKxL

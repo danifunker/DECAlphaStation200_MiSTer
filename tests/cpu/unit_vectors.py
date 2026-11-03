@@ -22,6 +22,7 @@ FUNC = {
     'bis': (0x11, 0x20), 'cmoveq': (0x11, 0x24), 'cmovne': (0x11, 0x26), 'ornot': (0x11, 0x28),
     'xor': (0x11, 0x40), 'cmovlt': (0x11, 0x44), 'cmovge': (0x11, 0x46), 'eqv': (0x11, 0x48),
     'cmovle': (0x11, 0x64), 'cmovgt': (0x11, 0x66),
+    'amask': (0x11, 0x61), 'implver': (0x11, 0x6C),
     'mskbl': (0x12, 0x02), 'extbl': (0x12, 0x06), 'insbl': (0x12, 0x0B), 'mskwl': (0x12, 0x12),
     'extwl': (0x12, 0x16), 'inswl': (0x12, 0x1B), 'mskll': (0x12, 0x22), 'extll': (0x12, 0x26),
     'insll': (0x12, 0x2B), 'zap': (0x12, 0x30), 'zapnot': (0x12, 0x31), 'mskql': (0x12, 0x32),
@@ -30,6 +31,10 @@ FUNC = {
     'msklh': (0x12, 0x62), 'inslh': (0x12, 0x67), 'extlh': (0x12, 0x6A), 'mskqh': (0x12, 0x72),
     'insqh': (0x12, 0x77), 'extqh': (0x12, 0x7A),
 }
+# not in gen_int's model (added to the architecture after the 21064): what EV4 software
+# sees, as Linux and SP6's COMCTL32 rely on (docs/design/cpu.md, Q7): AMASK copies Rb (no
+# extensions), IMPLVER is 0 (EV4)
+LOCAL = {'amask': lambda a, b, c: b, 'implver': lambda a, b, c: 0}
 MFUNC = {'mull': 0x00, 'mulq': 0x20, 'umulh': 0x30, 'mull/v': 0x40, 'mulq/v': 0x60}
 
 
@@ -39,7 +44,7 @@ def ialu(out):
     n = 0
     with open(out, 'w') as f:
         for op, (opc, fn) in FUNC.items():
-            model = g.OPS[op]
+            model = LOCAL[op] if op in LOCAL else g.OPS[op]
             for k in range(600):
                 if k < len(g.EDGE) ** 2 // 8:
                     a = g.EDGE[k % len(g.EDGE)]
