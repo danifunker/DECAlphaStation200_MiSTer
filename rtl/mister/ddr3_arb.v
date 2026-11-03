@@ -97,9 +97,12 @@ module ddr3_arb #(
     reg         wq_qv;                  // wq_q is the head entry (not a slot written as it was read)
     wire        wq_full = wq_n[4];
     wire        wq_rdy  = wq_n != 5'd0 && wq_qv;
-    assign vr_wq_empty = !m_v && wq_n == 5'd0;
 
     reg         wq_push;
+    // wq_push: the merge register flushed last cycle and is not counted in wq_n yet (a read
+    // let through then went to DDR3 ahead of that write and returned the old data: NT's
+    // byte stores, quadword read-modify-writes on the frame buffer, lost bytes)
+    assign vr_wq_empty = !m_v && wq_n == 5'd0 && !wq_push;
     reg  [89:0] wq_pd;
     reg         wq_pop;
     wire  [3:0] wq_hn = wq_pop ? wq_h + 4'd1 : wq_h;

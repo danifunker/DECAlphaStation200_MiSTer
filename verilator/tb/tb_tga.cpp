@@ -32,7 +32,8 @@ static long fails = 0;
 // ---------------------------------------------------------------- DDR3 model
 static const uint32_t DBASE = 0x06000000;           // flash at word 0, VRAM at word 0x20000
 static std::vector<uint64_t> ddr(0x60000);
-struct Burst { long at; uint32_t a; int n; };
+// a read's data is taken when the command is accepted: later writes do not show in it
+struct Burst { long at; uint32_t a; int n; std::vector<uint64_t> d; size_t i; };
 static std::deque<Burst> rq;
 static long cyc = 0;
 static int wr_left = 0; static uint32_t wr_a = 0;
@@ -51,7 +52,9 @@ static void ddr_pre_edge() {
     if (t->DDRAM_RD) {
         int n = t->DDRAM_BURSTCNT;
         CHECK(n >= 1 && n <= 32, "burst count %d", n);
-        rq.push_back({cyc + 8 + (long)(rng() % 12), t->DDRAM_ADDR, n});
+        Burst rb{cyc + 8 + (long)(rng() % 12), t->DDRAM_ADDR, n, {}, 0};
+        for (int k = 0; k < n; k++) rb.d.push_back(dw(t->DDRAM_ADDR + k));
+        rq.push_back(rb);
         ddr_reads++;
     }
     if (t->DDRAM_WE) {
@@ -69,7 +72,7 @@ static void ddr_post_edge() {
     t->DDRAM_DOUT_READY = 0;
     if (!rq.empty() && rq.front().at <= cyc) {
         Burst &b = rq.front();
-        t->DDRAM_DOUT = dw(b.a); t->DDRAM_DOUT_READY = 1;
+        t->DDRAM_DOUT = b.d[b.i++]; t->DDRAM_DOUT_READY = 1;
         b.a++; b.at = cyc + ((rng() % 8) == 0 ? 2 : 1);
         if (--b.n == 0) rq.pop_front();
     }
@@ -351,6 +354,22 @@ int main(int argc, char **argv) {
     }
     wait_idle(); set_rop(3); set_pm(0xFFFFFFFF); set_pxm(0xFFFFFFFF);
     compare("simple writes");
+    // NT's byte stores without BWX: read the longword, change one byte, write it back,
+    // back to back (a read let past a write still in ddr3_arb's merge flush got old data)
+    for (int i = 0; i < 400; i++) {
+        uint32_t a = 0x38000 + (rng() % 0x800 & ~3u);
+        for (int b = 0; b < 4; b++) {
+            uint32_t v = fb_rd(a);
+            uint32_t e = ref[a] | ref[a + 1] << 8 | ref[a + 2] << 16 | ref[a + 3] << 24;
+            CHECK(v == e, "byte RMW read %06x %08x want %08x", a, v, e);
+            v = e;
+            uint8_t nb = rng();
+            v = (v & ~(0xFFu << (8 * b))) | (uint32_t)nb << (8 * b);
+            fb_wr(a, v); ref_simple(a, v, 0xF);
+        }
+    }
+    wait_idle();
+    compare("byte read-modify-writes");
     printf("tb_tga: stipple and simple done\n");
 
     // ------------------------------------------------ 5. copies
