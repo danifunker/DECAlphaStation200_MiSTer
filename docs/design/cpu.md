@@ -960,6 +960,10 @@ Non-divide FP latency 6 cycles, one issue per cycle; DIVF/DIVS 34 (30 to issue),
   write buffer to drain (HRM 2.5.4).
 - **Impl:** LDx_L does not allocate in the D-cache and invalidates the D-cache block it reads; STx_C
   invalidates the block (the system has the data). LDx_L/STx_C to I/O space work the same way.
+  The flag and address (16-byte granule) are kept in the core and cleared like the 21071-CA's: any
+  STx_C, any store to PA >= 4 GB (I/O), and a DMA write whose dInvReq index matches the lock address
+  (by index only, so sometimes more often than needed). Without the I/O clear, an STx_C succeeded
+  across an interrupt and a context switch (t3_lock).
   Unaligned LDx_L/STx_C take UNALIGN. "HW_STC instructions cannot be followed, for two cycles, by any load
   that may miss" (rule 21): interlocked.
 
