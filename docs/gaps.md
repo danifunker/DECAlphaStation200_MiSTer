@@ -105,9 +105,9 @@ I-cache compares physical tags after translation, so no ASN support is needed.
 
 | OS | Console | Last version for the AS200 4/100 | Status |
 |---|---|---|---|
-| Windows NT 4.0 (Workstation SP1, TSE 4.0) | ARC | 4.0 (Compaq never qualified SP6, but it runs) | First target |
+| Windows NT 4.0 (Workstation SP1, TSE 4.0) | ARC | 4.0 (Compaq never qualified SP6, but it runs) | Text-mode Setup installs to a 2 GB disk (FAT system partition + NTFS); GUI Setup reboots early (teal screen). Text Setup's stripes were a ddr3_arb read-after-write race (`2880d57`). TSE hangs at the kernel banner |
 | Windows NT 3.51 | ARC | | First target |
-| Windows 2000 RC1 (2072) | ARC | Betas/RCs only | |
+| Windows 2000 RC1 (2072) | ARC | Betas/RCs only | Hangs at "Setup is starting Windows 2000" in KiAttachProcess's ready-list loop (a self-linked entry; 64 and 128 MB alike). Candidates fixed 2026-11-02: lost fetch restart (`7fafad8`), lock flag kept across I/O writes (`a83a956`) |
 | OpenVMS | SRM | HP V8.4 (its release notes still carry an AS200/400 note); VSI 8.4-2L1/2L2 drop it. Min V6.1-1H1 | Images 6.2, 7.3, 8.4 |
 | Digital UNIX / Tru64 | SRM | 5.1B-6 (needs 128 MB); min 3.2 | Image 4.0G |
 | NetBSD 10.2 | SRM | current | Kernel starts, hangs after "Unrecognized boot flag" |
