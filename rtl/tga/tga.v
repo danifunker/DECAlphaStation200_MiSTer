@@ -321,6 +321,20 @@ module tga #(
     reg   [4:0] sr_n, sr_k;
     reg         sr_lo;
     reg   [1:0] sr_next;                    // 0 copy source, 1 COPY64 destination, 2 DMA write out
+    // the shifter's residue (21030 copies): a copy's source read covers its nominal 32/64 bytes;
+    // the quadword it needs beyond them because of the pixel shift comes from the previous read
+    // (forward rows: its last quadword, right-to-left rows: its first), not from VRAM, which the
+    // previous destination write may already have changed (a window moved over itself)
+    reg  [17:0] nom_lo, nom_hi;             // this read's nominal quadwords
+    reg  [17:0] pv_lo_a, pv_hi_a;           // the previous read's
+    reg  [63:0] pv_lo_d, pv_hi_d, nw_lo_d, nw_hi_d;
+    reg         pv_v;
+    reg         sr_skip;                    // shift -8: the first beat is the nominal first quadword,
+                                            // read only for the residue (the data starts a quadword on)
+    wire [17:0] sr_a = sr_q + {13'd0, sr_k};
+    wire        sr_out = sr_a < nom_lo || sr_a > nom_hi;
+    wire [63:0] sr_d = (sr_next != 2'd2 && pv_v && sr_out && sr_a == pv_hi_a) ? pv_hi_d :
+                       (sr_next != 2'd2 && pv_v && sr_out && sr_a == pv_lo_a) ? pv_lo_d : vr_rdata;
     reg  [20:0] cp_p0;                      // copy mode: the source's first byte
     // DMA
     reg  [15:0] dw_left;                    // DMA write: quadwords still to send
@@ -430,8 +444,11 @@ module tga #(
                 8'h59, 8'h5B, 8'h5D, 8'h5F: begin
                     // COPY64: 64 bytes from c64s to c_d (frame buffer offsets)
                     c64d <= c_d; copy_flag <= 1'b0;   // destination: 0 again (NT follows COPY64 with copy-mode pairs)
-                    sr_q <= c64e[20:3]; sr_lo <= 1'b0; sr_k <= 5'd0; sr_next <= 2'd1;
-                    sr_n <= c64e[2:0] == 3'd0 ? 5'd8 : 5'd9;
+                    sr_lo <= 1'b0; sr_k <= 5'd0; sr_next <= 2'd1;
+                    nom_lo <= c64s[20:3]; nom_hi <= c64s[20:3] + (c64s[2:0] != 3'd0 ? 18'd8 : 18'd7);
+                    sr_skip <= c64e[20:3] == c64s[20:3] + 18'd1 && c64e[2:0] == 3'd0;
+                    sr_q <= (c64e[20:3] == c64s[20:3] + 18'd1 && c64e[2:0] == 3'd0) ? c64s[20:3] : c64e[20:3];
+                    sr_n <= c64e[2:0] == 3'd0 ? (c64e[20:3] == c64s[20:3] + 18'd1 ? 5'd9 : 5'd8) : 5'd9;
                     est <= E_SRD;
                 end
                 8'h7C: if (!c_d[8]) begin bt_wr <= 1'b1; bt_rs <= c_d[12:9]; bt_wd <= c_d[7:0]; end
@@ -462,7 +479,11 @@ module tga #(
                     // copy, source: 32 bytes from the longword less the pixel shift (as COPY64:
                     // NT's vSSCopy8to8 does its window edges this way with the shift set)
                     copy_flag <= 1'b1; cp_p0 <= cp_src;
-                    sr_q <= cp_src[20:3]; sr_n <= 5'd5; sr_k <= 5'd0; sr_lo <= 1'b0; sr_next <= 2'd0;
+                    sr_k <= 5'd0; sr_lo <= 1'b0; sr_next <= 2'd0;
+                    nom_lo <= c_off[20:3]; nom_hi <= c_off[20:3] + (c_off[2] ? 18'd4 : 18'd3);
+                    sr_skip <= cp_src[20:3] == c_off[20:3] + 18'd1 && cp_src[2:0] == 3'd0;
+                    sr_q <= (cp_src[20:3] == c_off[20:3] + 18'd1 && cp_src[2:0] == 3'd0) ? c_off[20:3] : cp_src[20:3];
+                    sr_n <= (cp_src[20:3] == c_off[20:3] + 18'd1 && cp_src[2:0] == 3'd0) ? 5'd6 : 5'd5;
                     est <= E_SRD;
                 end else begin
                     // copy, destination: the 32 pixels the data selects (and the pixel mask)
@@ -566,9 +587,17 @@ module tga #(
             if (vr_ack) begin vr_req <= 1'b0; est <= E_SRW; end
         end
         E_SRW: if (vr_rvalid) begin
-            s[sr_k[3:0] + {3'd0, sr_lo}] <= vr_rdata;
+            if (!(sr_skip && sr_k == 5'd0)) s[sr_k[3:0] + {3'd0, sr_lo} - {3'd0, sr_skip}] <= sr_d;
+            if (sr_a == nom_lo) nw_lo_d <= sr_d;
+            if (sr_a == nom_hi) nw_hi_d <= sr_d;
             sr_k <= sr_k + 5'd1;
             if (sr_k + 5'd1 == sr_n) begin
+                if (sr_next != 2'd2) begin
+                    // remember this read for the next one (the last beat's own value is sr_d)
+                    pv_v <= 1'b1; pv_lo_a <= nom_lo; pv_hi_a <= nom_hi;
+                    pv_lo_d <= sr_a == nom_lo ? sr_d : nw_lo_d;
+                    pv_hi_d <= sr_a == nom_hi ? sr_d : nw_hi_d;
+                end
                 case (sr_next)
                 2'd1: begin
                     // COPY64 destination: 64 bytes
@@ -590,7 +619,7 @@ module tga #(
                 if (dw_left == 16'd0) est <= E_IDLE;
                 else begin
                     // the next up to 8 quadwords
-                    sr_q <= dw_q; sr_k <= 5'd0; sr_lo <= 1'b0; sr_next <= 2'd2;
+                    sr_q <= dw_q; sr_k <= 5'd0; sr_lo <= 1'b0; sr_next <= 2'd2; sr_skip <= 1'b0;
                     sr_n <= dw_left > 16'd8 ? 5'd8 : {1'b0, dw_left[3:0]};
                     dw_chunk <= dw_left > 16'd8 ? 4'd8 : dw_left[3:0];
                     dw_q <= dw_q + (dw_left > 16'd8 ? 18'd8 : {14'd0, dw_left[3:0]});
@@ -655,7 +684,7 @@ module tga #(
             deep <= 32'd0; ccbr <= 32'd0; vhcr <= 32'd0; vvcr <= 32'd0; vvbr <= 9'd0; vvvr <= 32'd0;
             cxyr <= 32'd0; sisr_st <= 5'd0; sisr_en <= 5'd0; datar <= 32'hFFFFFFFF; gdbr <= 32'd0;
             epsr <= 32'd0; gadr <= 32'd0; c64s <= 32'd0; c64d <= 32'd0; bc0 <= 32'd0; bc1 <= 32'd0;
-            g_rl <= 1'b0; l_left <= 16'd0; l_seg <= 5'd0; l_w <= 13'd1024;
+            g_rl <= 1'b0; l_left <= 16'd0; l_seg <= 5'd0; l_w <= 13'd1024; pv_v <= 1'b0;
         end
     end
 

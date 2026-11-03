@@ -492,20 +492,37 @@ int main(int argc, char **argv) {
     compare("copy pairs around COPY64 (NT)");
     // right-to-left rows (a window moved right over itself): the pixel shift is negative (-8..-1,
     // written as 4-bit two's complement) and the blocks go down; half the rows overlap (d = s + 20)
-    set_mode(0x07);
-    for (int row = 0; row < 32; row++) {
-        int sh = -1 - (row & 7);
-        reg_wr(0x38, (uint32_t)sh & 0xF);
-        uint32_t s = 0x66000 + row * 800, d = row & 1 ? s + 24 : 0x76000 + row * 800;
-        for (int p = 3; p >= 0; p--) {
-            uint32_t sp = s + 64 * p, dp = d + 64 * p;
-            std::vector<uint8_t> src(ref.begin() + sp - sh, ref.begin() + sp - sh + 64);
-            reg_wr(0x160 + 8 * (3 - p), sp); reg_wr(0x164 + 8 * (3 - p), dp);
-            for (int k = 0; k < 64; k++) put(dp + k, src[k], true);
+    // The source bytes a block needs beyond its own 64 (because of the shift) come from the
+    // previous block's read, as the 21030's shifter holds them, not from VRAM again (the previous
+    // destination write may have changed them when a window moves over itself)
+    auto c64_rows = [&](bool backward, uint32_t base_s, uint32_t base_d, int ovl, const char *what) {
+        set_mode(0x07);
+        for (int row = 0; row < 32; row++) {
+            int sh = backward ? -1 - (row & 7) : 1 + (row & 6);
+            reg_wr(0x38, (uint32_t)sh & 0xF);
+            uint32_t s = base_s + row * 800;
+            uint32_t d = row & 1 ? s + ovl : base_d + row * 800;
+            std::vector<uint8_t> prev; uint32_t prev_s = 0; bool have = false;
+            for (int i = 0; i < 4; i++) {
+                int p = backward ? 3 - i : i;
+                uint32_t sp = s + 64 * p, dp = d + 64 * p;
+                std::vector<uint8_t> nom(ref.begin() + sp, ref.begin() + sp + 64), src(64);
+                for (int k = 0; k < 64; k++) {
+                    uint32_t a = sp - sh + k;
+                    if (a >= sp && a < sp + 64) src[k] = nom[a - sp];
+                    else if (have && a >= prev_s && a < prev_s + 64) src[k] = prev[a - prev_s];
+                    else src[k] = ref[a];
+                }
+                reg_wr(0x160 + 8 * i, sp); reg_wr(0x164 + 8 * i, dp);
+                for (int k = 0; k < 64; k++) put(dp + k, src[k], true);
+                prev = nom; prev_s = sp; have = true;
+            }
         }
-    }
-    reg_wr(0x38, 0); wait_idle(); set_mode(0);
-    compare("COPY64 right to left, negative shift (NT)");
+        reg_wr(0x38, 0); wait_idle(); set_mode(0);
+        compare(what);
+    };
+    c64_rows(true, 0x66000, 0x76000, 24, "COPY64 right to left, negative shift (NT)");
+    c64_rows(false, 0x68000, 0x78000, -24, "COPY64 left to right over itself (NT)");
     printf("tb_tga: copies done\n");
 
     // ------------------------------------------------ 6. DMA: SRM's scroll of one 1028-byte line
