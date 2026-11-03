@@ -70,7 +70,11 @@ t0_trap:
 
 	.org	0x4000
 t0_init:
+#ifdef T0_SPE1
+	lda	$1, 0x430($31)		// ABOX_CTL: DC_ENA (10) | SPE_2 (5) | SPE_1 (4)
+#else
 	lda	$1, 0x420($31)		// ABOX_CTL: DC_ENA (10) | SPE_2 (5)
+#endif
 	hw_mtpr	$1, 0x4e
 	lda	$1, 1($31)
 	sll	$1, 41, $1		// ICCSR: MAP (write bit 41); FP off

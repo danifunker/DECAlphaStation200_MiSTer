@@ -74,10 +74,17 @@ int main(int argc, char **argv) {
     int rc = 3;
     bool pend = false;
     const bool memlog = getenv("MEMLOG") != nullptr, fastline = getenv("FASTLINE") != nullptr;
+    // MEMDELAY=N: each memory request waits 0..N extra cycles (random, MEMSEED); the board's
+    // SDRAM is slower and varies with refresh
+    const int memdelay = getenv("MEMDELAY") ? atoi(getenv("MEMDELAY")) : 0;
+    uint32_t rs = getenv("MEMSEED") ? (uint32_t)atoi(getenv("MEMSEED")) : 1u;
+    auto rng = [&rs]() { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; return rs; };
+    int mdelay = 0;
     while (cyc < maxcyc) {
         // memory: answer a request on the cycle after it appears
         c->mem_ack = 0;
-        if (c->mem_req && !pend) pend = true;
+        if (c->mem_req && !pend) { pend = true; mdelay = memdelay ? (int)(rng() % (memdelay + 1)) : 0; }
+        else if (c->mem_req && pend && mdelay > 0) mdelay--;
         else if (c->mem_req && pend) {
             uint64_t a = (uint64_t)c->mem_addr << 3;
             if (a + 8 > mem.size()) {
