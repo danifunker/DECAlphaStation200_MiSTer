@@ -155,7 +155,7 @@ wire   [5:0] nv_blk_cnt;
 wire         nv_rd, nv_wr;
 wire   [7:0] nv_buff_din;
 wire  [12:0] nvb_addr;
-wire         nvb_we, nv_dirty;
+wire         nvb_we, nv_dirty, nv_loaded;
 wire   [7:0] nvb_wdata, nvb_rdata;
 nvsave #(.CLK_HZ(100000000)) nvsave
 (
@@ -163,7 +163,8 @@ nvsave #(.CLK_HZ(100000000)) nvsave
 	.img_mounted(img_mounted[4]), .img_size(img_size),
 	.sd_lba(nv_lba), .sd_blk_cnt(nv_blk_cnt), .sd_rd(nv_rd), .sd_wr(nv_wr), .sd_ack(sd_ack[4]),
 	.sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(nv_buff_din), .sd_buff_wr(sd_buff_wr),
-	.nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty)
+	.nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
+	.loaded(nv_loaded)
 );
 
 // what is mounted in the three SCSI slots, and its size in 512-byte blocks
@@ -248,9 +249,18 @@ always @(posedge clk_sys) if (ioctl_download && ioctl_wr) begin
 	if (ioctl_index[7:0] == 8'h00) roms_seen[0] <= 1'b1;
 	if (ioctl_index[7:0] == 8'h40) roms_seen[1] <= 1'b1;
 end
+// and, after the core loads, for the NVRAM image (Main mounts it last: the firmware would read
+// a blank NVRAM), at most 5 s (no image mounted)
+reg  [29:0] nv_wait;
+reg         nv_go;
+always @(posedge clk_sys) begin
+	if (~pll_locked) begin nv_wait <= 30'd0; nv_go <= 1'b0; end
+	else if (nv_loaded || nv_wait == 30'd500_000_000) nv_go <= 1'b1;
+	else nv_wait <= nv_wait + 30'd1;
+end
 reg  [3:0] rst_cnt = 4'hF;
 always @(posedge clk_sys) begin
-	if (reset_req || ioctl_download || !sdram_ready || roms_seen != 2'b11) rst_cnt <= 4'hF;
+	if (reset_req || ioctl_download || !sdram_ready || roms_seen != 2'b11 || !nv_go) rst_cnt <= 4'hF;
 	else if (rst_cnt != 0) rst_cnt <= rst_cnt - 1'd1;
 end
 wire m_reset = rst_cnt != 0;

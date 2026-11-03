@@ -30,7 +30,8 @@ module nvsave #(
     output wire        nvb_we,
     output wire  [7:0] nvb_wdata,
     input  wire  [7:0] nvb_rdata,
-    input  wire        nv_dirty
+    input  wire        nv_dirty,
+    output reg         loaded           // the image has been read in once since rst (the machine waits for it)
 );
     assign sd_blk_cnt  = 6'd15;                  // 16 x 512 = 8 KB per request
     assign nvb_addr    = sd_buff_addr[12:0];
@@ -45,7 +46,7 @@ module nvsave #(
     always @(posedge clk) begin
         if (rst) begin
             sd_rd <= 1'b0; sd_wr <= 1'b0; busy <= 1'b0; ack_seen <= 1'b0;
-            dirty <= 1'b0; quiet <= 32'd0;
+            dirty <= 1'b0; quiet <= 32'd0; loaded <= 1'b0;
         end else begin
             if (nv_dirty) begin dirty <= 1'b1; quiet <= QUIET; end
             else if (quiet != 32'd0) quiet <= quiet - 32'd1;
@@ -61,7 +62,7 @@ module nvsave #(
 
             if (busy) begin
                 if (sd_ack) begin sd_rd <= 1'b0; sd_wr <= 1'b0; ack_seen <= 1'b1; end
-                else if (ack_seen) begin busy <= 1'b0; ack_seen <= 1'b0; end
+                else if (ack_seen) begin busy <= 1'b0; ack_seen <= 1'b0; if (sd_rd_phase) loaded <= 1'b1; end
             end
         end
     end
