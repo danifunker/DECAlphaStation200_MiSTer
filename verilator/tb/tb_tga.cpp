@@ -394,6 +394,18 @@ int main(int argc, char **argv) {
         for (int k = 0; k < 256; k++) put(d + k, src[k], true);
     }
     wait_idle(); compare("COPY64 rows (NT)");
+    // ... with 8-byte aligned addresses and the byte offset in the pixel shift (038), as NT does:
+    // destination byte d + k comes from source byte s - shift + k
+    for (int row = 0; row < 32; row++) {
+        int sh = row & 7;
+        reg_wr(0x38, sh);
+        uint32_t s = 0x4E000 + row * 336, d = 0x15000 + row * 640;
+        std::vector<uint8_t> src(ref.begin() + s - sh, ref.begin() + s - sh + 256);
+        for (int p = 0; p < 4; p++) { reg_wr(0x160 + 8 * p, s + 64 * p); reg_wr(0x164 + 8 * p, d + 64 * p); }
+        for (int k = 0; k < 256; k++) put(d + k, src[k], true);
+    }
+    reg_wr(0x38, 0);
+    wait_idle(); compare("COPY64 with pixel shift (NT)");
 
     // lines (modes 02/06) as NT's tga.dll draws them: width 09C, address 03C, pattern 080,
     // slope register 120 + 4 octant = |dy|<<16 | |dx| (draws <= 16 pixels), continue 04C

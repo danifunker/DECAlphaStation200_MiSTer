@@ -208,6 +208,10 @@ module tga #(
     reg         copy_flag;                  // copy mode: the next write is the destination
     reg  [11:0] rop;
     reg   [3:0] pshift;
+    // COPY64's effective source: the source register less the pixel shift. NT's tga.dll gives
+    // 8-byte aligned addresses and the byte offset in the pixel shift (038); SRM gives byte
+    // addresses with the shift 0
+    wire [20:0] c64e = c64s[20:0] - {17'd0, pshift};
     reg   [8:0] vvbr;
     reg   [4:0] sisr_st, sisr_en;
     reg  [31:0] bc0, bc1;
@@ -419,8 +423,8 @@ module tga #(
                 8'h59, 8'h5B, 8'h5D, 8'h5F: begin
                     // COPY64: 64 bytes from c64s to c_d (frame buffer offsets)
                     c64d <= c_d; copy_flag <= 1'b1;
-                    sr_q <= c64s[20:3]; sr_lo <= 1'b0; sr_k <= 5'd0; sr_next <= 2'd1;
-                    sr_n <= c64s[2:0] == 3'd0 ? 5'd8 : 5'd9;
+                    sr_q <= c64e[20:3]; sr_lo <= 1'b0; sr_k <= 5'd0; sr_next <= 2'd1;
+                    sr_n <= c64e[2:0] == 3'd0 ? 5'd8 : 5'd9;
                     est <= E_SRD;
                 end
                 8'h7C: if (!c_d[8]) begin bt_wr <= 1'b1; bt_rs <= c_d[12:9]; bt_wd <= c_d[7:0]; end
@@ -561,7 +565,7 @@ module tga #(
                     g_q <= c64d[20:3]; g_n <= c64d[2:0] == 3'd0 ? 10'd8 : 10'd9; g_first <= 1'b1;
                     g_bef <= 8'hFF << c64d[2:0]; g_bel <= 8'hFF >> (3'd7 - (c64d[2:0] + 3'd7));
                     g_use_pw <= 1'b0; g_use_st <= 1'b0; g_rop_en <= 1'b1; g_dsel <= D_CPY; g_ret <= 1'b0;
-                    g_fs <= c64s[2:0] - c64d[2:0]; g_m1 <= c64s[2:0] < c64d[2:0]; s_prev <= 64'd0;
+                    g_fs <= c64e[2:0] - c64d[2:0]; g_m1 <= c64e[2:0] < c64d[2:0]; s_prev <= 64'd0;
                     est <= E_GEN;
                 end
                 2'd2: est <= E_DMAW;

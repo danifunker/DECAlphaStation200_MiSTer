@@ -72,7 +72,7 @@ That covers the copy buffer 000-01C, Bresenham, stencil, the Z and colour regist
 | 02C / 05C | pixel mask one-shot / persistent | one-shot until the next frame buffer write; 02C reads the mask in force |
 | 030 | mode | <15:0> stored; reads `{copy toggle <20>, mode}`; a write clears the toggle |
 | 034 | raster op | <3:0> the X11 function code (0 clear ... 3 copy ... 15 set); <11:8> stored |
-| 038 | pixel shift | <3:0> stored, **not applied** |
+| 038 | pixel shift | <3:0>; COPY64 reads from source - shift (NT gives aligned addresses and the offset here; SRM byte addresses with 0). Copy mode 07 ignores it |
 | 03C, 054 | address, start | a write of 054 in a fill mode fills from VRAM byte 03C; 054 reads the revision (03) |
 | 050 | deep | stored; <9> picks the VVBR unit (0: 4 KB, 1: 2 KB, NetBSD's T8-02/T8-01) |
 | 060, 074 | TGA cursor base, XY | stored (060 reads <3:0> = 0); the TGA cursor is **not displayed** (SRM and NetBSD use the Bt485 cursor) |
@@ -248,7 +248,7 @@ Result 2026-11-01: **PASS** (seeds 1-4), with 6.6 M cycles and 5 frames.
 
 ## 10. Gaps
 
-- **Pixel shift:** stored but not applied, and the copy buffer registers 000-01C are not the engine's buffer. Unaligned copies with a shift come out wrong; Linux and NetBSD do not use them.
+- **Pixel shift:** applied to COPY64 only (source - shift, the direction inferred from NT's use). Copy mode 07 ignores it, and the copy buffer registers 000-01C are not the engine's buffer.
 - **Line modes:** 02/06 are drawn (2026-11-03, from NT 4.0 tga.dll's register stream: width 09C, address 03C, pattern 080, slope 100-13C with the octant in the register number, continue 04C). The Bresenham tie rule (step the minor axis when e > 0) is a guess. 0E and the Z and stencil modes are not drawn.
 - **24-plane:** no 24-plane visuals or rotate/visual fields. The ZLXp-E1 has none.
 - **TGA cursor:** CCBR/CXYR/VVVR<2> is not displayed. NetBSD's X server uses it.
