@@ -492,37 +492,64 @@ int main(int argc, char **argv) {
     compare("copy pairs around COPY64 (NT)");
     // right-to-left rows (a window moved right over itself): the pixel shift is negative (-8..-1,
     // written as 4-bit two's complement) and the blocks go down; half the rows overlap (d = s + 20)
-    // The source bytes a block needs beyond its own 64 (because of the shift) come from the
-    // previous block's read, as the 21030's shifter holds them, not from VRAM again (the previous
-    // destination write may have changed them when a window moves over itself)
-    auto c64_rows = [&](bool backward, uint32_t base_s, uint32_t base_d, int ovl, const char *what) {
-        set_mode(0x07);
-        for (int row = 0; row < 32; row++) {
-            int sh = backward ? -1 - (row & 7) : 1 + (row & 6);
-            reg_wr(0x38, (uint32_t)sh & 0xF);
-            uint32_t s = base_s + row * 800;
-            uint32_t d = row & 1 ? s + ovl : base_d + row * 800;
-            std::vector<uint8_t> prev; uint32_t prev_s = 0; bool have = false;
-            for (int i = 0; i < 4; i++) {
-                int p = backward ? 3 - i : i;
-                uint32_t sp = s + 64 * p, dp = d + 64 * p;
-                std::vector<uint8_t> nom(ref.begin() + sp, ref.begin() + sp + 64), src(64);
-                for (int k = 0; k < 64; k++) {
-                    uint32_t a = sp - sh + k;
-                    if (a >= sp && a < sp + 64) src[k] = nom[a - sp];
-                    else if (have && a >= prev_s && a < prev_s + 64) src[k] = prev[a - prev_s];
-                    else src[k] = ref[a];
-                }
-                reg_wr(0x160 + 8 * i, sp); reg_wr(0x164 + 8 * i, dp);
-                for (int k = 0; k < 64; k++) put(dp + k, src[k], true);
-                prev = nom; prev_s = sp; have = true;
+    // NT's screen-to-screen rows (tga.dll vSSCopy8to8) in both directions, sources overlapping
+    // their destinations. Left to right (shift 0..7): a copy-mode pair at the left edge, COPY64s,
+    // a pair at the right edge; a block at A covers A.. upwards. Right to left (shift -8..-1): the
+    // same from the right, and a block is addressed by its last quadword (COPY64 [A-56, A+7],
+    // copy mode [A-24, A+7], mask bit (x - A) & 31). Source bytes are read from the block less the
+    // shift; those beyond the block's own come from the previous block's read (the shifter).
+    {
+        struct Blk { uint32_t ns = 0, len = 0; std::vector<uint8_t> snap; } prev;
+        auto op = [&](bool bwd, bool c64, uint32_t sa, uint32_t da, uint32_t mask, int sh) {
+            uint32_t len = c64 ? 64 : 32;
+            uint32_t ns = bwd ? (sa & ~7u) - (len - 8) : (c64 ? sa : sa & ~3u);
+            uint32_t ds = bwd ? (da & ~7u) - (len - 8) : (c64 ? da : da & ~3u);
+            std::vector<uint8_t> snap(ref.begin() + ns, ref.begin() + ns + len), out(len);
+            for (uint32_t k = 0; k < len; k++) {
+                uint32_t a = ns - sh + k;
+                if (a >= ns && a < ns + len) out[k] = snap[a - ns];
+                else if (prev.len && a >= prev.ns && a < prev.ns + prev.len) out[k] = prev.snap[a - prev.ns];
+                else out[k] = ref[a];
             }
+            if (c64) {
+                reg_wr(0x160, sa); reg_wr(0x164, da);
+                for (uint32_t k = 0; k < len; k++) put(ds + k, out[k], true);
+            } else {
+                fb_wr(sa, 0xFFFFFFFF); fb_wr(da, mask);
+                for (uint32_t k = 0; k < len; k++) {
+                    uint32_t bit = bwd ? (k + 8 - (da & 7)) & 31 : k;
+                    if (mask >> bit & 1) put(ds + k, out[k], true);
+                }
+            }
+            prev.ns = ns; prev.len = len; prev.snap = snap;
+        };
+        for (int dir = 0; dir < 2; dir++) {
+            bool bwd = dir == 1;
+            set_mode(0x07);
+            for (int row = 0; row < 48; row++) {
+                int sh = bwd ? -1 - (int)(rng() % 8) : (int)(rng() % 8);
+                reg_wr(0x38, (uint32_t)sh & 0xF);
+                int nb = 1 + rng() % 4;                       // COPY64 blocks between the pairs
+                // destination row; the source overlaps it (a window moved by a few pixels) in odd rows
+                uint32_t d0 = 0x6A000 + dir * 0x10000 + row * 800 + 8 * (rng() % 8);
+                int delta = row & 1 ? (int)(8 * (1 + rng() % 4)) : 800 * 27 + 8 * (int)(rng() % 4);
+                uint32_t s0 = d0 - (bwd ? delta : -delta);
+                uint32_t ml = 0xFFFFFFFFu << (rng() % 32), mr = 0xFFFFFFFFu >> (rng() % 32);
+                if (!bwd) {
+                    op(false, false, s0, d0, ml, sh);
+                    for (int b = 0; b < nb; b++) op(false, true, s0 + 32 + 64 * b, d0 + 32 + 64 * b, 0, sh);
+                    op(false, false, s0 + 32 + 64 * nb, d0 + 32 + 64 * nb, mr, sh);
+                } else {
+                    uint32_t dr = d0 + 32 + 64 * nb, sr = s0 + 32 + 64 * nb;   // right pair first
+                    op(true, false, sr, dr, ml, sh);
+                    for (int b = 0; b < nb; b++) op(true, true, sr - 32 - 64 * b, dr - 32 - 64 * b, 0, sh);
+                    op(true, false, sr - 64 * nb - 32, dr - 64 * nb - 32, mr, sh);
+                }
+            }
+            reg_wr(0x38, 0); wait_idle(); set_mode(0);
+            compare(bwd ? "NT rows right to left" : "NT rows left to right");
         }
-        reg_wr(0x38, 0); wait_idle(); set_mode(0);
-        compare(what);
-    };
-    c64_rows(true, 0x66000, 0x76000, 24, "COPY64 right to left, negative shift (NT)");
-    c64_rows(false, 0x68000, 0x78000, -24, "COPY64 left to right over itself (NT)");
+    }
     printf("tb_tga: copies done\n");
 
     // ------------------------------------------------ 6. DMA: SRM's scroll of one 1028-byte line

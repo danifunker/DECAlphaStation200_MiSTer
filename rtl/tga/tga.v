@@ -217,7 +217,13 @@ module tga #(
     // the shift is signed (-8..7): NT's right-to-left copies (a window moved right over itself)
     // write (dst_end & 7) - (src_end & 7), less 8 when not negative
     wire [20:0] psx  = {{17{pshift[3]}}, pshift};
-    wire [20:0] c64e = c64s[20:0] - psx;
+    // a negative shift is a right-to-left copy: then a block is addressed by its last quadword
+    // (NT's rows: right copy pair, COPY64s, left copy pair). COPY64 covers [A&~7 - 56, A|7]
+    // and a copy-mode pair [A&~7 - 24, A|7], destination and (less the shift) source alike
+    wire        bwd  = pshift[3];
+    wire [20:0] c64sb = bwd ? {c64s[20:3], 3'b000} - 21'd56 : c64s[20:0];   // block starts
+    wire [20:0] c64db = bwd ? {c64d[20:3], 3'b000} - 21'd56 : c64d[20:0];
+    wire [20:0] c64e = c64sb - psx;
     reg   [8:0] vvbr;
     reg   [4:0] sisr_st, sisr_en;
     reg  [31:0] bc0, bc1;
@@ -296,7 +302,10 @@ module tga #(
     reg   [3:0] c_be;
     reg  [31:0] c_d;
     wire  [7:0] c_idx = c_off[9:2];
-    wire [20:0] cp_src = {c_off[20:2], 2'b00} - psx;   // copy mode's source start
+    wire [20:0] cp_blk = pshift[3] ? {c_off[20:3], 3'b000} - 21'd24 : {c_off[20:2], 2'b00};  // copy mode's block
+    wire [20:0] cp_src = cp_blk - {{17{pshift[3]}}, pshift};   // ... and its source start
+    // right to left: pixel (A&~7) - 24 + j has mask bit (j + 8 - (A&7)) & 31
+    wire [31:0] cp_msk = !pshift[3] ? c_d : c_off[2] ? {c_d[3:0], c_d[31:4]} : {c_d[7:0], c_d[31:8]};
     wire  [7:0] m8 = mode[7:0];
     // transparent is mode bit 2 (21030: 05 transparent stipple, 25 transparent fill, as 0D/2D block;
     // Linux tgafb's values, and what NT's tga.dll draws its text with); 03/23 are kept as the same
@@ -445,10 +454,10 @@ module tga #(
                     // COPY64: 64 bytes from c64s to c_d (frame buffer offsets)
                     c64d <= c_d; copy_flag <= 1'b0;   // destination: 0 again (NT follows COPY64 with copy-mode pairs)
                     sr_lo <= 1'b0; sr_k <= 5'd0; sr_next <= 2'd1;
-                    nom_lo <= c64s[20:3]; nom_hi <= c64s[20:3] + (c64s[2:0] != 3'd0 ? 18'd8 : 18'd7);
-                    sr_skip <= c64e[20:3] == c64s[20:3] + 18'd1 && c64e[2:0] == 3'd0;
-                    sr_q <= (c64e[20:3] == c64s[20:3] + 18'd1 && c64e[2:0] == 3'd0) ? c64s[20:3] : c64e[20:3];
-                    sr_n <= c64e[2:0] == 3'd0 ? (c64e[20:3] == c64s[20:3] + 18'd1 ? 5'd9 : 5'd8) : 5'd9;
+                    nom_lo <= c64sb[20:3]; nom_hi <= c64sb[20:3] + (c64sb[2:0] != 3'd0 ? 18'd8 : 18'd7);
+                    sr_skip <= c64e[20:3] == c64sb[20:3] + 18'd1 && c64e[2:0] == 3'd0;
+                    sr_q <= (c64e[20:3] == c64sb[20:3] + 18'd1 && c64e[2:0] == 3'd0) ? c64sb[20:3] : c64e[20:3];
+                    sr_n <= c64e[2:0] == 3'd0 ? (c64e[20:3] == c64sb[20:3] + 18'd1 ? 5'd9 : 5'd8) : 5'd9;
                     est <= E_SRD;
                 end
                 8'h7C: if (!c_d[8]) begin bt_wr <= 1'b1; bt_rs <= c_d[12:9]; bt_wd <= c_d[7:0]; end
@@ -480,21 +489,21 @@ module tga #(
                     // NT's vSSCopy8to8 does its window edges this way with the shift set)
                     copy_flag <= 1'b1; cp_p0 <= cp_src;
                     sr_k <= 5'd0; sr_lo <= 1'b0; sr_next <= 2'd0;
-                    nom_lo <= c_off[20:3]; nom_hi <= c_off[20:3] + (c_off[2] ? 18'd4 : 18'd3);
-                    sr_skip <= cp_src[20:3] == c_off[20:3] + 18'd1 && cp_src[2:0] == 3'd0;
-                    sr_q <= (cp_src[20:3] == c_off[20:3] + 18'd1 && cp_src[2:0] == 3'd0) ? c_off[20:3] : cp_src[20:3];
-                    sr_n <= (cp_src[20:3] == c_off[20:3] + 18'd1 && cp_src[2:0] == 3'd0) ? 5'd6 : 5'd5;
+                    nom_lo <= cp_blk[20:3]; nom_hi <= cp_blk[20:3] + (cp_blk[2] ? 18'd4 : 18'd3);
+                    sr_skip <= cp_src[20:3] == cp_blk[20:3] + 18'd1 && cp_src[2:0] == 3'd0;
+                    sr_q <= (cp_src[20:3] == cp_blk[20:3] + 18'd1 && cp_src[2:0] == 3'd0) ? cp_blk[20:3] : cp_src[20:3];
+                    sr_n <= (cp_src[20:3] == cp_blk[20:3] + 18'd1 && cp_src[2:0] == 3'd0) ? 5'd6 : 5'd5;
                     est <= E_SRD;
                 end else begin
                     // copy, destination: the 32 pixels the data selects (and the pixel mask)
                     copy_flag <= 1'b0;
-                    g_q <= c_off[20:3]; g_n <= c_off[2] ? 10'd5 : 10'd4;
+                    g_q <= cp_blk[20:3]; g_n <= cp_blk[2] ? 10'd5 : 10'd4;
                     g_bef <= 8'hFF; g_bel <= 8'hFF;
-                    g_st <= {8'd0, c_d} << {c_off[2], 2'b00};
-                    g_pw <= {8'd0, pxm} << {c_off[2], 2'b00};
+                    g_st <= {8'd0, cp_msk} << {cp_blk[2], 2'b00};
+                    g_pw <= {8'd0, pshift[3] ? (c_off[2] ? {pxm[3:0], pxm[31:4]} : {pxm[7:0], pxm[31:8]}) : pxm} << {cp_blk[2], 2'b00};
                     g_use_pw <= 1'b1; g_use_st <= 1'b1; g_rop_en <= 1'b1; g_dsel <= D_CPY;
-                    g_fs <= cp_p0[2:0] - {c_off[2], 2'b00};
-                    g_m1 <= cp_p0[2:0] < {c_off[2], 2'b00};
+                    g_fs <= cp_p0[2:0] - cp_blk[2:0];
+                    g_m1 <= cp_p0[2:0] < cp_blk[2:0];
                     s_prev <= 64'd0;
                     est <= E_GEN;
                 end
@@ -601,10 +610,10 @@ module tga #(
                 case (sr_next)
                 2'd1: begin
                     // COPY64 destination: 64 bytes
-                    g_q <= c64d[20:3]; g_n <= c64d[2:0] == 3'd0 ? 10'd8 : 10'd9; g_first <= 1'b1;
-                    g_bef <= 8'hFF << c64d[2:0]; g_bel <= 8'hFF >> (3'd7 - (c64d[2:0] + 3'd7));
+                    g_q <= c64db[20:3]; g_n <= c64db[2:0] == 3'd0 ? 10'd8 : 10'd9; g_first <= 1'b1;
+                    g_bef <= 8'hFF << c64db[2:0]; g_bel <= 8'hFF >> (3'd7 - (c64db[2:0] + 3'd7));
                     g_use_pw <= 1'b0; g_use_st <= 1'b0; g_rop_en <= 1'b1; g_dsel <= D_CPY; g_ret <= 1'b0;
-                    g_fs <= c64e[2:0] - c64d[2:0]; g_m1 <= c64e[2:0] < c64d[2:0]; s_prev <= 64'd0;
+                    g_fs <= c64e[2:0] - c64db[2:0]; g_m1 <= c64e[2:0] < c64db[2:0]; s_prev <= 64'd0;
                     est <= E_GEN;
                 end
                 2'd2: est <= E_DMAW;
