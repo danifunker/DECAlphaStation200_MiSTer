@@ -52,7 +52,8 @@ assign BUTTONS = 0;
 //   15:14    TOY year            (0 from the MiSTer RTC, 1 1999)
 //   16       Console             (0 SRM, 1 ARC: the TOY CMOS 3Fh at reset)
 //   20       Halt button         (T: an action)
-//   28:27    Serial port         (0 COM1, 1 the TGA trace, 2 the CPU trace (PAL entries); rtl/mister/dbg_trace.v)
+//   28:27    Serial port         (0 COM1, 1 the TGA trace, 2 the CPU trace (PAL entries), 3 the CPU trace without the
+//                                frequent entries; rtl/mister/dbg_trace.v)
 //   26       Video debug         (the overlay; rtl/mister/dbg_overlay.v)
 //   24       CPU state line      (the terminal prints PC, PAL mode, irq_h, retired count each second)
 //   23:21    Network interface   (0 eth0, 1 None, 2 eth1, 3 macvlan, 4 tap0; read by Main, not latched)
@@ -98,7 +99,7 @@ localparam CONF_STR = {
 	"P5O[13],J6 flash write,Enabled,Disabled;",
 	"P5O[15:14],TOY year,From RTC,1999;",
 	"P5O[24],CPU state line,Off,On;",
-	"P5O[28:27],Serial port,COM1,TGA trace,CPU trace;",
+	"P5O[28:27],Serial port,COM1,TGA trace,CPU trace,CPU exceptions;",
 	"P5O[26],Video debug,Off,On;",
 	"P5-;",
 	"P5SC4,NVR,NVRAM image;",

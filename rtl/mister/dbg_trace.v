@@ -7,6 +7,10 @@
 //   Fmm nnnnnnnn     nnnnnnnn frame buffer writes, the mode now mm
 // sel = 2, the CPU trace: a line per PAL entry (exception, interrupt, CALL_PAL):
 //   Eoooo aaaaaaaa vvvvvvvv   PAL offset oooo, EXC_ADDR<31:0>, VA<31:0>
+// sel = 3, the CPU exceptions: the same lines without the frequent entries (ITB/DTB misses,
+//   interrupts, and the CALL_PALs NT makes thousands of times a second: 06 08 09 0E 0F 1C 1E 3F,
+//   86 83 AB), so arithmetic, unaligned, opcode and access faults, gentrap, bugcheck and reboot
+//   all get through the UART
 // Events go into a 1024-entry ring that overwrites the oldest: when the UART falls behind,
 // the oldest are lost (a line "Dnnnnnnnn" counts them), so after a hang or a halt the last
 // 1024 events before it are still sent.
@@ -14,7 +18,7 @@ module dbg_trace #(
     parameter CLK_HZ = 100000000
 ) (
     input  wire        clk,
-    input  wire  [1:0] sel,             // 0 off, 1 TGA, 2 CPU
+    input  wire  [1:0] sel,             // 0 off, 1 TGA, 2 CPU, 3 CPU exceptions
     input  wire        rw,              // a TGA register write
     input  wire  [7:0] ri,              // its longword index
     input  wire [31:0] rd,
@@ -37,11 +41,15 @@ module dbg_trace #(
     wire        tick_now = {9'd0, tick} == CLK_HZ / 20 - 1;
     reg         push;
     reg  [79:0] pv;
+    wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0 || ent_off == 14'h09E0 || ent_off == 14'h00E0 ||
+                      ent_off == 14'h2180 || ent_off == 14'h2200 || ent_off == 14'h2240 || ent_off == 14'h2380 ||
+                      ent_off == 14'h23C0 || ent_off == 14'h2700 || ent_off == 14'h2780 || ent_off == 14'h2FC0 ||
+                      ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0;
     always @* begin
         push = 1'b0; pv = 80'd0;
         if (sel == 2'd1 && rw) begin push = 1'b1; pv = {2'd0, 6'd0, ri, rd, 32'd0}; end
         else if (sel == 2'd1 && tick_now && fcnt != 32'd0) begin push = 1'b1; pv = {2'd1, 6'd0, mode, fcnt, 32'd0}; end
-        else if (sel == 2'd2 && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
+        else if ((sel == 2'd2 || (sel == 2'd3 && !hot)) && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
     end
     always @(posedge clk) begin
         tick <= tick_now ? 23'd0 : tick + 23'd1;
