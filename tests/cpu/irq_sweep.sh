@@ -1,5 +1,5 @@
 #!/bin/sh
-# Interrupts at random points: the T0 suites and gen_memx.py seeds built with T0_IRQ
+# Interrupts at random points: the T0 suites, gen_memx.py and gen_vmx.py (DTB misses) seeds built with T0_IRQ
 # (rt/t0_pal.h: a transparent handler for irq_h[0]) run on the pipelined core with
 # IRQRATE=R (tb_cpu: irq_h[0] at random), and must still pass, with the native part of
 # the retire trace (the PALmode handler's lines dropped) the same as alphaemu's run
@@ -19,7 +19,7 @@ python3 -I gen_int.py build >/dev/null
 one() {   # $1 = name, $2 = source .S
   ${X}cpp -P -I rt -DT0_IRQ $2 > $B/$1.s && ${X}as -m21064 -o $B/$1.o $B/$1.s &&
   ${X}ld -N -Ttext=0 -e _start -o $B/$1.elf $B/$1.o && ${X}objcopy -O binary $B/$1.elf $B/$1.bin || { echo "BUILD $1"; fails=$((fails+1)); return; }
-  $EMU -P -H 0x800000 -m 16 -l $B/$1.bin@0:0 -p 0 -T $B/$1.trace 2>/dev/null
+  $EMU -P -V 0x7F0000 -H 0x800000 -m 16 -l $B/$1.bin@0:0 -p 0 -T $B/$1.trace 2>/dev/null
   grep -v '^0000000000' $B/$1.trace > $B/$1.ntrace
   for r in $rates; do
     for mode in "" "MEMDELAY=20 FASTLINE=1"; do
@@ -34,5 +34,8 @@ one() {   # $1 = name, $2 = source .S
   done
 }
 for s in inta intl ints intm lda mem branch; do one $s build/$s.S; done
-for seed in $(seq 1 $nseeds); do python3 -I gen_memx.py $B/memx$seed.S $seed 3000; one memx$seed $B/memx$seed.S; done
+for seed in $(seq 1 $nseeds); do
+  python3 -I gen_memx.py $B/memx$seed.S $seed 3000; one memx$seed $B/memx$seed.S
+  python3 -I gen_vmx.py $B/vmx$seed.S $seed 3000; one vmx$seed $B/vmx$seed.S
+done
 echo "done, $fails failures"

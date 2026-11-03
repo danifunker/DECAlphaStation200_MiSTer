@@ -31,6 +31,10 @@
  * PA = VA[33:0] like every other address). -H <pa> stops on a store to
  * that physical address: value 1 = exit 0, anything else = exit 1.
  *
+ * -V <pa>: addresses in [0x20000000, 0x20080000) (64 pages of 8 KB) are translated through
+ * a flat table of 64 PTEs at physical address <pa> (PFN in [52:32]), the table
+ * tests/cpu/gen_vmx.py writes and rt/t0_pal.h T0_DTBFILL's DTB miss handler reads.
+ *
  * -T writes one line per retired instruction for lockstep comparison with
  * the RTL: "<pc> <insn> [r<n>=<value>] [m<addr>=<value>/<size>]".
  */
@@ -51,6 +55,8 @@ static int pal_mode; static u64 ipr[256]; static u64 tohost = ~0ULL;
 static FILE *tf;                                /* -T trace */
 static u64 t_maddr, t_mval; static int t_msize; /* the instruction's store, for -T */
 
+static u64 vtab = ~0ULL;                        /* -V */
+
 static void die(const char *m) { fprintf(stderr, "FATAL @pc=%#" PRIx64 ": %s\n", pc, m); exit(2); }
 
 static u64 pa(u64 a, int n) {
@@ -60,6 +66,11 @@ static u64 pa(u64 a, int n) {
         return a;
     }
     if ((a >> 31) == 0x1ffffffffULL) a &= 0x7fffffffULL;   /* NT 32-bit superpage 0x80000000 -> PA 0 */
+    if (vtab != ~0ULL && a >= 0x20000000ULL && a < 0x20080000ULL) {
+        u64 pte; if (vtab + (((a >> 13) & 63) + 1) * 8 > memsize) die("-V table out of range");
+        memcpy(&pte, mem + vtab + ((a >> 13) & 63) * 8, 8);
+        a = ((pte >> 32) & 0x1fffff) << 13 | (a & 0x1fff);
+    }
     a &= 0x3ffffffffULL;
     if (a + n > memsize) { fprintf(stderr, "bad addr %#" PRIx64 "\n", a); die("memory access out of range"); }
     return a;
@@ -102,6 +113,7 @@ int main(int argc, char **argv) {
             char *s = argv[++i]; dumps[nd].a = strtoull(s, &s, 0); dumps[nd].l = strtoull(s + 1, &s, 0); dumps[nd].f = s + 1; nd++;
         } else if (!strcmp(argv[i], "-e")) { elf = argv[++i]; have_pc = 1;
         } else if (!strcmp(argv[i], "-P")) { pal_mode = 1;
+        } else if (!strcmp(argv[i], "-V")) { vtab = strtoull(argv[++i], 0, 0);
         } else if (!strcmp(argv[i], "-H")) { tohost = strtoull(argv[++i], 0, 0);
         } else if (!strcmp(argv[i], "-T")) { tf = fopen(argv[++i], "w"); if (!tf) die("open trace");
         } else if (!strcmp(argv[i], "-r")) {

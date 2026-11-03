@@ -56,7 +56,28 @@ _start:
 	T0_VEC	0x01E0			// D_FAULT
 	T0_VEC	0x03E0			// ITB_MISS
 	T0_VEC	0x07E0			// ITB_ACV
+#ifdef T0_DTBFILL
+	// T0_DTBFILL (tests/cpu/gen_vmx.py): native DTB misses are filled from 64 PTEs at
+	// PA 0x7F0000 indexed by VA<18:13>; $1, $2 saved in PAL_TEMP 1, 2
+	.org	0x08E0
+	hw_mtpr	$1, 0x81
+	hw_mtpr	$2, 0x82
+	hw_mfpr	$1, 0x45		// VA (unlocks it)
+	hw_mtpr	$31, 0x40		// TB_CTL: an 8 KB page
+	hw_mtpr	$1, 0x20		// TB_TAG
+	srl	$1, 13, $1
+	and	$1, 63, $1
+	lda	$2, 0x7F($31)
+	sll	$2, 16, $2
+	s8addq	$1, $2, $1
+	hw_ldq/p $2, 0($1)
+	hw_mtpr	$2, 0x42		// DTB_PTE: the entry is written
+	hw_mfpr	$1, 0x81
+	hw_mfpr	$2, 0x82
+	hw_rei				// the instruction runs again
+#else
 	T0_VEC	0x08E0			// DTB_MISS native
+#endif
 	T0_VEC	0x09E0			// DTB_MISS PAL
 	T0_VEC	0x11E0			// UNALIGN
 	T0_VEC	0x13E0			// OPCDEC
