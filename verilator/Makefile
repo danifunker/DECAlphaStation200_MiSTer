@@ -111,6 +111,7 @@ t3: obj_pipe/Vev4_core
 	obj_pipe/Vev4_core $(T0)/t3_fparith.bin --trace $(T0)/t3_fparith.pipe.trace
 	obj_pipe/Vev4_core $(T0)/t3_dfill.bin --trace $(T0)/t3_dfill.pipe.trace
 	obj_pipe/Vev4_core $(T0)/t3_lock.bin --iosink --trace $(T0)/t3_lock.pipe.trace
+	obj_pipe/Vev4_core $(T0)/t3_intrprio.bin --trace $(T0)/t3_intrprio.pipe.trace
 
 .PHONY: cputest cputest-pipe sromload t3
 

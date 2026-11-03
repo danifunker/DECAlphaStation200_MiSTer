@@ -434,10 +434,13 @@ module ev4_core (
         6'h38, 6'h39, 6'h3A, 6'h3B, 6'h3C, 6'h3D, 6'h3E, 6'h3F: begin dc_cls = C_CBR; dc_ua = 1'b1; end
         default: dc_exc = E_OPCDEC;
         endcase
-        if (d_exc == E_NONE && intr_req) begin        // an interrupt: this instruction does not run
-            dc_exc = E_INTR; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0;
-        end
-        if (d_exc != E_NONE) begin                    // fetch fault: nothing else happens
+        // an interrupt: this instruction does not run. It outranks the instruction's own fetch
+        // faults (ITB miss/ACV; HRM Table 4-1, cpu.md 5.1): NT's first user instruction of a new
+        // thread (kernel32!BaseProcessStart, not mapped yet) is reached with the APC software
+        // interrupt pending, and the APC (ntdll's loader) must run before that fetch faults
+        if (intr_req) begin
+            dc_exc = E_INTR; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0; dc_ser = 1'b0; dc_fpu = 1'b0;
+        end else if (d_exc != E_NONE) begin           // fetch fault: nothing else happens
             dc_exc = d_exc; dc_cls = C_NOP; dc_dst_v = 1'b0; dc_ua = 1'b0; dc_ub = 1'b0; dc_ser = 1'b0; dc_fpu = 1'b0;
         end
         if (dc_exc != E_NONE) begin dc_dst_v = 1'b0; dc_ser = 1'b1; dc_fpu = 1'b0; end   // faults retire alone
