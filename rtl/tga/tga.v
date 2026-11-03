@@ -88,6 +88,9 @@ module tga #(
     output reg   [7:0] dbg_ri,
     output reg  [31:0] dbg_rd,
     output reg         dbg_fw,          // a frame buffer write in mode dbg_mode
+    output reg  [20:0] dbg_fa,          // ... its offset, data and byte enables
+    output reg  [31:0] dbg_fd,
+    output reg   [3:0] dbg_fbe,
     output wire  [7:0] dbg_mode,
     output wire [319:0] dbg_st          // {24 zero, mode 16, rop 12, pshift 4, deep 32, pm 32, pxm_p 32, pxm_os 32,
                                         //  fg 32, bg 32, vvbr 16, cr0 8, cr2 8, cr3 8, pixmask 8, cur_x 12, cur_y 12}
@@ -433,7 +436,7 @@ module tga #(
                 endcase
             end else begin
                 // the frame buffer: by mode
-                dbg_fw <= 1'b1;
+                dbg_fw <= 1'b1; dbg_fa <= c_off; dbg_fd <= c_d; dbg_fbe <= c_be;
                 os_v <= 1'b0;
                 g_first <= 1'b1; g_rot <= 1'b0; g_ret <= 1'b0; g_m1 <= 1'b0; g_fs <= 3'd0;
                 case (m8)

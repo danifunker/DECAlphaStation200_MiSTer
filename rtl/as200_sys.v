@@ -154,6 +154,9 @@ module as200_sys #(
     output wire  [7:0] tdbg_ri,
     output wire [31:0] tdbg_rd,
     output wire        tdbg_fw,
+    output wire [20:0] tdbg_fa,
+    output wire [31:0] tdbg_fd,
+    output wire  [3:0] tdbg_fbe,
     output wire  [7:0] tdbg_mode,
     output wire [319:0] tdbg_st
 );
@@ -304,7 +307,7 @@ module as200_sys #(
         .sc_req(sc_req), .sc_addr(sc_addr), .sc_len(sc_len), .sc_ack(sc_ack), .sc_rvalid(sc_rvalid), .sc_rdata(sc_rdata),
         .clk_pix(clk_pix), .ce_pix(tga_ce), .hs(tga_hs), .vs(tga_vs), .de(tga_de), .hblank(tga_hb), .vblank(tga_vb),
         .r(tga_r), .g(tga_g), .b(tga_b), .video_on(tga_on),
-        .dbg_rw(tdbg_rw), .dbg_ri(tdbg_ri), .dbg_rd(tdbg_rd), .dbg_fw(tdbg_fw), .dbg_mode(tdbg_mode), .dbg_st(tdbg_st)
+        .dbg_rw(tdbg_rw), .dbg_ri(tdbg_ri), .dbg_rd(tdbg_rd), .dbg_fw(tdbg_fw), .dbg_fa(tdbg_fa), .dbg_fd(tdbg_fd), .dbg_fbe(tdbg_fbe), .dbg_mode(tdbg_mode), .dbg_st(tdbg_st)
     );
 
     // the 21040 Ethernet (device 11, IDSEL AD22, PIRQ0; rtl/net, docs/design/ethernet.md)

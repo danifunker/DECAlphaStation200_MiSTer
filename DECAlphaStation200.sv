@@ -321,6 +321,9 @@ wire        dbg_ent;                // the CPU's PAL entries (dbg_trace)
 wire [13:0] dbg_ent_off;
 wire [63:0] dbg_exc_addr, dbg_va;
 wire        tdbg_rw, tdbg_fw;       // the TGA's debug taps (dbg_trace, dbg_overlay)
+wire [20:0] tdbg_fa;
+wire [31:0] tdbg_fd;
+wire  [3:0] tdbg_fbe;
 wire  [7:0] tdbg_ri, tdbg_mode;
 wire [31:0] tdbg_rd;
 wire [319:0] tdbg_st;
@@ -331,7 +334,7 @@ assign UART_TXD = status[28:27] != 2'd0 ? trace_txd : com1_txd;
 dbg_trace #(.CLK_HZ(100000000)) dbg_trace
 (
 	.clk(clk_sys), .sel(status[28:27]),
-	.rw(tdbg_rw), .ri(tdbg_ri), .rd(tdbg_rd), .fw(tdbg_fw), .mode(tdbg_mode),
+	.rw(tdbg_rw), .ri(tdbg_ri), .rd(tdbg_rd), .fw(tdbg_fw), .fa(tdbg_fa), .fd(tdbg_fd), .fbe(tdbg_fbe), .mode(tdbg_mode),
 	.ent(dbg_ent), .ent_off(dbg_ent_off), .ent_pc(dbg_exc_addr[31:0]), .ent_va(dbg_va[31:0]), .txd(trace_txd)
 );
 wire [63:0] dbg_pc;
@@ -403,7 +406,7 @@ as200_sys machine
 	.dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
 	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize(), .dbg_pal(dbg_pal), .dbg_irqh(dbg_irqh),
 	.dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va),
-	.tdbg_rw(tdbg_rw), .tdbg_ri(tdbg_ri), .tdbg_rd(tdbg_rd), .tdbg_fw(tdbg_fw), .tdbg_mode(tdbg_mode), .tdbg_st(tdbg_st)
+	.tdbg_rw(tdbg_rw), .tdbg_ri(tdbg_ri), .tdbg_rd(tdbg_rd), .tdbg_fw(tdbg_fw), .tdbg_fa(tdbg_fa), .tdbg_fd(tdbg_fd), .tdbg_fbe(tdbg_fbe), .tdbg_mode(tdbg_mode), .tdbg_st(tdbg_st)
 );
 
 // audio into the audio clock (rtl/audio/audio_cdc.v)

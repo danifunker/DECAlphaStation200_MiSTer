@@ -2,19 +2,19 @@
 // (`stty -F /dev/ttyS1 921600 raw; cat /dev/ttyS1` on the MiSTer; tools/tgatrace.sh): the HPS UART
 // runs from 100 MHz, so its "921600" is 6.25 MHz / 7 = 892857, which this sends exactly (100 MHz / 112).
 //
-// sel = 1, the TGA trace: a line per TGA register write and, every 50 ms, the frame buffer
-// writes since the last report:
-//   Rooo dddddddd    a register write: byte offset ooo (0x1F0 = RAMDAC, value RS<<9 | data)
-//   Fmm nnnnnnnn     nnnnnnnn frame buffer writes, the mode now mm
+// sel = 1, the TGA trace: a line per TGA register write and per frame buffer write:
+//   Rooo dddddddd            a register write: byte offset ooo (0x1F0 = RAMDAC, value RS<<9 | data;
+//                            the cursor position writes, RS 12-15, are left out)
+//   Wmm b oooooo dddddddd    a frame buffer write in mode mm: byte enables b, offset, data
 // sel = 2, the CPU trace: a line per PAL entry (exception, interrupt, CALL_PAL):
 //   Eoooo aaaaaaaa vvvvvvvv   PAL offset oooo, EXC_ADDR<31:0>, VA<31:0>
 // sel = 3, the CPU exceptions: the same lines without the frequent entries (ITB/DTB misses,
 //   interrupts, and the CALL_PALs NT makes thousands of times a second: 06 08 09 0E 0F 1C 1E 3F,
 //   86 83 AB), so arithmetic, unaligned, opcode and access faults, gentrap, bugcheck and reboot
 //   all get through the UART
-// Events go into a 1024-entry ring that overwrites the oldest: when the UART falls behind,
+// Events go into a 4096-entry ring that overwrites the oldest: when the UART falls behind,
 // the oldest are lost (a line "Dnnnnnnnn" counts them), so after a hang or a halt the last
-// 1024 events before it are still sent.
+// 4096 events before it are still sent.
 module dbg_trace #(
     parameter CLK_HZ = 100000000
 ) (
@@ -24,6 +24,9 @@ module dbg_trace #(
     input  wire  [7:0] ri,              // its longword index
     input  wire [31:0] rd,
     input  wire        fw,              // a TGA frame buffer write
+    input  wire [20:0] fa,              // its offset, data and byte enables
+    input  wire [31:0] fd,
+    input  wire  [3:0] fbe,
     input  wire  [7:0] mode,
     input  wire        ent,             // a PAL entry
     input  wire [13:0] ent_off,
@@ -34,12 +37,10 @@ module dbg_trace #(
     wire en = sel != 2'd0;
 
     // ---------------------------------------------------------------- events
-    // {type 2: 0 R, 1 F, 3 E; a 14; d 32; e 32}
-    reg  [79:0] evq [0:1023];
-    reg   [9:0] ew, er;                 // write, read (er chases ew; lapped -> skip ahead)
-    reg  [31:0] fcnt, lost;
-    reg  [22:0] tick;
-    wire        tick_now = {9'd0, tick} == CLK_HZ / 20 - 1;
+    // {type 2: 0 R, 1 W, 3 E; a 14; d 32; e 32}; W: {1, 0, be 4, mode 8, 12 zero, offset 21, data 32}
+    reg  [79:0] evq [0:4095];
+    reg  [11:0] ew, er;                 // write, read (er chases ew; lapped -> skip ahead)
+    reg  [31:0] lost;
     reg         push;
     reg  [79:0] pv;
     wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0 || ent_off == 14'h09E0 || ent_off == 14'h00E0 ||
@@ -48,16 +49,13 @@ module dbg_trace #(
                       ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0;
     always @* begin
         push = 1'b0; pv = 80'd0;
-        if (sel == 2'd1 && rw) begin push = 1'b1; pv = {2'd0, 6'd0, ri, rd, 32'd0}; end
-        else if (sel == 2'd1 && tick_now && fcnt != 32'd0) begin push = 1'b1; pv = {2'd1, 6'd0, mode, fcnt, 32'd0}; end
+        if (sel == 2'd1 && rw && !(ri == 8'h7C && rd[12:11] == 2'b11)) begin push = 1'b1; pv = {2'd0, 6'd0, ri, rd, 32'd0}; end
+        else if (sel == 2'd1 && fw) begin push = 1'b1; pv = {2'd1, 1'b0, fbe, mode, 12'd0, fa, fd}; end
         else if ((sel == 2'd2 || (sel == 2'd3 && !hot)) && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
     end
     always @(posedge clk) begin
-        tick <= tick_now ? 23'd0 : tick + 23'd1;
-        if (sel == 2'd1 && fw) fcnt <= (tick_now && fcnt != 32'd0) ? 32'd1 : fcnt + 32'd1;
-        else if (tick_now && fcnt != 32'd0) fcnt <= 32'd0;
-        if (push) begin evq[ew] <= pv; ew <= ew + 10'd1; end
-        if (!en) begin ew <= 10'd0; fcnt <= 32'd0; end
+        if (push) begin evq[ew] <= pv; ew <= ew + 12'd1; end
+        if (!en) ew <= 12'd0;
     end
 
     // ---------------------------------------------------------------- lines -> bytes
@@ -72,7 +70,7 @@ module dbg_trace #(
     always @(posedge clk) evq_q <= evq[er];
     reg   [7:0] ch;
     reg   [5:0] len;
-    wire  [9:0] behind = ew - er;
+    wire [11:0] behind = ew - er;
     always @* begin
         len = 6'd2;
         ch = 8'h20;
@@ -86,12 +84,15 @@ module dbg_trace #(
             default: ch = hx(cur[32 + 4 * (13 - k) +: 4]);
             endcase
         end
-        2'd1: begin                     // Fmm nnnnnnnn
-            len = 6'd14;
+        2'd1: begin                     // Wmm b oooooo dddddddd
+            len = 6'd23;
             case (k)
-            6'd1: ch = 8'h46; 6'd2: ch = hx(cur[71:68]); 6'd3: ch = hx(cur[67:64]); 6'd4: ch = 8'h20;
-            6'd13: ch = 8'h0D; 6'd14: ch = 8'h0A;
-            default: ch = hx(cur[32 + 4 * (12 - k) +: 4]);
+            6'd1: ch = 8'h57; 6'd2: ch = hx(cur[72:69]); 6'd3: ch = hx(cur[68:65]); 6'd4: ch = 8'h20;
+            6'd5: ch = hx(cur[76:73]); 6'd6: ch = 8'h20;
+            6'd7: ch = hx({3'b000, cur[52]}); 6'd8: ch = hx(cur[51:48]); 6'd9: ch = hx(cur[47:44]);
+            6'd10: ch = hx(cur[43:40]); 6'd11: ch = hx(cur[39:36]); 6'd12: ch = hx(cur[35:32]);
+            6'd13: ch = 8'h20; 6'd22: ch = 8'h0D; 6'd23: ch = 8'h0A;
+            default: ch = hx(cur[4 * (21 - k) +: 4]);
             endcase
         end
         2'd2: begin                     // Dnnnnnnnn (lost events)
@@ -117,13 +118,13 @@ module dbg_trace #(
     reg   [7:0] bw, br;
     wire  [8:0] bn = {1'b0, bw} - {1'b0, br};
     always @(posedge clk) begin
-        if (!en) begin k <= 6'd0; er <= 10'd0; bw <= 8'd0; ld <= 2'd0; lost <= 32'd0; end
+        if (!en) begin k <= 6'd0; er <= 12'd0; bw <= 8'd0; ld <= 2'd0; lost <= 32'd0; end
         else if (k == 6'd0) begin
             if (lost != 32'd0 && bn < 9'd200) begin cur <= {2'd2, 46'd0, lost}; lost <= 32'd0; k <= 6'd1; end
-            else if (behind > 10'd1000) begin             // lapped: skip to the newest 900
-                lost <= lost + {22'd0, behind} - 32'd900; er <= ew - 10'd900; ld <= 2'd0;
-            end else if (behind != 10'd0 && bn < 9'd200) begin
-                if (ld == 2'd2) begin cur <= evq_q; er <= er + 10'd1; k <= 6'd1; ld <= 2'd0; end
+            else if (behind > 12'd4000) begin             // lapped: skip to the newest 3600
+                lost <= lost + {20'd0, behind} - 32'd3600; er <= ew - 12'd3600; ld <= 2'd0;
+            end else if (behind != 12'd0 && bn < 9'd200) begin
+                if (ld == 2'd2) begin cur <= evq_q; er <= er + 12'd1; k <= 6'd1; ld <= 2'd0; end
                 else ld <= ld + 2'd1;
             end else ld <= 2'd0;
         end else begin
