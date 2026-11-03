@@ -469,6 +469,27 @@ int main(int argc, char **argv) {
     }
     reg_wr(0x38, 0); set_mode(0); set_rop(3);
     compare("copy mode with pixel shift");
+    // NT's vSSCopy8to8 row: a copy-mode pair (left edge), COPY64s, then copy-mode pairs again
+    // with no mode write in between
+    set_mode(0x07);
+    for (int row = 0; row < 16; row++) {
+        int sh = row & 7;
+        reg_wr(0x38, sh);
+        uint32_t s = 0x64000 + row * 336, d = 0x74000 + row * 640;
+        std::vector<uint8_t> src(ref.begin() + s - sh, ref.begin() + s - sh + 32 + 128 + 64);
+        uint32_t ml = 0xFFFFFFFFu << (row & 15);
+        fb_wr(s, 0xFFFFFFFF); fb_wr(d, ml);
+        for (int k = 0; k < 32; k++) if (ml >> k & 1) put(d + k, src[k], true);
+        for (int p = 0; p < 2; p++) { reg_wr(0x160 + 8 * p, s + 32 + 64 * p); reg_wr(0x164 + 8 * p, d + 32 + 64 * p); }
+        for (int k = 0; k < 128; k++) put(d + 32 + k, src[32 + k], true);
+        for (int t = 0; t < 2; t++) {
+            uint32_t mr = t ? 0x3FFu : 0xFFFFFFFFu;
+            fb_wr(s + 160 + 32 * t, 0xFFFFFFFF); fb_wr(d + 160 + 32 * t, mr);
+            for (int k = 0; k < 32; k++) if (mr >> k & 1) put(d + 160 + 32 * t + k, src[160 + 32 * t + k], true);
+        }
+    }
+    reg_wr(0x38, 0); wait_idle(); set_mode(0);
+    compare("copy pairs around COPY64 (NT)");
     printf("tb_tga: copies done\n");
 
     // ------------------------------------------------ 6. DMA: SRM's scroll of one 1028-byte line

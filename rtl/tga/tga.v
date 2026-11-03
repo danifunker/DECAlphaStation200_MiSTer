@@ -420,10 +420,10 @@ module tga #(
                 8'h51: bc1 <= c_d;
                 // COPY64: four source/destination pairs at 160-17C (NT's tga.dll uses all four,
                 // 256 bytes a row; SRM only 160/164 and their aliases)
-                8'h58, 8'h5A, 8'h5C, 8'h5E: begin c64s <= c_d; copy_flag <= 1'b0; end
+                8'h58, 8'h5A, 8'h5C, 8'h5E: begin c64s <= c_d; copy_flag <= 1'b1; end   // the toggle as a copy pair: source 1
                 8'h59, 8'h5B, 8'h5D, 8'h5F: begin
                     // COPY64: 64 bytes from c64s to c_d (frame buffer offsets)
-                    c64d <= c_d; copy_flag <= 1'b1;
+                    c64d <= c_d; copy_flag <= 1'b0;   // destination: 0 again (NT follows COPY64 with copy-mode pairs)
                     sr_q <= c64e[20:3]; sr_lo <= 1'b0; sr_k <= 5'd0; sr_next <= 2'd1;
                     sr_n <= c64e[2:0] == 3'd0 ? 5'd8 : 5'd9;
                     est <= E_SRD;
