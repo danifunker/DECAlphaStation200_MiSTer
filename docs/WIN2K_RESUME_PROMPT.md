@@ -57,7 +57,7 @@ installs and runs (core `a6e76de` and later, 2026-11-03).
 ## Suggested next steps
 
 1. **The CPU trace (OSD P5 Serial port "CPU exceptions", `rtl/mister/dbg_trace.v` sel 3)**
-   - Capture on the MiSTer: `stty -F /dev/ttyS1 115200 raw -echo; cat /dev/ttyS1 > /tmp/x.log`.
+   - Capture on the MiSTer: `stty -F /dev/ttyS1 921600 raw -echo; cat /dev/ttyS1 > /tmp/x.log`.
    - Look at the last rare PAL entries before the hang: machine checks, D_FAULT, unaligned,
      OPCDEC, ARITH, bugcheck CALL_PALs.
    - An arithmetic or unaligned trap the core mishandles could leave a bad value behind.

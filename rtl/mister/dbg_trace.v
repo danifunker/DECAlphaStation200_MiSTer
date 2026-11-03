@@ -1,5 +1,6 @@
-// Debug traces on the MiSTer UART in place of COM1 (OSD P5 "Serial port"), 8N1 at 115200
-// (`stty -F /dev/ttyS1 115200 raw; cat /dev/ttyS1` on the MiSTer; tools/tgatrace.sh).
+// Debug traces on the MiSTer UART in place of COM1 (OSD P5 "Serial port"), 8N1 at 892857 baud
+// (`stty -F /dev/ttyS1 921600 raw; cat /dev/ttyS1` on the MiSTer; tools/tgatrace.sh): the HPS UART
+// runs from 100 MHz, so its "921600" is 6.25 MHz / 7 = 892857, which this sends exactly (100 MHz / 112).
 //
 // sel = 1, the TGA trace: a line per TGA register write and, every 50 ms, the frame buffer
 // writes since the last report:
@@ -131,8 +132,8 @@ module dbg_trace #(
         end
     end
 
-    // ---------------------------------------------------------------- UART, 115200 8N1
-    localparam [15:0] DIV = CLK_HZ / 115200;
+    // ---------------------------------------------------------------- UART, 892857 8N1
+    localparam [15:0] DIV = CLK_HZ / 892857;
     reg  [15:0] bt;
     reg   [3:0] bi;                     // bit: 0 idle, 1 start, 2-9 data, 10 stop
     reg   [7:0] sh;
