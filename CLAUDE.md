@@ -110,6 +110,12 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   input. `boot dka400` reads NetBSD's bootstraps and kernel off the CD. 33.9k ALMs (81%), 43.4k
   registers, -1.897 ns at 100 MHz. (The first try of this build stalled the fitter: the floppy track
   cache was uninferred, ~98k registers; `no_rw_check` fixed it. Check `Total registers` in map.)
+- **2026-11-03: Windows NT 4.0 Workstation SP1 installs and runs on the board** (core `a6e76de`,
+  26.11.06 on .143): 2 GB disk (ARCINST FAT system partition + NTFS), GUI Setup completes, logon,
+  desktop. Fixed on the way: ddr3_arb VRAM read-after-write race (text Setup stripes), the I-fill
+  redirect loss and the lock flag (CPU), interrupt vs ITB-miss priority (every new NT process died at
+  kernel32!BaseProcessStart), TGA modes 05/25, RTC register B at power-up. `tools/ntkd.py` is a
+  minimal NT kernel debugger client over the MiSTer UART (see its header).
 - **Fits from a worktree** while agents edit the tree: `git worktree add --detach
   ../DECAlphaStation200_fit HEAD` (refresh with `git -C ../DECAlphaStation200_fit checkout --detach
   <commit>`), fit there; the .rbf is in its `output_files/`.
