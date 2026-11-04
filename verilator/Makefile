@@ -103,6 +103,14 @@ sromload: obj_pipe/Vev4_core
 	python3 -I ../tests/srom/check_sromload.py ../srom/build/avanti_srom.bin sromload.trace
 
 # T3 privileged tests on the pipelined core (tests/cpu/t3_*.S)
+# T3 fpld: FP loads feeding FP compares after a trapping one, under random interrupts (the NT 4.0 +
+# IE 4.01 STOP 0x3B, 2026-11-04); built by tests/cpu/t3_fpld.py with tools/alphaasm.py (no binutils)
+t3-fpld: obj_pipe/Vev4_core
+	python3 -I ../tests/cpu/t3_fpld.py $(T0)/t3_fpld.bin
+	obj_pipe/Vev4_core $(T0)/t3_fpld.bin --max 60000000
+	IRQRATE=40 IRQSEED=5 MEMDELAY=20 FASTLINE=1 obj_pipe/Vev4_core $(T0)/t3_fpld.bin --max 60000000
+	IRQRATE=25 IRQSEED=11 MEMDELAY=7 FASTLINE=1 obj_pipe/Vev4_core $(T0)/t3_fpld.bin --max 60000000
+
 t3: obj_pipe/Vev4_core
 	$(MAKE) -C ../tests/cpu t3 >/dev/null
 	obj_pipe/Vev4_core $(T0)/t3_tlb.bin --trace $(T0)/t3_tlb.pipe.trace

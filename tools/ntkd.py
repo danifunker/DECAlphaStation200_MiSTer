@@ -40,9 +40,10 @@ port = 5150
 if ':' in host:
     host, port = host.split(':'); port = int(port)
 log = open(sys.argv[2], 'a') if len(sys.argv) > 2 else None
-BPS = [int(a.split('@')[0], 16) for a in sys.argv[3:] if not a.startswith('u')]
-REARM = {int(a.lstrip('u').split('@')[0], 16): int(a.split('@')[1], 16) for a in sys.argv[3:] if '@' in a}   # A@B: re-arm A from B
-UBPS = [int(a[1:].split('@')[0], 16) for a in sys.argv[3:] if a.startswith('u')]   # user-mode: set at the display driver's load
+ARGS = [a for a in sys.argv[3:] if not a.startswith('scan=')]
+BPS = [int(a.split('@')[0], 16) for a in ARGS if not a.startswith('u')]
+REARM = {int(a.lstrip('u').split('@')[0], 16): int(a.split('@')[1], 16) for a in ARGS if '@' in a}   # A@B: re-arm A from B
+UBPS = [int(a[1:].split('@')[0], 16) for a in ARGS if a.startswith('u')]   # user-mode: set at the display driver's load
 bp_handle = {}                  # address -> the kernel's handle
 bp_step = {}                    # address+4 -> the breakpoint it stands in for
 caller_pid = []                 # ExitWindowsEx callers (winsrv breakpoint)
@@ -131,14 +132,21 @@ def state_change(d):
             code, CODES.get(code, ''), addr, pc, thread, ' '.join('%08x' % p for p in par),
             'first chance' if first else 'SECOND CHANCE'))
         out('  raw ' + d[:160].hex())
+        if code == 0x80000003 and SCAN and not SCANNED:
+            SCANNED.append(1); scan_stack(thread)
         return DBG_CONTINUE if code == 0x80000003 else DBG_EXCEPTION_NOT_HANDLED
     out('state %s pc %08x raw %s' % (st, pc, d[:64].hex()))
     return DBG_CONTINUE
 
 
+pending = []                    # state changes that arrived while a memory read waited for its reply
+
+
 def read_packet():
     """the next data packet (type, data), acknowledged; control packets are handled here"""
     global next_id
+    if pending:
+        return pending.pop(0)
     while True:
         while True:
             b = take(1)[0]
@@ -180,6 +188,12 @@ def read_mem(addr, n):
         if ptype == T_MANIPULATE and struct.unpack_from('<I', d, 0)[0] == 0x3130:
             got = struct.unpack_from('<I', d, 20)[0]
             return d[len(d) - got:] if got else b''
+        if ptype == T_STATE_CHANGE:
+            # the kernel ran on and reports a new state instead: it will not answer this read;
+            # keep the state change for the main loop and give up the read
+            pending.append((ptype, d))
+            out('(a state change while waiting for memory: the read is dropped)')
+            return b''
         out('(packet type %d while waiting for memory)' % ptype)
 
 
@@ -225,6 +239,34 @@ def restore_bp(h):
         ptype, d = read_packet()
         if ptype == T_MANIPULATE and struct.unpack_from('<I', d, 0)[0] == 0x3135:
             return
+
+
+SCAN = [int(a[5:], 16) for a in sys.argv[3:] if a.startswith('scan=')]     # scan=ADDR: at the first breakpoint, dump the stack spots holding ADDR
+SCANNED = []
+
+
+def scan_stack(thread):
+    """the stopped thread's whole kernel stack (12 KB below KTHREAD.InitialStack): every longword
+    equal to one of the SCAN addresses (an exception PC) with the 24 longwords around it: an
+    EXCEPTION_RECORD (code, flags, record, address, nparams, params) or a trap frame / CONTEXT"""
+    top = u32(thread + 0x18)
+    if not top:
+        out('  scan: no stack top'); return
+    sp = top - 0x3000
+    mem = b''
+    a = sp
+    while a < top:
+        m = read_mem(a, 0x400)
+        if len(m) != 0x400:
+            out('  scan: read at %08x gave %d bytes' % (a, len(m))); break
+        mem += m; a += 0x400
+    out('  scan: stack %08x..%08x read %x bytes, looking for %s' % (sp, a, len(mem), ' '.join('%08x' % x for x in SCAN)))
+    open('scratch/ntkd/stack_%08x.bin' % sp, 'wb').write(mem); out('  scan: the stack is in scratch/ntkd/stack_%08x.bin' % sp)
+    for off in range(0, len(mem) - 4, 4):
+        w = struct.unpack_from('<I', mem, off)[0]
+        if w in SCAN:
+            lo = max(0, off - 48); words = struct.unpack_from('<%dI' % ((min(len(mem), off + 48) - lo) // 4), mem, lo)
+            out('  scan: %08x holds %08x: %s' % ((sp & ~0xFF) + off, w, ' '.join('%08x' % x for x in words)))
 
 
 def context_regs(d, pc):

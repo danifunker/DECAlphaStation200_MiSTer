@@ -1068,7 +1068,12 @@ module ev4_core (
             // ------------------------------------------------ X -> M1
             if (w_redir) m1_v <= 1'b0;
             else if (!stall_m1) begin
-                m1_v <= x_v && !x_mul_wait;
+                // an FP op waits in X for the unit as a multiply does for the multiplier: without the
+                // gate a copy of it entered M1 every waiting cycle and retired with the trap state the
+                // previous FP op left (fpu_tr, fpu_es): the first FP instruction after any trapping one
+                // took a bogus ARITH with the old EXC_SUM. NT 4.0 + IE 4.01: win32k's CMPTLT/SU after
+                // IE's user-mode NaN compares, a kernel-mode trap -> STOP 0x3B (2026-11-04, tests/cpu/t3_fpld.py)
+                m1_v <= x_v && !x_mul_wait && !x_fpu_wait;
                 m1_pc <= x_pc; m1_ir <= x_ir; m1_cls <= x_cls;
                 m1_exc <= (x_exc == E_NONE && x_ovf) ? E_ARITH : x_exc;
                 m1_fs <= x_fpu ? fpu_fs : 6'd0; m1_es <= (x_fpu && fpu_tr) ? fpu_es : 7'd0;

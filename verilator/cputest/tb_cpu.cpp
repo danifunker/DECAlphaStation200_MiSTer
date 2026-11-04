@@ -28,6 +28,7 @@
 #include <string>
 
 int main(int argc, char **argv) {
+    Verilated::commandArgs(argc, argv);      // $test$plusargs in the RTL (+fpudbg ...)
     const char *img = nullptr, *trace = nullptr, *sromf = nullptr;
     bool iosink = false;
     uint64_t maxcyc = 200000000, tohost = 0x800000;
@@ -39,6 +40,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--tohost")) tohost = strtoull(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "--srom")) sromf = argv[++i];
         else if (!strcmp(argv[i], "--iosink")) iosink = true;
+        else if (argv[i][0] == '+') continue;        // a Verilator plusarg ($test$plusargs)
         else img = argv[i];
     }
     if (!img && !sromf) { fprintf(stderr, "usage: %s IMAGE.bin [--trace FILE]\n", argv[0]); return 2; }

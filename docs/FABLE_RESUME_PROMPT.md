@@ -84,6 +84,17 @@ add a bench case that fails on the old RTL, fit, check on the board.
   `scratch/nt4drv/cd/`. Build `b8fbb25` makes an arithmetic trap's E line carry the trapping
   instruction word instead of VA, to see what the CPU executed; fit and boot it next (OSD serial = CPU
   trace, `scratch/trace_start.sh` before the reset, the ARC alternate-OS dance, ~150 s to the STOP).
+- **The STOP 0x3B is fixed in the RTL (2026-11-04, evening):** the kernel and win32k on the image are
+  SP6 (not SP1 as first assumed); the trap was a real `cmptlt/su $f0,$f31,$f1` after `lds $f0,12(t1)`
+  (RFONTOBJ/ESTROBJ init) with $f0 = 16.0 (KD stack scan: the exception record C000008F at DE12122C
+  and the CONTEXT's FltF0), i.e. an impossible trap: the core's X->M1 transfer was not gated by the FPU
+  wait, so an FP op waiting in X sent copies into M1 that retired with the previous FP op's trap state;
+  IE's user-mode NaN compares (4 per boot, handled) primed it. Fix in `ev4_core.v` (one gate);
+  reproducer `tests/cpu/t3_fpld.py` + `tools/alphaasm.py` (a Python assembler: no Alpha binutils on this
+  machine), `make -C verilator t3-fpld`. KD client tools: `tools/ntkd.py` now takes `scan=ADDR` (dumps the
+  stopped thread's kernel stack to scratch/ntkd/stack_*.bin and lists the spots holding ADDR), survives
+  unanswered memory reads; the bridge on the MiSTer needs `socat ... TCP-LISTEN:5150,reuseaddr,fork`.
+  Board check of the fixed build pending (boot NT with IE 4.01 three times).
 - **Mouse drags from the command line:** `misterkvms-cli mouse drag DX DY [--steps N] [--step-ms MS]` and
   `--path "dx,dy dx,dy ..."` (added to the user's MiSTerKVMS cli, commits `9941804`, `d4688ba`): a separate
   `mouse down` is released when its process exits. NT doubles a move of 30 px to 60 and adds a tail of
