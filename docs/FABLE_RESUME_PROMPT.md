@@ -1,121 +1,103 @@
-# Resume prompt: NT4 video leftovers and Windows 2000 RC1 (2026-11-03)
+# Resume prompt: TGA window moves, the remaining artefacts (2026-11-04)
 
 Paste this into a new session (Fable). Read `CLAUDE.md` first (decisions, board, build rules), then
-`docs/gaps.md`, `docs/design/tga.md` and `docs/WIN2K_RESUME_PROMPT.md`. Work in order: the two video
-leftovers first (short, the tooling is ready), then Windows 2000.
+`docs/gaps.md` and `docs/design/tga.md` (§3 register 038 and §4 copy mode hold the copy semantics
+worked out so far). The task: **windows moved around in NT 4.0 / Windows 2000 still leave drawing
+artefacts on the board.** Find each one with the trace-and-replay method below, fix it in `rtl/tga/tga.v`,
+add a bench case that fails on the old RTL, fit, check on the board.
+
+## Where it stands (2026-11-04)
+
+- **Board core: `DECAlphaStation200_20261104.rbf` = commit `3fd1dc5`** (pushed to origin, `ced4942`).
+- Windows 2000 now runs on the core (the user, 2026-11-04). `docs/WIN2K_RESUME_PROMPT.md` and the
+  gaps.md W2K row describe the old RC1 hang and are out of date on that point.
+- Fixed today:
+  - `20500af`: a right-to-left copy-mode pair (pixel shift negative) takes its 32-bit mask by byte lanes
+    in **reverse quadword order**: <7:0> for [A, A+8), <15:8> [A-8, A), <23:16> [A-16, A-8), <31:24>
+    [A-24, A-16), bit (x - A) & 7 within a lane (= the byte-swapped mask for NT's 8-aligned A). Before,
+    a 1-7 px column at a window's right edge stayed stale after vertical moves, and 8 px at the left
+    edge after a 9-px move right.
+  - `3fd1dc5`: the TGA's 8-entry command queue is in logic (`ramstyle "logic"`). As an M10K, Quartus
+    absorbed the c_* registers into its output register and E_DEC missed 100 MHz by 1.6 ns; that build
+    drew NT's text with most pixels missing. **Lesson: when the board draws something the replay says
+    it shouldn't, look at the TGA paths in the timing report before the RTL.**
+- Verified on `3fd1dc5`: 26 keyboard moves of the Run dialog (Left/Up/Down at 8 x alignments, Right x1)
+  match the ideal move pixel for pixel (`scratch/replay4/`). The only flagged column (13 rows, ff/00) is
+  the text box's blinking caret: ignore it.
+- **Still broken (the user, after the push):** moving windows around still gives artefacts. Not yet
+  characterised. Likely suspects, none tested:
+  - **Mouse drags** (all tests so far were keyboard moves of one small dialog): many small moves in a
+    row, full-window drag if enabled, moves while the window overlaps others or the screen edge.
+  - **Bigger windows**: trace ring overflow hides them from the replay (see below); copies with
+    different block counts, COPY64 runs with other shifts, rows that start/end mid-quadword on both sides.
+  - Right-to-left copies with A not 8-aligned (all of NT's so far were), or c_off[2] set: the reverse-lane
+    rule for those cases is extrapolated (`cp_msk`'s c_off[2] branch), not observed.
+  - The redraw of uncovered areas (stipple 05 text, fills 2D/21/25, simple writes with the one-shot
+    pixel mask 02C) and the desktop icon labels ("My Computer" losing pixels, seen 2026-11-03, not
+    reproduced since).
+  - Windows 2000 uses its own display driver build: its register stream may use modes or patterns NT 4.0's
+    tga.dll never did (other raster ops, line modes, 0E/Z modes not drawn by the model at all).
+  - Timing: worst slack -1.795 ns at 100 MHz, all in `ev4_core` now; re-check the TGA after any change.
 
 ## Ground rules (from the user; they hold)
 
-- Board: MiSTer at 192.168.99.143 (ssh root). Drive it with
-  `~/Downloads/MiSTerKVMS-1.0.27-linux-x86_64/misterkvms-cli --mister 192.168.99.143`
-  (`screenshot`, `key`, `type`, `mouse`). The capture is 800x600 while NT's GUI runs, 1024x768 otherwise.
+- **Development is moving to another computer (2026-11-04).** Quartus 17.0 Lite needs Linux x86: fits
+  run on a Linux box (the old one is m900, this repo at `~/repos/DECAlphaStation200_MiSTer`, the fit
+  worktree `../DECAlphaStation200_fit`). Verilator, the bench and the board tools run anywhere.
+  `scratch/` is not in git: copy what you need (`memdump`, `refs/`, `disasm/`, `nt_drivers/`, `ntkd/`,
+  `roms/`, `replay*/`); `docs/RESUME_PROMPT.md` has the rsync line.
+- Board: MiSTer at 192.168.99.143 (ssh root, key login; add the new machine's key). Drive it with
+  `misterkvms-cli --mister 192.168.99.143` (`screenshot`, `key`, `type`, `mouse`; MiSTerKVMS 1.0.26+,
+  the user's repo danifunker/MiSTerKVMS). The capture is 800x600 while NT's GUI runs, 1284x964 in ARC.
 - **Load cores only through the OSD** (F12, Right to the System page, Core, `_Unstable`). Never use
   `/dev/MiSTer_cmd`, `load-core` or CFG edits.
-- Copy each board build to `/media/fat/_Unstable/DECAlphaStation200_<today YYYYMMDD>.rbf`, replacing that
-  day's file. **At most two** DECAlphaStation200 rbfs may sit in `_Unstable`; delete older ones.
-- Fits: in the worktree `../DECAlphaStation200_fit` (`git -C ../DECAlphaStation200_fit checkout --detach
-  master`), one at a time, `setsid nohup quartus_sh --flow compile DECAlphaStation200 > fit.log 2>&1 <
-  /dev/null &` (Quartus is in `~/intelFPGA_lite/17.0/quartus/bin`). About 25 min; kill at 45 min.
-  Stop only your own fit, by PID (`readlink /proc/PID/cwd`). `pkill -f`/`pgrep -f` match your own shell:
-  don't use them.
-- Commit locally in small steps. Never push without asking. The Main_MiSTer `latest` release was
-  updated on request (branch `scsi-consolidated-2-decalpha`, `d33167f`).
-- Third-party material stays in `scratch/`. Never delete files without asking.
+- Copy each board build to `/media/fat/_Unstable/DECAlphaStation200_<today YYYYMMDD>.rbf`. **At most two**
+  DECAlphaStation200 rbfs in `_Unstable`. Deleting on the board may be blocked: move old ones to
+  `/media/fat/rbf_old/` instead.
+- Fits: one at a time, `setsid nohup quartus_sh --flow compile DECAlphaStation200 > fit.log 2>&1 <
+  /dev/null &` in the fit worktree. About 30 min; kill at 45. Stop only your own fit, by PID.
+  `pkill -f`/`pgrep -f` match your own shell: don't use them.
+- Commit locally in small steps. Never push without asking. Third-party material stays in `scratch/`.
+  Never delete files without asking (move them to the trash).
 
 ## After every core load
 
-These settings reset to their defaults when a core loads, so set them each time in the OSD:
-- Machine page, Console = **ARC** (it defaults to SRM, which leaves the TGA black).
-- Advanced page (P5), Serial port = **TGA trace** for the video work.
+The OSD keeps Console = ARC and the mounted images, but **Serial port resets to COM1**: set Advanced
+(P5) Serial port = **TGA trace**, then Apply and reset.
 
-Then Apply and reset (the last line of the main page). ARC autoboots NT4 from `NT4_2GB.img`:
-- Ctrl+Alt+Del (`key ctrl+alt+del`).
-- Enter (Administrator, blank password).
-- About 3.5 min from reset to the desktop.
+ARC's default boot entry is Terminal Server, which is not on `NT4_2GB.img` ("ntoskrnl.exe missing").
+When that error shows: Enter, wait 4 s, Down, Enter, then Enter on "Boot Windows NT Workstation
+Version 4.00". Keys sent while the OSD is open go to the OSD (that once remounted the wrong disk): check a
+screenshot before sending ARC keys. NT: Ctrl+Alt+Del, Enter (Administrator, blank password), about 3.5 min
+from reset to the desktop. The test window: `key ctrl+Escape`, `key r` (the Run dialog).
 
-Board images in `games/DECAlphaStation200/`:
-- `NT4_2GB.img` (installed NT 4.0 SP1), with the backup `NT4_2GB.installed-20261103.img.bak`.
-- `NT5_2GB.img` (empty, for W2K).
-- `W2K_RC1_Alpha.iso` (original), and `W2K_RC1_Alpha_kd*.iso` (TXTSETUP.SIF patches, see the W2K prompt).
+Board images in `games/DECAlphaStation200/`: `NT4_2GB.img` (NT 4.0 SP1, backup
+`NT4_2GB.installed-20261103.img.bak`), `WIN2K_2GB.img`, `NT4TSE_2GB.img`, the W2K RC1 ISOs.
 
-## Debug tools that work
+## The method (tools in git)
 
-- **TGA trace** (`rtl/mister/dbg_trace.v`, OSD Serial port = TGA trace). Every register write
-  (`Rooo dddddddd`, cursor writes left out) and every frame buffer write (`Wmm b oooooo dddddddd`),
-  892857 baud, 4096-event ring (`D` lines count losses).
-  Capture on the MiSTer:
-  `stty -F /dev/ttyS1 921600 raw -echo; cat /dev/ttyS1 > /tmp/x.log` (background it, killall cat to stop).
-- **VRAM dump**: `ssh root@... '/tmp/memdump 0x30100000 0x200000' > f.bin`. Copy `scratch/memdump` to
-  `/tmp` after a MiSTer reboot.
-  Layout in NT's 800x600 GUI: pixel (x, y) = byte `4096 + y*800 + x`, 8 bpp; index 6 = desktop teal.
-- **Window moves without the mouse**: `key alt+space`, `key m`, arrow keys, `key Enter`. The Run dialog
-  (`key ctrl+esc`, `key r`) is the test window.
-- The method that found the last bugs:
-  1. Dump VRAM.
-  2. Start the trace.
-  3. Do one move.
-  4. Stop the trace and dump again.
-  5. Parse the copy ops (copy-mode pairs = W07 source/destination; COPY64 = R160..R17C pairs; R038 =
-     pixel shift, signed).
-  6. Check which byte ranges NT expects each op to cover against the window's extent in the dumps.
-  Examples: `scratch/replay/`, `scratch/replay2/`.
-- **NT kernel debugger** (`tools/ntkd.py`; header and memory notes). Needs ARC OSLOADOPTIONS
-  `/DEBUG /DEBUGPORT=COM1 /BAUDRATE=115200` (set on the NT4 boot entry), OSD Serial port = COM1, and
-  `socat TCP-LISTEN:5150,reuseaddr,fork /dev/ttyS1,raw,echo=0,b115200` on the MiSTer. The tool:
-  - logs image loads and exceptions;
-  - sets kernel breakpoints, which log the argument registers and the process;
-  - reads memory.
-- NT symbols: `scratch/ntkd/SUPPORT/DEBUG/ALPHA/SYMBOLS`. Helpers in `tools/nt/`.
-  Disassemble tga.dll with symbols: `pedbg.py` + `alpha-linux-gnu-objdump -D -b binary -m alpha`.
-- TGA bench: `make -C verilator tb_tga`. It holds NT's copy patterns (rows in both directions,
-  overlapping, the shifter residue). Add a case for every fix and check that it fails on the old RTL.
+1. `tools/tgamove.sh DIR KEY N`: dumps VRAM (`/tmp/memdump 0x30100000 0x200000` on the MiSTer; copy
+   `scratch/memdump` there after a MiSTer reboot), starts the trace capture on `/dev/ttyS1`, moves the
+   active window with the keyboard (Alt+Space, M, KEY x N, a 2.5 s drain pause, Enter), stops the capture,
+   dumps again: `DIR/{before.bin,trace.log,after.bin}`. For a mouse drag, copy the script and use
+   `misterkvms-cli mouse`.
+2. `python3 tools/tgareplay.py DIR/before.bin DIR/trace.log DIR/after.bin --ideal` replays the trace with
+   the model's semantics (the same as tga.v and tb_tga's reference) and:
+   - lists the bytes where the replay differs from the board's after dump (RTL or timing fault: the
+     hardware didn't do what the model says);
+   - `--ideal`: takes the commonest copy displacement as the window move and lists every destination
+     column whose pixels aren't the source's (a model fault: the model's semantics are wrong for NT).
+   - `--list` prints each copy op with its block and source bytes; `--who X,Y` names the ops that
+     wrote a pixel. Pixel (x, y) = byte `4096 + y*800 + x` in the 800x600 GUI.
+3. **Trace losses**: lines `Dnnnnnnnn` mean the 4096-event ring overflowed (892857 baud); the replay
+   is then wrong after that point. Keep moves small (one key step), close big windows, or capture
+   only what you need. Windows bigger than the Run dialog overflow on most moves.
+4. Find the rule from the ops around the bad columns (masks, A & 7, the shift in R038, which pair),
+   change `tga.v`, `tools/tgareplay.py` and `verilator/tb/tb_tga.cpp` together, `make -C verilator
+   tb_tga` (must fail on the old RTL), fit, board, sweep again.
 
-## Task 1: the two NT4 video leftovers (core `43dd7e9`)
+Other tools: `tools/tgashot.sh` (screenshot from VRAM), `tools/ntkd.py` (NT kernel debugger over COM1,
+OSD Serial port = COM1), the OSD P5 Video debug overlay (the TGA's drawing state on screen).
 
-What's fixed today, with commits in git log and details in `docs/design/tga.md` §3/§4:
-- COPY64's four pairs.
-- The signed pixel shift.
-- Right-to-left blocks addressed by their last quadword (COPY64 [A&~7-56, A|7], copy mode [A&~7-24, A|7]
-  with mask bit (x-A)&31).
-- The shifter residue, and the copy toggle.
-- Line modes 02/06; the simple-mode pixel mask per longword.
-
-The right-to-left addressing is inferred from NT's register stream, not from the 21030 data sheet;
-re-check it if a new case contradicts it.
-
-1. **Stale 1-8 px column at the window's right edge after some vertical moves.**
-   - Reproduce: Run dialog, Up x6, then Down x2/x3 (or a sequence like Right x8, Up x8, Left x3).
-   - Dump, trace one bad move, and compare the right copy-mode pair's mask, shift and residue with
-     the window's right edge.
-   - Suspects:
-     - pixels of the first block in a row that need source bytes beyond the block (the residue at
-       row start, where `tga.v` reads VRAM since no previous read matches);
-     - copy-mode masks with low bits set (e.g. `ffffff01`, `ffffff03`);
-     - a non-8-aligned destination in a right-to-left pair.
-2. **Desktop icon labels redrawn after a window passes over them lose pixels** ("My Computer" shows as
-   "r p t r").
-   - Trace the redraw: move a window off the icon, or close a dialog over it.
-   - Text is mode 05 (transparent stipple). Clipped text may use the one-shot pixel mask 02C or a
-     glyph cache in off-screen VRAM (tga.dll `stipple_text`, `cache_glyphs`, `store_glyph`).
-   - Compare the written masks and addresses with the glyph positions.
-
-## Task 2: Windows 2000 RC1
-
-Everything known is in `docs/WIN2K_RESUME_PROMPT.md` (the hang, the KD attempts, the machine-check
-lead, next steps). Short version:
-- RC1 build 2072 Setup loads every file, then hangs at "Setup is starting Windows 2000".
-- The PC loops in ntoskrnl 0x800BFF58-A8: a ready-list drain that re-queues a thread onto the same
-  process because the process's state byte (+97) says not resident.
-- It's the same at 64 and 128 MB, and before and after today's CPU fixes (I-fill redirect, lock flag,
-  interrupt vs ITB-miss priority).
-- TXTSETUP.SIF debug options gave no COM1 traffic.
-
-Leads, in order:
-1. The OSD Serial port "CPU exceptions" trace: the rare PAL entries before the hang.
-2. A longword read-modify-write stress (andnot/ldl/mskbl/insbl/stl) plus UNALIGN under
-   `tests/cpu/irq_sweep.sh`.
-3. The system simulation (`make -C verilator system-fast`, tb_sys `--arc --key --cd-ua --trace-pc`).
-4. RC1 `halavant.dll` vs NT4's: registers it touches that NT4 doesn't; whether it expects machine
-   checks on master aborts (the core never raises MCHK, `docs/design/cpu.md` Q15).
-
-Set the OSD TOY year to 1999 for RC1, and back to "From RTC" afterwards.
+After the video: put `dbg_trace` and `dbg_overlay` behind a compile switch for release builds (about
+960 LUTs, 33 M10Ks), and make NT Workstation the default ARC boot entry on `NT4_2GB.img`.
