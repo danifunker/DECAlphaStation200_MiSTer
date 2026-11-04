@@ -2,7 +2,7 @@
 // of the picture with the TGA's drawing state and the CPU's state, read live while a guest
 // drives the card. Three fields a row, "LABL hhhhhhhh":
 //   MODE mode         ROP  {pshift, rop}  DEEP deep
-//   PMSK plane mask   PXP  persistent     PXO  one-shot pixel mask
+//   PMSK plane mask   PXM  pixel mask     PXOS 1 = it was written one-shot
 //   FG   foreground   BG   background     VVBR video base
 //   BT03 {CR0, CR2, CR3, pixel mask}       CURS {X, Y}       FBWR frame buffer writes
 //   PCHI / PCLO the last retired PC        PALI {PAL mode, irq_h}
@@ -22,7 +22,7 @@ module dbg_overlay #(
     output reg   [7:0] r, g, b
 );
     localparam X0 = 16, Y0 = 16;        // the panel's top left (pixels)
-    localparam [8*90-1:0] LABELS = "MODE ROP  DEEP PMSK PXP  PXO  FG   BG   VVBR BT03 CURS FBWR PCHI PCLO PALI LREG LDAT RCNT ";
+    localparam [8*90-1:0] LABELS = "MODE ROP  DEEP PMSK PXM  PXOS FG   BG   VVBR BT03 CURS FBWR PCHI PCLO PALI LREG LDAT RCNT ";
 
     reg  [7:0] font [0:2047];
     initial $readmemh(FONT, font);

@@ -553,7 +553,7 @@ wire [575:0] ovl_fields = {
 	{23'd0, dbg_pal, 2'b00, dbg_irqh}, dbg_pc[31:0], dbg_pc[63:32],                    // 14 PALI, 13 PCLO, 12 PCHI
 	tdbg_fcnt, {4'd0, tdbg_st[23:12], 4'd0, tdbg_st[11:0]}, tdbg_st[55:24],             // 11 FBWR, 10 CURS, 9 BT03
 	{16'd0, tdbg_st[71:56]}, tdbg_st[103:72], tdbg_st[135:104],                         // 8 VVBR, 7 BG, 6 FG
-	tdbg_st[167:136], tdbg_st[199:168], tdbg_st[231:200],                               // 5 PXO, 4 PXP, 3 PMSK
+	tdbg_st[167:136], tdbg_st[199:168], tdbg_st[231:200],                               // 5 PXOS, 4 PXM, 3 PMSK
 	tdbg_st[263:232], {16'd0, tdbg_st[267:264], tdbg_st[279:268]}, {16'd0, tdbg_st[295:280]}  // 2 DEEP, 1 ROP, 0 MODE
 };
 dbg_overlay dbg_overlay

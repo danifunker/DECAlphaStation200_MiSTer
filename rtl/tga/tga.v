@@ -92,7 +92,7 @@ module tga #(
     output reg  [31:0] dbg_fd,
     output reg   [3:0] dbg_fbe,
     output wire  [7:0] dbg_mode,
-    output wire [319:0] dbg_st          // {24 zero, mode 16, rop 12, pshift 4, deep 32, pm 32, pxm_p 32, pxm_os 32,
+    output wire [319:0] dbg_st          // {24 zero, mode 16, rop 12, pshift 4, deep 32, pm 32, pxm 32, os_v (in 32),
                                         //  fg 32, bg 32, vvbr 16, cr0 8, cr2 8, cr3 8, pixmask 8, cur_x 12, cur_y 12}
 );
     assign dm_be = 4'hF;
@@ -207,9 +207,15 @@ module tga #(
     end
 
     // ============================================================ the 21030's registers
-    reg  [31:0] fg, bg, pm, pxm_p, pxm_os, deep, ccbr, vhcr, vvcr, vvvr, cxyr, datar, gdbr, epsr;
+    reg  [31:0] fg, bg, pm, pxm, deep, ccbr, vhcr, vvcr, vvvr, cxyr, datar, gdbr, epsr;
     reg  [31:0] gadr, c64s, c64d;
-    reg         os_v;                       // the one-shot pixel mask is armed
+    // the pixel mask is one register at two addresses (21030 4.4.21.3): written one-shot (02C)
+    // it serves the next frame buffer operation and then reinitializes to FFFFFFFF, written
+    // persistent (05C) it stays. It does not revert to an earlier persistent value: NT 4.0
+    // draws 1-pixel vertical lines with 05C = 1 and restores the mask with 02C = FFFFFFFF
+    // alone (with two registers the mask stayed 1 after the first such line: the Start menu's
+    // icons drew one pixel in four, its text nothing, window moves went wrong, 2026-11-04)
+    reg         os_v;                       // the mask was written one-shot
     reg  [15:0] mode;
     reg         copy_flag;                  // copy mode: the next write is the destination
     reg  [11:0] rop;
@@ -236,7 +242,6 @@ module tga #(
     reg  [31:0] gram_q;
     always @(posedge clk) gram_q <= gram[h_off[9:2]];
 
-    wire [31:0] pxm = os_v ? pxm_os : pxm_p;
     wire [20:0] vbase = deep[9] ? {1'b0, vvbr, 11'd0} : {vvbr, 12'd0};     // 2 KB / 4 KB units (NetBSD T8-01 / T8-02)
     assign inta_n = !(|(sisr_st & sisr_en));
 
@@ -411,14 +416,14 @@ module tga #(
                 8'h08: fg <= c_d;
                 8'h09: bg <= c_d;
                 8'h0A: pm <= c_d;
-                8'h0B: begin pxm_os <= c_d; os_v <= 1'b1; end
+                8'h0B: begin pxm <= c_d; os_v <= 1'b1; end
                 8'h0C: begin mode <= c_d[15:0]; copy_flag <= 1'b0; end
                 8'h0D: rop <= c_d[11:0];
                 8'h0E: pshift <= c_d[3:0];
                 8'h0F: gadr <= c_d;
                 8'h14: deep <= c_d;
                 8'h15: if (m_fill) begin fill_start(gadr[20:0], {1'b0, c_d[10:0]} + 12'd1); est <= E_GEN; end
-                8'h17: begin pxm_p <= c_d; os_v <= 1'b0; end
+                8'h17: begin pxm <= c_d; os_v <= 1'b0; end
                 8'h18: ccbr <= c_d;
                 8'h19: vhcr <= c_d;
                 8'h1A: vvcr <= c_d;
@@ -476,6 +481,7 @@ module tga #(
             end else begin
                 // the frame buffer: by mode
                 dbg_fw <= 1'b1; dbg_fa <= c_off; dbg_fd <= c_d; dbg_fbe <= c_be;
+                if (os_v) pxm <= 32'hFFFFFFFF;     // the one-shot's operation (it reads pxm this cycle)
                 os_v <= 1'b0;
                 g_first <= 1'b1; g_rot <= 1'b0; g_ret <= 1'b0; g_m1 <= 1'b0; g_fs <= 3'd0;
                 case (m8)
@@ -698,7 +704,7 @@ module tga #(
 
         if (rst) begin
             est <= E_IDLE; vr_req <= 1'b0; dm_req <= 1'b0; cq_pop <= 1'b0;
-            fg <= 32'd0; bg <= 32'd0; pm <= 32'hFFFFFFFF; pxm_p <= 32'hFFFFFFFF; pxm_os <= 32'hFFFFFFFF;
+            fg <= 32'd0; bg <= 32'd0; pm <= 32'hFFFFFFFF; pxm <= 32'hFFFFFFFF;
             os_v <= 1'b0; mode <= 16'd0; copy_flag <= 1'b0; rop <= 12'h003; pshift <= 4'd0;
             deep <= 32'd0; ccbr <= 32'd0; vhcr <= 32'd0; vvcr <= 32'd0; vvbr <= 9'd0; vvvr <= 32'd0;
             cxyr <= 32'd0; sisr_st <= 5'd0; sisr_en <= 5'd0; datar <= 32'hFFFFFFFF; gdbr <= 32'd0;
@@ -721,13 +727,13 @@ module tga #(
         8'h09: reg_rd = bg;
         8'h0A: reg_rd = pm;
         8'h0B: reg_rd = pxm;
-        8'h0C: reg_rd = {11'd0, copy_flag, 4'd0, mode};
+        8'h0C: reg_rd = {8'd0, !os_v, 2'd0, copy_flag, 4'd0, mode};   // <23> GS: the mask is persistent
         8'h0D: reg_rd = {20'd0, rop};
         8'h0E: reg_rd = {28'd0, pshift};
         8'h0F: reg_rd = gadr;
         8'h14: reg_rd = deep;
         8'h15: reg_rd = {24'd0, REV};
-        8'h17: reg_rd = pxm_p;
+        8'h17: reg_rd = pxm;
         8'h18: reg_rd = ccbr & 32'hFFFF_FFF0;
         8'h19: reg_rd = vhcr;
         8'h1A: reg_rd = vvcr;
@@ -755,7 +761,7 @@ module tga #(
     wire [95:0] curcol;
     wire [11:0] cur_x, cur_y;
     assign dbg_mode = m8;
-    assign dbg_st = {24'd0, mode, rop, pshift, deep, pm, pxm_p, pxm_os, fg, bg, 7'd0, vvbr,
+    assign dbg_st = {24'd0, mode, rop, pshift, deep, pm, pxm, {31'd0, os_v}, fg, bg, 7'd0, vvbr,
                      cr0, cr2, cr3, pixmask, cur_x, cur_y};
     wire        pix_en, vid_eof;
 

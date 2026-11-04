@@ -173,6 +173,9 @@ static void wait_idle() {
 static const uint32_t VSZ = 0x200000;
 static std::vector<uint8_t> ref(VSZ);
 static uint32_t r_fg, r_bg, r_pm = ~0u, r_pxm = ~0u, r_rop = 3, r_data = ~0u, r_bc0, r_bc1, r_dbase;
+static bool r_os;                       // the pixel mask was written one-shot (02C)
+// 21030 4.4.21.3: after a one-shot mask's operation the GPXR reinitializes to FFFFFFFF
+static void os_done() { if (r_os) { r_pxm = ~0u; r_os = false; } }
 static uint8_t vram(uint32_t a) { a &= VSZ - 1; return dw(DBASE + 0x20000 + a / 8) >> (8 * (a & 7)) & 0xFF; }
 static uint8_t ropb(int c, uint8_t s, uint8_t d) {
     return ((c & 8) ? ~s & ~d : 0) | ((c & 4) ? ~s & d : 0) | ((c & 2) ? s & ~d : 0) | ((c & 1) ? s & d : 0);
@@ -204,7 +207,8 @@ static void poke(uint32_t a, uint8_t v) {
 static void set_fg(uint32_t v) { r_fg = v; reg_wr(0x20, v); }
 static void set_bg(uint32_t v) { r_bg = v; reg_wr(0x24, v); }
 static void set_pm(uint32_t v) { r_pm = v; reg_wr(0x28, v); }
-static void set_pxm(uint32_t v) { r_pxm = v; reg_wr(0x5C, v); }
+static void set_pxm(uint32_t v) { r_pxm = v; r_os = false; reg_wr(0x5C, v); }
+static void set_pxm_os(uint32_t v) { r_pxm = v; r_os = true; reg_wr(0x2C, v); }
 static void set_rop(uint32_t v) { r_rop = v & 15; reg_wr(0x34, v); }
 static void set_mode(uint32_t v) { reg_wr(0x30, v); }
 static void set_data(uint32_t v) { r_data = v; reg_wr(0x80, v); }
@@ -218,6 +222,7 @@ static void ref_fill(uint32_t p0, int n, int mode) {
         else if (mode == 0x21) put(p, bit ? fgb(p) : bgb(p), true);
         else if (bit) put(p, fgb(p), true);
     }
+    os_done();
 }
 static void ref_stip(uint32_t o, uint32_t m, int mode) {
     uint32_t p0 = o & ~3u;
@@ -228,12 +233,14 @@ static void ref_stip(uint32_t o, uint32_t m, int mode) {
         else if (mode == 0x03 || mode == 0x05) { if (bit) put(p, fgb(p), true); }
         else if (bit) put(p, bcb(p), false);
     }
+    os_done();
 }
 static void ref_simple(uint32_t o, uint32_t w, int be) {
     for (int b = 0; b < 4; b++) {
         uint32_t p = (o & ~3u) + b;
         if ((be >> b & 1) && (r_pxm >> b & 1)) put(p, w >> (8 * b), true);   // mask bit k = byte k
     }
+    os_done();
 }
 
 int main(int argc, char **argv) {
@@ -276,7 +283,7 @@ int main(int argc, char **argv) {
             CHECK(reg_rd(r) == v, "register %03x reads %08x, wrote %08x", r, reg_rd(r), v);
             CHECK(reg_rd(r + 0x400) == v, "register %03x alias", r);
         }
-        reg_wr(0x30, 0x2D); CHECK(reg_rd(0x30) == 0x2D, "mode %08x", reg_rd(0x30));
+        reg_wr(0x30, 0x2D); CHECK(reg_rd(0x30) == 0x80002D, "mode %08x (GMOR<23>: the pixel mask is persistent)", reg_rd(0x30));
         reg_wr(0x38, 0xFFFFFFFF); CHECK(reg_rd(0x38) == 0xF, "pixel shift %08x", reg_rd(0x38));
         reg_wr(0x7C, 0x001F001F); CHECK(reg_rd(0x7C) == 0x001F0000, "SISR %08x", reg_rd(0x7C));
         reg_wr(0x7C, 0x0000001F); wait_idle();
@@ -354,6 +361,29 @@ int main(int argc, char **argv) {
     }
     wait_idle(); set_rop(3); set_pm(0xFFFFFFFF); set_pxm(0xFFFFFFFF);
     compare("simple writes");
+    // NT 4.0's 1-pixel vertical lines: the persistent mask 05C = 1, a longword per row with the
+    // pixel in byte 0, then the one-shot 02C = FFFFFFFF and no further 05C write. The 21030's
+    // GPXR is one register: after a one-shot's operation it reinitializes to FFFFFFFF, not to
+    // the value written persistently before (4.4.21.3). With two registers the mask stayed 1:
+    // the Start menu's icons drew one pixel in four and its text nothing, and every window
+    // move after such a line went wrong (2026-11-04)
+    set_pxm(0x00000001);
+    for (int i = 0; i < 13; i++) { uint32_t o = 0x3C000 + 0x320 * i; fb_wr(o, 0x000700F8); ref_simple(o, 0x000700F8, 0xF); }
+    set_pxm_os(0xFFFFFFFF);
+    for (int i = 0; i < 8; i++) { uint32_t o = 0x3C100 + 4 * i, w = rng(); fb_wr(o, w); ref_simple(o, w, 0xF); }
+    // a one-shot 0F over a persistent 1, then the rest of the row unmasked (NT's icons)
+    set_pxm(0x00000001); set_pxm_os(0x0000000F);
+    for (int i = 0; i < 8; i++) { uint32_t o = 0x3C200 + 4 * i, w = rng(); fb_wr(o, w); ref_simple(o, w, 0xF); }
+    // text (transparent stipple) after the same
+    set_mode(0x05); set_fg(0x0F0F0F0F); set_pxm(0x00000001); set_pxm_os(0xFFFFFFFF);
+    for (int l = 0; l < 4; l++) { uint32_t m = rng(); fb_wr(0x3C400 + 1028 * l, m); ref_stip(0x3C400 + 1028 * l, m, 0x05); }
+    set_mode(0); wait_idle();
+    CHECK(reg_rd(0x5C) == 0xFFFFFFFF && reg_rd(0x2C) == 0xFFFFFFFF, "GPXR after the one-shot: %08x %08x", reg_rd(0x5C), reg_rd(0x2C));
+    CHECK(reg_rd(0x30) >> 23 & 1, "GMOR<23> GPXR state: persistent");
+    set_pxm_os(0x0000000F); CHECK(!(reg_rd(0x30) >> 23 & 1), "GMOR<23> GPXR state: one-shot");
+    fb_wr(0x3C300, 0x11223344); ref_simple(0x3C300, 0x11223344, 0xF);
+    wait_idle(); set_pxm(0xFFFFFFFF);
+    compare("one-shot pixel mask");
     // NT's byte stores without BWX: read the longword, change one byte, write it back,
     // back to back (a read let past a write still in ddr3_arb's merge flush got old data)
     for (int i = 0; i < 400; i++) {
@@ -381,7 +411,7 @@ int main(int argc, char **argv) {
         std::vector<uint8_t> src(ref.begin() + s, ref.begin() + s + 64);
         reg_wr(0x160 + 8 * (i & 3), s); reg_wr(0x164 + 8 * (i & 3), d);   // all four pairs (NT)
         for (int k = 0; k < 64; k++) put(d + k, src[k], true);
-        if (i % 8 == 0) { set_mode(0); CHECK(reg_rd(0x30) == 0, "copy flag after a mode write"); }
+        if (i % 8 == 0) { set_mode(0); CHECK(reg_rd(0x30) == 0x800000, "copy flag after a mode write"); }
         wait_idle();
     }
     set_rop(3); compare("COPY64");
@@ -445,10 +475,11 @@ int main(int argc, char **argv) {
         uint32_t s = 0x60000 + (rng() % 0x8000 & ~3u), d = 0x70000 + (rng() % 0x8000 & ~3u);
         uint32_t ms = 0xFFFFFFFF, md = i % 3 ? 0xFFFFFFFF : (uint32_t)rng();
         std::vector<uint8_t> src(ref.begin() + s, ref.begin() + s + 32);
-        fb_wr(s, ms);
-        CHECK(reg_rd(0x30) == 0x100007, "copy flag after the source: %08x", reg_rd(0x30));
+        fb_wr(s, ms); os_done();
+        CHECK(reg_rd(0x30) == 0x900007, "copy flag after the source: %08x", reg_rd(0x30));
         fb_wr(d, md);
         for (int k = 0; k < 32; k++) if ((md >> k & 1) && (r_pxm >> k & 1)) put(d + k, src[k], true);
+        os_done();
         wait_idle();
     }
     set_mode(0); set_rop(3); set_pxm(0xFFFFFFFF);

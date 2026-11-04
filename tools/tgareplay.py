@@ -31,7 +31,7 @@ for s in a.who:
     x, y = map(int, s.split(','))
     who.add(B + y * W + x)
 
-st = dict(mode=0, rop=3, pshift=0, pm=0xFFFFFFFF, pxm_p=0xFFFFFFFF, pxm_os=None, fg=0, bg=0,
+st = dict(mode=0, rop=3, pshift=0, pm=0xFFFFFFFF, pxm=0xFFFFFFFF, os=False, fg=0, bg=0,
           c64s=[0] * 4, datar=0, gadr=0, bc0=0, bc1=0)
 copy_flag = False
 cp_src = None          # copy mode: the source's first byte
@@ -42,7 +42,14 @@ warned = set()
 
 
 def pxm():
-    return st['pxm_os'] if st['pxm_os'] is not None else st['pxm_p']
+    return st['pxm']
+
+
+def pxm_done():
+    """after a frame buffer operation: a one-shot mask reinitializes to all ones (21030 4.4.21.3;
+    it does not revert to the value written persistently before)"""
+    if st['os']:
+        st['pxm'] = 0xFFFFFFFF; st['os'] = False
 
 
 def sh():
@@ -105,12 +112,12 @@ for ln, line in enumerate(lines):
         if off == 0x20: st['fg'] = d
         elif off == 0x24: st['bg'] = d
         elif off == 0x28: st['pm'] = d
-        elif off == 0x2C: st['pxm_os'] = d
+        elif off == 0x2C: st['pxm'] = d; st['os'] = True
         elif off == 0x30: st['mode'] = d & 0xFFFF; copy_flag = False
         elif off == 0x34: st['rop'] = d & 0xFFF
         elif off == 0x38: st['pshift'] = d & 0xF
         elif off == 0x3C: st['gadr'] = d
-        elif off == 0x5C: st['pxm_p'] = d; st['pxm_os'] = None
+        elif off == 0x5C: st['pxm'] = d; st['os'] = False
         elif off == 0x80: st['datar'] = d
         elif off == 0x140: st['bc0'] = d
         elif off == 0x144: st['bc1'] = d
@@ -136,7 +143,7 @@ for ln, line in enumerate(lines):
     if line[0] != 'W':
         continue
     mode = int(line[1:3], 16); be = int(line[4], 16); off = int(line[6:12], 16); d = int(line[13:21], 16)
-    m = pxm(); st['pxm_os'] = None
+    m = pxm(); pxm_done()
     if mode in (0x01, 0x05, 0x03):
         base = off & ~3
         for i in range(32):

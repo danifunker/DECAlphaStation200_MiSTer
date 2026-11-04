@@ -24,8 +24,18 @@ add a bench case that fails on the old RTL, fit, check on the board.
 - Verified on `3fd1dc5`: 26 keyboard moves of the Run dialog (Left/Up/Down at 8 x alignments, Right x1)
   match the ideal move pixel for pixel (`scratch/replay4/`). The only flagged column (13 rows, ff/00) is
   the text box's blinking caret: ignore it.
-- **Still broken (the user, after the push):** moving windows around still gives artefacts. Not yet
-  characterised. Likely suspects, none tested:
+- **2026-11-04, later (this machine, Windows): the root cause of the remaining artefacts found.** The
+  21030's pixel mask is one register at two addresses (manual 4.4.21.3, `scratch/refs/ec-n0683-72.pdf`
+  p. 130): a one-shot write (02C) serves the next frame buffer operation and then the register
+  reinitializes to FFFFFFFF; it does not revert to the value written persistently (05C) before. NT 4.0
+  draws 1-pixel vertical lines with 05C = 1 and restores with 02C = FFFFFFFF alone, so with the old
+  two-register model the mask stayed 1 from the first such line on: the Start menu's icons drew one
+  pixel in four, its text (stipple 05) nothing, and every window move after it was masked too (the
+  OSD P5 Video debug overlay showed PXP = 00000001 on the board). Fixed in `tga.v` (one `pxm` + `os_v`,
+  GMOR<23> GPXR state on reads), `tools/tgareplay.py`, `verilator/tb/tb_tga.cpp` (fails on the old
+  RTL). Captures: `scratch/replay5/menu` (the Start menu opening: the replay shows the x%4 != 0 pixels
+  the board left grey). Board check pending at the time of writing.
+- Earlier suspects (before the root cause above), none tested:
   - **Mouse drags** (all tests so far were keyboard moves of one small dialog): many small moves in a
     row, full-window drag if enabled, moves while the window overlaps others or the screen edge.
   - **Bigger windows**: trace ring overflow hides them from the replay (see below); copies with
@@ -52,6 +62,15 @@ add a bench case that fails on the old RTL, fit, check on the board.
 - Board: MiSTer at 192.168.99.143 (ssh root, key login; add the new machine's key). Drive it with
   `misterkvms-cli --mister 192.168.99.143` (`screenshot`, `key`, `type`, `mouse`; MiSTerKVMS 1.0.26+,
   the user's repo danifunker/MiSTerKVMS). The capture is 800x600 while NT's GUI runs, 1284x964 in ARC.
+  **On the Windows machine (2026-11-04):** the repo is `C:\Temp\mistercore\DECAlphaStation200_MiSTer`
+  (WSL: `/mnt/c/Temp/mistercore/DECAlphaStation200_MiSTer`; `scratch/` is there); misterkvms-cli is
+  `C:\Temp\mistercore\MiSTerKVMS	argetelease\misterkvms-cli.exe` (its settings file names the
+  capture stream); ssh to the board works only from WSL (Ubuntu-24.04) with `-i ~/.ssh/mister_only`,
+  so the dumps and the trace capture run there (`scratch/ms.sh`, `trace_start.sh`, `trace_stop.sh`,
+  `vramdump.sh`; call WSL as `wsl.exe -d Ubuntu-24.04 -- bash -lc "cd /mnt/c/... && ..."` from Git
+  Bash, since it rewrites bare `/mnt/c` paths); Quartus 17.0 is `C:\intelFPGA_lite.0`.
+  **The OSD reopens on the page it was closed on**, and Enter on a file row opens the selector, on an
+  option toggles it: screenshot before every Enter (one Enter toggled J2 floppy boot today).
 - **Load cores only through the OSD** (F12, Right to the System page, Core, `_Unstable`). Never use
   `/dev/MiSTer_cmd`, `load-core` or CFG edits.
 - Copy each board build to `/media/fat/_Unstable/DECAlphaStation200_<today YYYYMMDD>.rbf`. **At most two**
