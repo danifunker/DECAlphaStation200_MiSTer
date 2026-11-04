@@ -41,9 +41,12 @@ add a bench case that fails on the old RTL, fit, check on the board.
 
 ## Ground rules (from the user; they hold)
 
-- **Development is moving to another computer (2026-11-04).** Quartus 17.0 Lite needs Linux x86: fits
-  run on a Linux box (the old one is m900, this repo at `~/repos/DECAlphaStation200_MiSTer`, the fit
-  worktree `../DECAlphaStation200_fit`). Verilator, the bench and the board tools run anywhere.
+- **Development is moving to another computer (2026-11-04), possibly Windows.** Quartus 17.0 Lite runs
+  on Windows or Linux (not macOS): on Windows, fit with the native Quartus (`quartus_sh --flow compile
+  DECAlphaStation200` in a clone on the Windows drive). Verilator, the bench (`make -C verilator ...`),
+  `tools/*.sh`/`*.py`, ssh to the MiSTer and the Alpha cross tools go in WSL2 (Ubuntu: `verilator
+  build-essential python3-pil binutils-alpha-linux-gnu gcc-alpha-linux-gnu qemu-user`). The old Linux
+  box is m900 (repo `~/repos/DECAlphaStation200_MiSTer`, fit worktree `../DECAlphaStation200_fit`).
   `scratch/` is not in git: copy what you need (`memdump`, `refs/`, `disasm/`, `nt_drivers/`, `ntkd/`,
   `roms/`, `replay*/`); `docs/RESUME_PROMPT.md` has the rsync line.
 - Board: MiSTer at 192.168.99.143 (ssh root, key login; add the new machine's key). Drive it with
