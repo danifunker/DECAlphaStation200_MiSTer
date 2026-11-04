@@ -82,6 +82,7 @@ module tb_tga_top (
     wire  [7:0] t_r, t_g, t_b;
 
     tga tga (
+        .stall(1'b0),
         .clk(clk), .rst(rst),
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),
         .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(pt_claim), .pt_ack(pt_ack), .pt_rdata(pt_rdata),

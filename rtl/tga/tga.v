@@ -70,6 +70,9 @@ module tga #(
     input  wire [63:0] sc_rdata,
 
     // video (clk_pix)
+    // the trace throttle: hold the host's writes (the PCI target waits) while the trace ring
+    // is nearly full, so a traced burst loses nothing and the guest just draws slower
+    input  wire        stall,
     input  wire        clk_pix,
     output wire        ce_pix,
     output wire        hs,
@@ -178,7 +181,7 @@ module tga #(
                 pt_ack <= 1'b1; h_pend <= 1'b0;
             end else if (h_we) begin
                 if (h_rgn == 2'd0) begin pt_ack <= 1'b1; h_pend <= 1'b0; end      // ROM: no flash writes
-                else if (cq_n + {3'd0, cq_push} < 4'd8) begin
+                else if (cq_n + {3'd0, cq_push} < 4'd8 && !stall) begin
                     cq_push <= 1'b1;
                     pt_ack <= 1'b1; h_pend <= 1'b0;
                 end

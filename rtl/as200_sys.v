@@ -61,6 +61,7 @@ module as200_sys #(
     input  wire        sc_ack,
     input  wire        sc_rvalid,
     input  wire [63:0] sc_rdata,
+    input  wire        tdbg_stall,       // the TGA trace throttle (dbg_trace full)
     input  wire        clk_pix,
     output wire        tga_ce, tga_hs, tga_vs, tga_de, tga_hb, tga_vb,
     output wire  [7:0] tga_r, tga_g, tga_b,
@@ -301,7 +302,7 @@ module as200_sys #(
         .pt_we(pt_we), .pt_wdata(pt_wdata), .pt_claim(tga_claim), .pt_ack(tga_ack), .pt_rdata(tga_rdata),
         .dm_req(tga_dm_req), .dm_we(tga_dm_we), .dm_addr(tga_dm_addr), .dm_be(tga_dm_be),
         .dm_wdata(tga_dm_wdata), .dm_ack(tga_dm_ack), .dm_rdata(dm_rdata),
-        .inta_n(tga_inta_n),
+        .inta_n(tga_inta_n), .stall(tdbg_stall),
         .vr_req(vr_req), .vr_we(vr_we), .vr_addr(vr_addr), .vr_len(vr_len), .vr_be(vr_be), .vr_wdata(vr_wdata),
         .vr_ack(vr_ack), .vr_rvalid(vr_rvalid), .vr_rdata(vr_rdata),
         .sc_req(sc_req), .sc_addr(sc_addr), .sc_len(sc_len), .sc_ack(sc_ack), .sc_rvalid(sc_rvalid), .sc_rdata(sc_rdata),
