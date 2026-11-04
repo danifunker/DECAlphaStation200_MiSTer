@@ -94,7 +94,8 @@ add a bench case that fails on the old RTL, fit, check on the board.
   machine), `make -C verilator t3-fpld`. KD client tools: `tools/ntkd.py` now takes `scan=ADDR` (dumps the
   stopped thread's kernel stack to scratch/ntkd/stack_*.bin and lists the spots holding ADDR), survives
   unanswered memory reads; the bridge on the MiSTer needs `socat ... TCP-LISTEN:5150,reuseaddr,fork`.
-  Board check of the fixed build pending (boot NT with IE 4.01 three times).
+  Board build `33b8a58` (`_Unstable/DECAlphaStation200_20261104g.rbf`, .143 and .92): NT boots and IE 4's
+  first-run setup (the trigger) completes; the user's Visual C++ 6.0 install continues from there.
 - **Mouse drags from the command line:** `misterkvms-cli mouse drag DX DY [--steps N] [--step-ms MS]` and
   `--path "dx,dy dx,dy ..."` (added to the user's MiSTerKVMS cli, commits `9941804`, `d4688ba`): a separate
   `mouse down` is released when its process exits. NT doubles a move of 30 px to 60 and adds a tail of
