@@ -63,7 +63,12 @@ add a bench case that fails on the old RTL, fit, check on the board.
   64-byte copy buffer (the slope-no-go registers 100-11C entries 4-7), aligned as the destination
   gets them; even/odd GCBR writes load an entry for a drain. Fixed in `18e350e` (tga.v, a `Qooo`
   trace line per such read, tgareplay.py, tb_tga reads + loads; the old RTL fails the bench). The
-  throttle build had hidden the minimize wedge by timing only. Board check of `18e350e` pending.
+  throttle build had hidden the minimize wedge by timing only. **Board build `18e350e`
+  (`_Unstable/DECAlphaStation200_20261104e.rbf` on .143 and .92): minimize, Alt+Tab, maximize and
+  restore clean at full speed, drags and the Start menu afterwards too; lossless traces of a maximize
+  and a restore (`scratch/replay5/max2`, `restore5`: 3.7k / 7.2k Q lines) replay byte for byte.**
+  Remaining to check: Windows 2000 (the user runs it on .92), bigger NT sessions (Explorer windows,
+  dialogs, menus) for anything else; then the release items below.
 - **Mouse drags from the command line:** `misterkvms-cli mouse drag DX DY [--steps N] [--step-ms MS]` and
   `--path "dx,dy dx,dy ..."` (added to the user's MiSTerKVMS cli, commits `9941804`, `d4688ba`): a separate
   `mouse down` is released when its process exits. NT doubles a move of 30 px to 60 and adds a tail of
