@@ -69,6 +69,21 @@ add a bench case that fails on the old RTL, fit, check on the board.
   and a restore (`scratch/replay5/max2`, `restore5`: 3.7k / 7.2k Q lines) replay byte for byte.**
   Remaining to check: Windows 2000 (the user runs it on .92), bigger NT sessions (Explorer windows,
   dialogs, menus) for anything else; then the release items below.
+- **Open (2026-11-04 evening): STOP 0x3B SYSTEM_SERVICE_EXCEPTION at every boot after the user installed
+  IE 4.01 on .143's NT4_2GB.img** (PC 800B4B7C = KeWaitForMultipleObjects+0x3ac, IRQL 7). The CPU
+  trace (OSD Serial port = CPU trace / CPU exceptions; `scratch/replay5/exc1.log`, `cpu1.log`) shows
+  exactly one arithmetic trap (E0060) just before it, EXC_ADDR DE12122E = win32k.sys
+  `vSrcCopyS1D1LtoR+0x5a8`, whose memory holds `beq t12` (preceded by `ldq`, `cmplt`, a non-/V
+  `subl`): nothing that can trap. NT's dispatcher then read that instruction through the D-stream
+  (DTB miss at VA DE12122C from RtlVirtualUnwind) and, seeing no software-completion FP op, bugchecked.
+  So the CPU executed something other than what memory holds at that PC (a stale I-cache line, or a
+  pipeline/decode fault), or raised the trap for nothing. The page had just taken an ITB miss (DE12109C);
+  NT does only ~30 IMBs (PAL 3180) in the whole boot, the last one long before. Tools: `tools/alphadis.py`
+  (an Alpha disassembler in Python, `--pe`), `tools/dbgsyms.py` (NT .DBG COFF symbols; the ntoskrnl
+  pickle in scratch/ntkd is image-relative + 0x130040), win32k.sys from the SP1 CD in
+  `scratch/nt4drv/cd/`. Build `b8fbb25` makes an arithmetic trap's E line carry the trapping
+  instruction word instead of VA, to see what the CPU executed; fit and boot it next (OSD serial = CPU
+  trace, `scratch/trace_start.sh` before the reset, the ARC alternate-OS dance, ~150 s to the STOP).
 - **Mouse drags from the command line:** `misterkvms-cli mouse drag DX DY [--steps N] [--step-ms MS]` and
   `--path "dx,dy dx,dy ..."` (added to the user's MiSTerKVMS cli, commits `9941804`, `d4688ba`): a separate
   `mouse down` is released when its process exits. NT doubles a move of 30 px to 60 and adds a tail of
