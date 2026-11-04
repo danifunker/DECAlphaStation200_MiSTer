@@ -35,10 +35,18 @@
 _start:
 	br	$31, init
 
-	.org	0x0060				// ARITH
+	.org	0x0060				// ARITH, as NT 4.0's PALcode (A321064.PAL) does it:
 	addq	$20, 1, $20
-	hw_mfpr	$22, 0x2a			// EXC_SUM
-	hw_mtpr	$31, 0x2a			// clear it
+	hw_mfpr	$22, 0x2a			// EXC_SUM (its MSK bit: F31)
+	hw_mtpr	$31, 0x2a			// clear the summary; the mask is not affected
+	bis	$31, $31, $23
+	lda	$24, 31($31)
+1:	hw_mfpr	$25, 0x2a			// MSK: F30 .. F0
+	addq	$23, $23, $23
+	subq	$24, 1, $24
+	addq	$25, $23, $23
+	bne	$24, 1b
+	srl	$23, 33, $23			// bit n = Fn
 	hw_rei					// EXC_ADDR = the next instruction
 	.org	0x13E0				// OPCDEC: unexpected
 	lda	$0, 92($31)
@@ -124,6 +132,15 @@ init:
 	and	$22, 0x10, $4
 	lda	$3, 0x10($31)
 	CHECK	6
+	bis	$23, $31, $4			// the write mask: F11 (NT's read order)
+	lda	$3, 0x800($31)
+	CHECK	6
+	// ---- 8: a second trap reports its own destination (F2): the mask reads start at F31 again
+	divt	$f1, $f10, $f2
+	trapb
+	bis	$23, $31, $4
+	lda	$3, 4($31)
+	CHECK	8
 	// ---- 7: FPCR.DZE (bit 53) is set
 	mf_fpcr	$f12
 	stt	$f12, 32($11)

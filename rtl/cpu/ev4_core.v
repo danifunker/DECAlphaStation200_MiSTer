@@ -125,7 +125,6 @@ module ev4_core (
     reg   [1:0] fpcr_dyn;               // FPCR[59:58]
     reg   [6:0] exc_sum_r;              // EXC_SUM[8:2]: IOV INE UNF FOV DZE INV SWC
     reg  [63:0] exc_mask;               // the register write mask: bit n = Rn, 32+n = Fn
-    reg   [5:0] msk_ptr;
 
     // the interrupt pins, registered (HIRR shows "delayed copies" of the pins, cpu.md 4.2;
     // the request logic outside is long)
@@ -593,7 +592,7 @@ module ev4_core (
             5'd2:  ipr_rd = {40'd0, iccsr_fpe, iccsr_map, iccsr_hwe, 21'd0};
             5'd3:  ipr_rd = {29'd0, itb_temp};                             // ITB_PTE_TEMP
             5'd4:  ipr_rd = exc_addr;
-            5'd10: ipr_rd = {30'd0, exc_mask[6'd63 - msk_ptr], 24'd0, exc_sum_r, 2'b00};   // EXC_SUM, MSK
+            5'd10: ipr_rd = {30'd0, exc_mask[63], 24'd0, exc_sum_r, 2'b00};   // EXC_SUM, MSK
             5'd5:  ipr_rd = {60'd0, sl_rcv, 3'b000};                       // SL_RCV
             5'd12, 5'd13, 5'd14: ipr_rd = hirr_rd;                        // HIRR (SIRR, ASTRR read the same)
             5'd16, 5'd17, 5'd18: ipr_rd = hier_rd;                        // HIER (SIER, ASTER read the same)
@@ -938,7 +937,7 @@ module ev4_core (
             sl_xmit <= 1'b1;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
-            fpu_go <= 1'b0; fpu_live <= 1'b0; fpu_fin <= 1'b0; exc_sum_r <= 7'd0; exc_mask <= 64'd0; msk_ptr <= 6'd0;
+            fpu_go <= 1'b0; fpu_live <= 1'b0; fpu_fin <= 1'b0; exc_sum_r <= 7'd0; exc_mask <= 64'd0;
             wb_v <= 1'b0; bown <= B_NONE; mem_req <= 1'b0; dsettle <= 2'd0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
@@ -1185,7 +1184,7 @@ module ev4_core (
                             5'd11: pal_base <= w_res[33:14];
                             5'd22: sl_xmit <= w_res[4];               // SL_XMIT
                             5'd13: sirr <= w_res[47:33];                               // SIRR
-                            5'd10: begin exc_sum_r <= 7'd0; msk_ptr <= 6'd0; end      // EXC_SUM: any write clears
+                            5'd10: exc_sum_r <= 7'd0;                                 // EXC_SUM: a write clears [8:2], not the mask
                             5'd14: astrr <= w_res[51:48];                              // ASTRR {U, S, E, K}
                             5'd16: begin hier <= w_res[14:9]; hier_pc0 <= w_res[8]; hier_pc1 <= w_res[15];
                                          hier_cre <= w_res[2]; hier_sle <= w_res[32]; end   // HIER
@@ -1218,7 +1217,12 @@ module ev4_core (
                     end
                     if (w_cls == C_MFPR && !w_ir[7] && w_ir[6] && w_ir[4:0] == 5'd5) mm_lock <= 1'b0;
                     if (w_cls == C_MFPR && !w_ir[7] && !w_ir[6] && w_ir[5] && w_ir[4:0] == 5'd10) begin
-                        exc_mask[6'd63 - msk_ptr] <= 1'b0; msk_ptr <= msk_ptr + 6'd1;  // MSK: one bit per read, F31 first
+                        // MSK: the mask is a shift register, each read returns bit 63 (F31 first, then F30 ...
+                        // F0, R31 ... R0) and shifts it out. NT's PALcode reads EXC_SUM once at the ARITH
+                        // entry, writes it, then reads 31 more bits as F30..F0: a pointer reset by the write
+                        // gave it F31..F1, so its software completion looked for the wrong register (TSE's
+                        // win32k: a CMPTLT/SU writing F1 became a bogus inexact trap, STOP 0x3B)
+                        exc_mask <= {exc_mask[62:0], 1'b0};
                     end
                     if (w_cls == C_MFPR && !w_ir[7] && w_ir[6] && w_ir[4:0] == 5'd2) begin   // DTB_PTE read
                         dtb_temp <= {dtb_asm[dtb_p], dtb_pfn[dtb_p], dtb_pr[dtb_p][3:0], dtb_pr[dtb_p][7:4], dtb_pr[dtb_p][9:8], 3'b000};

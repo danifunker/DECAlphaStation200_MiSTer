@@ -483,9 +483,11 @@ bit 1, rest RAZ. (MAME reads CM0 at bit 0; the HRM figure says bit 1.) PALmode d
 [33] MSK, rest RAZ. Bits [8:2] are set by arithmetic traps and cleared by **any write** (which also clears
 SWC; the mask is not affected). SWC: set when an FP instruction with /S traps and every FP trap since the
 last write also had /S; cleared when one without /S traps. MSK is a one-bit window on the 64-bit register
-write mask (architectural layout ARM 6.3.2.2: bit n = Rn, bit 32+n = Fn): each read returns one bit and
-clears it, in the order F31, F30, ... F0, I31, ... I0 (HRM: "order F31-F0 then I31-I0"; the exact
-first-bit convention is Q5). Reads must be 3 cycles apart on the chip.
+write mask (architectural layout ARM 6.3.2.2: bit n = Rn, bit 32+n = Fn): a shift register, each read
+returns the top bit and shifts it out, in the order F31, F30, ... F0, I31, ... I0 (HRM: "order F31-F0
+then I31-I0"). A write does not touch it. NT 4.0's PALcode (A321064.PAL, ARITH) depends on both: it reads
+EXC_SUM once (that read's MSK is F31), writes it, then reads 31 bits as F30..F0 (and 32 more as integer
+registers only after IOV). Reads must be 3 cycles apart on the chip.
 
 **PAL_BASE** (5.2.13, Fig. 5-10). [33:14] PAL_BASE, other bits IGN on write, RAZ on read. Cleared at reset.
 Writing must not race an exception (rule 11). The DROM writes 0x40210 (effective 0x40000) on one path.
@@ -1164,7 +1166,7 @@ line, so DROM output on the SROM port shows up in simulation.
 | Q2 | What else does the DROM expect from the SROM: PAL_TEMP values besides 2/14/18, 21071 CSR state, low-memory words other than section 1.3? | Partly visible in the DROM listing | Trace the DROM in alphaemu with a stub SROM and record every read of uninitialised state |
 | Q3 | CALL_PAL executed in PALmode: is EXC_ADDR[0] set? Is it even legal? (SRM stub executes `call_pal 0x3b` on some paths) | HRM silent; MAME sets bit 0 | Dispatch normally, EXC_ADDR = PC+4 with bit 0 = PALmode |
 | Q4 | IEEE rounding +/- infinity: hardware or FEN? Table 4-1/2.6 vs Table 3-3 | Contradiction in the HRM; no ARM waiver for it | Hardware (superset) |
-| Q5 | EXC_SUM write-mask read order: first read = F31 or F0? | HRM "order F31-F0 then I31-I0" | First read F31, then down to I0; check against OSF ARITH's assembly loop (srm 0x18010-0x18060) in alphaemu |
+| Q5 | EXC_SUM write-mask read order: first read = F31 or F0? | HRM "order F31-F0 then I31-I0" | **Settled (2026-11-03)**: first read F31, a shift register that a write does not reset. NT 4.0's ARITH PALcode reads once, writes, then 31 reads as F30..F0; a pointer reset by the write shifted every register by one (TSE 4.0's STOP 0x3B) |
 | Q6 | Abox IPR index 11, read in every SRM/ARC error-unlock sequence | Not in Table 4-7 | Reads 0, no effect |
 | Q7 | AMASK/IMPLVER on the real 21064 | Not in our ARM or HRM; Linux executes them | AMASK returns Rb, IMPLVER returns 0 |
 | Q8 | Non-canonical I-stream VA | Not described | ITB_ACV |
