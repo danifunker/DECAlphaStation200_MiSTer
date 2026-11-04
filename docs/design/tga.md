@@ -63,7 +63,11 @@ Copies of the last two are in `scratch/refs/tga/`.
 ## 3. Registers
 
 The table lists offsets from 0x100000. Every register in 000-1FF that is not listed reads back what was written.
-That covers the copy buffer 000-01C, Bresenham, stencil, the Z and colour registers, the slopes and the other block colours.
+That covers Bresenham, stencil, the Z and colour registers and the other block colours.
+
+| Off | Register | Model |
+|---|---|---|
+| 000-01C, 100-11C | copy buffer GCBR0-7, and the slope-no-go registers on reads | **The engine's 64-byte copy buffer** (4.4.6): after a copy-mode source write, 000-01C read entries 0-3 and 100-11C entries 4-7, the source quadwords aligned as the destination gets them (64 bytes from the block's source, the block less the pixel shift). A read ends the drain-next state (the next copy-mode write fills again). Writing an even GCBR holds a low longword, the following odd one loads the pair as the next entry and arms a drain. NT 4.0's tga.dll saves the screen under its minimize/restore animation frames with a fill, 8 reads and the next block, and restores it with simple writes: with these registers reading back what was written, the saved pixels were zeros, the restores painted black (the wedge on the desktop after a minimize, the band across a restored window), and the engine paired the lone fills as copies (2026-11-04). The trace shows such a read as a `Qooo` line |
 
 | Off | Register | Model |
 |---|---|---|
@@ -248,7 +252,7 @@ Result 2026-11-01: **PASS** (seeds 1-4), with 6.6 M cycles and 5 frames.
 
 ## 10. Gaps
 
-- **Pixel shift:** applied as source - shift to COPY64 and copy mode 07 (the direction inferred from NT's use: tga.dll vSSCopy8to8 does window edges with copy-mode pairs and the middle with COPY64). The copy buffer registers 000-01C are not the engine's buffer.
+- **Pixel shift:** applied as source - shift to COPY64 and copy mode 07 (the direction inferred from NT's use: tga.dll vSSCopy8to8 does window edges with copy-mode pairs and the middle with COPY64). The copy buffer registers 000-01C read and load the engine's buffer (section 3).
 - **Line modes:** 02/06 are drawn (2026-11-03, from NT 4.0 tga.dll's register stream: width 09C, address 03C, pattern 080, slope 100-13C with the octant in the register number, continue 04C). The Bresenham tie rule (step the minor axis when e > 0) is a guess. 0E and the Z and stencil modes are not drawn.
 - **24-plane:** no 24-plane visuals or rotate/visual fields. The ZLXp-E1 has none.
 - **TGA cursor:** CCBR/CXYR/VVVR<2> is not displayed. NetBSD's X server uses it.

@@ -107,6 +107,10 @@ for ln, line in enumerate(lines):
         continue
     if line[0] == 'D':
         print('line %d: %s events lost' % (ln, line[1:])); continue
+    if line[0] == 'Q':                  # a read of the copy buffer registers: it ends the drain-next state
+        copy_flag = False
+        if a.list: print('%5d copy buffer read %03x' % (ln, int(line[1:4], 16)))
+        continue
     if line[0] == 'R':
         off = int(line[1:4], 16); d = int(line[5:13], 16)
         if off == 0x20: st['fg'] = d

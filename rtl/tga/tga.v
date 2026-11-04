@@ -87,6 +87,7 @@ module tga #(
 
     // debug (clk): each register write and frame buffer write as it is executed, and the
     // drawing state (the OSD's TGA trace and video overlay; rtl/mister/dbg_trace.v, dbg_overlay.v)
+    output reg         dbg_rq,          // a read of the copy buffer registers (000-01C, 100-11C): dbg_ri
     output reg         dbg_rw,          // a register write: dbg_ri (longword index), dbg_rd
     output reg   [7:0] dbg_ri,
     output reg  [31:0] dbg_rd,
@@ -272,6 +273,23 @@ module tga #(
     reg  [31:0] g_w;                        // simple mode data
     reg  [63:0] s [0:9];                    // source quadwords (copy, COPY64, DMA)
     reg  [63:0] s_prev;
+    // the copy buffer as software sees it (21030 4.4.6): after a copy-mode source write the
+    // 8 entries hold the source quadwords aligned as the destination gets them, i.e. 64 bytes
+    // from the source's first byte cp_p0; GCBR0-7 (000-01C) read entries 0-3 and the
+    // slope-no-go registers (100-11C) entries 4-7. A read ends the drain-next state, so the
+    // next copy-mode write fills again: NT 4.0's tga.dll saves the screen under its
+    // minimize/restore animation frames this way (a fill, 8 register reads, the next block)
+    // and restores it with simple writes; with 000-01C reading back what was written, the
+    // saved pixels were zeros and the restores painted black (2026-11-04). Software loads
+    // the buffer by writing even then odd GCBRs (the low then the high longword of the next
+    // entry); a copy-mode write then drains it
+    reg  [31:0] cb_tmp;                     // the even GCBR written, waiting for the odd one
+    reg   [2:0] cb_w;                       // the next entry a GCBR pair loads
+    reg [127:0] cb_q;                       // the entry pair under the host's read
+    wire  [2:0] cb_e   = {h_off[8], h_off[4:3]};
+    wire        cb_sel = h_rgn == 2'd1 && (h_off[9:5] == 5'b00000 || h_off[9:5] == 5'b01000);
+    always @(posedge clk) cb_q <= {s[{1'b0, cb_e} + 4'd1], s[{1'b0, cb_e}]} >> {cp_p0[2:0], 3'b000};
+    wire [31:0] cb_rd  = h_off[2] ? cb_q[63:32] : cb_q[31:0];
     reg   [2:0] g_fs;                       // copy: byte shift source -> destination
     reg         g_m1;                       // copy: the first destination quadword starts in s_prev
     reg  [63:0] p_d;                        // RMW: the source data
@@ -389,7 +407,7 @@ module tga #(
     integer k;
     always @(posedge clk) begin
         cq_pop <= 1'b0; rd_done <= 1'b0; bt_wr <= 1'b0; bt_rd <= 1'b0;
-        dbg_rw <= 1'b0; dbg_fw <= 1'b0;
+        dbg_rw <= 1'b0; dbg_fw <= 1'b0; dbg_rq <= 1'b0;
         if (vr_ack) vr_req <= 1'b0;
         if (dm_ack) dm_req <= 1'b0;
         if (vid_eof) sisr_st[0] <= 1'b1;
@@ -416,6 +434,11 @@ module tga #(
                     $display("TGA reg %03x = %08x", {c_idx, 2'b00}, c_d);
 `endif
                 case (c_idx)
+                8'h00, 8'h02, 8'h04, 8'h06: cb_tmp <= c_d;                      // a copy buffer load, low longword
+                8'h01, 8'h03, 8'h05, 8'h07: begin                               // ... high: the next entry
+                    s[{1'b0, cb_w}] <= {c_d, cb_tmp}; cb_w <= cb_w + 3'd1;
+                    copy_flag <= 1'b1; cp_p0 <= 21'd0;                          // the next copy-mode write drains it
+                end
                 8'h08: fg <= c_d;
                 8'h09: bg <= c_d;
                 8'h0A: pm <= c_d;
@@ -506,7 +529,7 @@ module tga #(
                 8'h07: if (!copy_flag) begin
                     // copy, source: 32 bytes from the longword less the pixel shift (as COPY64:
                     // NT's vSSCopy8to8 does its window edges this way with the shift set)
-                    copy_flag <= 1'b1; cp_p0 <= cp_src;
+                    copy_flag <= 1'b1; cp_p0 <= cp_src; cb_w <= 3'd0;
                     sr_k <= 5'd0; sr_lo <= 1'b0; sr_next <= 2'd0;
                     nom_lo <= cp_blk[20:3]; nom_hi <= cp_blk[20:3] + (cp_blk[2] ? 18'd4 : 18'd3);
                     sr_skip <= cp_src[20:3] == cp_blk[20:3] + 18'd1 && cp_src[2:0] == 3'd0;
@@ -515,7 +538,7 @@ module tga #(
                     est <= E_SRD;
                 end else begin
                     // copy, destination: the 32 pixels the data selects (and the pixel mask)
-                    copy_flag <= 1'b0;
+                    copy_flag <= 1'b0; cb_w <= 3'd0;
                     g_q <= cp_blk[20:3]; g_n <= cp_blk[2] ? 10'd5 : 10'd4;
                     g_bef <= 8'hFF; g_bel <= 8'hFF;
                     g_st <= {8'd0, cp_msk} << {cp_blk[2], 2'b00};
@@ -690,6 +713,7 @@ module tga #(
                     bt_rd <= 1'b1; bt_rs <= epsr[4:1]; est <= E_RD2;
                 end else begin
                     rd_data <= reg_rd; rd_done <= 1'b1; est <= E_IDLE;
+                    if (cb_sel) begin copy_flag <= 1'b0; dbg_rq <= 1'b1; dbg_ri <= h_off[9:2]; end   // the buffer read out
                 end
             default: begin
                 if (!vr_req) begin vr_req <= 1'b1; vr_we <= 1'b0; vr_addr <= h_off[20:3]; vr_len <= 5'd1; end
@@ -706,7 +730,7 @@ module tga #(
         endcase
 
         if (rst) begin
-            est <= E_IDLE; vr_req <= 1'b0; dm_req <= 1'b0; cq_pop <= 1'b0;
+            est <= E_IDLE; vr_req <= 1'b0; dm_req <= 1'b0; cq_pop <= 1'b0; cb_w <= 3'd0; dbg_rq <= 1'b0;
             fg <= 32'd0; bg <= 32'd0; pm <= 32'hFFFFFFFF; pxm <= 32'hFFFFFFFF;
             os_v <= 1'b0; mode <= 16'd0; copy_flag <= 1'b0; rop <= 12'h003; pshift <= 4'd0;
             deep <= 32'd0; ccbr <= 32'd0; vhcr <= 32'd0; vvcr <= 32'd0; vvbr <= 9'd0; vvvr <= 32'd0;
@@ -726,6 +750,8 @@ module tga #(
     reg [31:0] reg_rd;
     always @* begin
         case (h_off[9:2])
+        8'h00, 8'h01, 8'h02, 8'h03, 8'h04, 8'h05, 8'h06, 8'h07,
+        8'h40, 8'h41, 8'h42, 8'h43, 8'h44, 8'h45, 8'h46, 8'h47: reg_rd = cb_rd;   // the copy buffer
         8'h08: reg_rd = fg;
         8'h09: reg_rd = bg;
         8'h0A: reg_rd = pm;

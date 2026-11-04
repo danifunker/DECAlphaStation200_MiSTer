@@ -484,6 +484,40 @@ int main(int argc, char **argv) {
     }
     set_mode(0); set_rop(3); set_pxm(0xFFFFFFFF);
     compare("copy mode");
+    // the copy buffer read back (21030 4.4.6): a copy-mode source write fills it; GCBR0-7
+    // (000-01C) read entries 0-3 as the destination would get them, i.e. the 32 bytes from
+    // the block's source (the block less the pixel shift); a read ends the drain-next state, so
+    // the next copy-mode write fills again. NT 4.0's tga.dll saves the screen under its
+    // minimize/restore animation frames this way (a fill, 8 register reads, the next block) and
+    // restores it with simple writes: with 000-01C reading back what was written the saved
+    // pixels were zeros and the restores painted black (2026-11-04)
+    set_mode(0x07); set_rop(3); set_pxm(0xFFFFFFFF); set_pm(0xFFFFFFFF);
+    for (int i = 0; i < 40; i++) {
+        int sh = (int)(rng() % 15) - 7;
+        reg_wr(0x38, sh & 0xF);
+        uint32_t a = 0x40000 + (rng() % 0x8000 & ~7u) + (i % 2 ? 4 : 0);
+        fb_wr(a, 0xFFFFFFFF); wait_idle();
+        uint32_t src = (sh < 0 ? (a & ~7u) - 24 : (a & ~3u)) - sh;
+        for (int j = 0; j < 8; j++) {
+            uint32_t v = reg_rd(j * 4), e = 0;
+            for (int b = 0; b < 4; b++) e |= (uint32_t)ref[(src + 4 * j + b) & (VSZ - 1)] << (8 * b);
+            CHECK(v == e, "copy buffer dword %d after a fill at %06x sh %d: %08x want %08x", j, a, sh, v, e);
+        }
+        CHECK(!(reg_rd(0x30) >> 20 & 1), "the copy state after reading the buffer: %08x", reg_rd(0x30));
+    }
+    compare("copy buffer reads");
+    // ... and loaded by software: even then odd GCBRs, then a copy-mode write drains it
+    reg_wr(0x38, 0);
+    for (int i = 0; i < 20; i++) {
+        uint32_t d = 0x48000 + (rng() % 0x4000 & ~7u); uint8_t bytes[32];
+        for (int j = 0; j < 8; j++) { uint32_t v = rng(); for (int b = 0; b < 4; b++) bytes[4 * j + b] = v >> (8 * b); reg_wr(j * 4, v); }
+        CHECK(reg_rd(0x30) >> 20 & 1, "the copy state after loading the buffer: %08x", reg_rd(0x30));
+        uint32_t md = i % 2 ? 0xFFFFFFFF : (uint32_t)rng();
+        fb_wr(d, md);
+        for (int k = 0; k < 32; k++) if (md >> k & 1) put(d + k, bytes[k], true);
+        wait_idle();
+    }
+    compare("copy buffer loads");
     // copy mode with the pixel shift, as NT's vSSCopy8to8 does window edges:
     // destination byte (D & ~3) + k comes from source byte (S & ~3) - shift + k
     set_mode(0x07);

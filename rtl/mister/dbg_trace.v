@@ -3,6 +3,7 @@
 // runs from 100 MHz, so its "921600" is 6.25 MHz / 7 = 892857, which this sends exactly (100 MHz / 112).
 //
 // sel = 1, the TGA trace: a line per TGA register write and per frame buffer write:
+//   Qooo 00000000            a read of the copy buffer registers 000-01C / 100-11C (it ends a copy's drain-next state)
 //   Rooo dddddddd            a register write: byte offset ooo (0x1F0 = RAMDAC, value RS<<9 | data;
 //                            the cursor position writes, RS 12-15, are left out)
 //   Wmm b oooooo dddddddd    a frame buffer write in mode mm: byte enables b, offset, data
@@ -21,6 +22,7 @@ module dbg_trace #(
     input  wire        clk,
     input  wire  [1:0] sel,             // 0 off, 1 TGA, 2 CPU, 3 CPU exceptions
     input  wire        rw,              // a TGA register write
+    input  wire        rq,              // a read of the TGA's copy buffer registers (a Q line: Qooo)
     input  wire  [7:0] ri,              // its longword index
     input  wire [31:0] rd,
     input  wire        fw,              // a TGA frame buffer write
@@ -50,7 +52,7 @@ module dbg_trace #(
                       ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0;
     always @* begin
         push = 1'b0; pv = 80'd0;
-        if (sel == 2'd1 && rw && !(ri == 8'h7C && rd[12:11] == 2'b11)) begin push = 1'b1; pv = {2'd0, 6'd0, ri, rd, 32'd0}; end
+        if (sel == 2'd1 && (rw || rq) && !(rw && ri == 8'h7C && rd[12:11] == 2'b11)) begin push = 1'b1; pv = {2'd0, rq, 5'd0, ri, rd, 32'd0}; end
         else if (sel == 2'd1 && fw) begin push = 1'b1; pv = {2'd1, 1'b0, fbe, mode, 12'd0, fa, fd}; end
         else if ((sel == 2'd2 || (sel == 2'd3 && !hot)) && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
     end
@@ -80,7 +82,7 @@ module dbg_trace #(
         2'd0: begin                     // Rooo dddddddd
             len = 6'd15;
             case (k)
-            6'd1: ch = 8'h52;
+            6'd1: ch = cur[77] ? 8'h51 : 8'h52;       // Q: a copy buffer read
             6'd2: ch = hx({2'b00, cur[71:70]}); 6'd3: ch = hx(cur[69:66]); 6'd4: ch = hx({cur[65:64], 2'b00});
             6'd5: ch = 8'h20; 6'd14: ch = 8'h0D; 6'd15: ch = 8'h0A;
             default: ch = hx(cur[32 + 4 * (13 - k) +: 4]);
