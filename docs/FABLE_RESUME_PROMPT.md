@@ -52,6 +52,18 @@ add a bench case that fails on the old RTL, fit, check on the board.
   threshold, 4032, sat above the reader's skip-ahead at 4000 and never fired.) Next: load the `483f51b`
   build, trace `alt+space n` (minimize) and a maximize/restore with `scratch/tgakeys_w.sh` (it waits for
   the UART to drain), `tgareplay.py --who X,Y` on a black pixel, fix, bench, fit.
+- **Root cause found with the lossless traces (`scratch/replay5/{minim3,restore4,alttab1,max1}`,
+  2026-11-04):** NT's minimize/restore animation flies the window's *caption bar* (blue, icon, white
+  text) between the window and its taskbar button. Under each frame it saves the screen with
+  copy-mode source writes (one per 32-byte block, the pixel shift set per block) followed by 8 PCI
+  reads of the copy buffer registers GCBR0-7 (000-01C), and later restores the background with simple
+  writes of the saved bytes. Our 000-01C read back what was last written (zeros), so every restore
+  wrote 00000000 (the "pass of zeros" in the traces), and the engine paired the lone fills as
+  source/destination copies. Manual 4.4.6 + 6.2.9: the GCBRs read entries 0-3 of the engine's
+  64-byte copy buffer (the slope-no-go registers 100-11C entries 4-7), aligned as the destination
+  gets them; even/odd GCBR writes load an entry for a drain. Fixed in `18e350e` (tga.v, a `Qooo`
+  trace line per such read, tgareplay.py, tb_tga reads + loads; the old RTL fails the bench). The
+  throttle build had hidden the minimize wedge by timing only. Board check of `18e350e` pending.
 - **Mouse drags from the command line:** `misterkvms-cli mouse drag DX DY [--steps N] [--step-ms MS]` and
   `--path "dx,dy dx,dy ..."` (added to the user's MiSTerKVMS cli, commits `9941804`, `d4688ba`): a separate
   `mouse down` is released when its process exits. NT doubles a move of 30 px to 60 and adds a tail of
