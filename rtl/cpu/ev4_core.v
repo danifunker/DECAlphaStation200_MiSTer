@@ -75,6 +75,7 @@ module ev4_core (
     // offset, EXC_ADDR and VA as they are then (the board's CPU trace, rtl/mister/dbg_trace.v)
     output reg         dbg_ent,
     output reg  [13:0] dbg_ent_off,
+    output reg  [31:0] dbg_ent_ir,     // the instruction in W at the entry (an arithmetic trap's trapping instruction)
     output wire [63:0] dbg_exc_addr,
     output wire [63:0] dbg_va
 );
@@ -1252,7 +1253,7 @@ module ev4_core (
                         mm_lock <= 1'b1;
                     end
                 end
-                dbg_ent <= w_ent; dbg_ent_off <= w_off;
+                dbg_ent <= w_ent; dbg_ent_off <= w_off; dbg_ent_ir <= w_ir;
                 if (w_ent) begin
                     exc_addr <= w_exc == E_ARITH ? ((w_pc + 64'd4) | 64'd2 | {63'd0, pal}) :
                                 (w_cls == C_CPAL && w_exc == E_NONE) ? ((w_pc + 64'd4) | {63'd0, pal}) :

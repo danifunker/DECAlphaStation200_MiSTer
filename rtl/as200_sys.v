@@ -148,6 +148,7 @@ module as200_sys #(
     output wire  [5:0] dbg_irqh,
     output wire        dbg_ent,         // the CPU's PAL entries (ev4_core dbg_ent*)
     output wire [13:0] dbg_ent_off,
+    output wire [31:0] dbg_ent_ir,
     output wire [63:0] dbg_exc_addr,
     output wire [63:0] dbg_va,
     // the TGA's debug taps (rtl/tga/tga.v dbg_*)
@@ -201,7 +202,7 @@ module as200_sys #(
         .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(dbg_insn), .dbg_rwr(dbg_rwr),
         .dbg_rnum(dbg_rnum), .dbg_rval(dbg_rval), .dbg_mwr(dbg_mwr), .dbg_maddr(dbg_maddr),
         .dbg_mval(dbg_mval), .dbg_msize(dbg_msize), .dbg_pal(dbg_pal),
-        .dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va)
+        .dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_ent_ir(dbg_ent_ir), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va)
     );
 
     // ------------------------------------------------------------ 21071
