@@ -81,6 +81,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | Device | Status | Pri | Notes |
 |---|---|---|---|
 | **TGA graphics** (ZLXp-E1: DECchip 21030, 2 MB VRAM in DDR3, Bt485 RAMDAC) | partial | P2 | `rtl/tga/` + `rtl/mister/ddr3_arb.v`, `docs/design/tga.md`: in the machine as PCI device 12 (`0a4d3f6`). **Board build 16: SRM's graphics console runs on it**, NetBSD's kernel reprograms it. Missing: pixel shift, line and Z modes, the TGA cursor, ICS1562 (no pixel clock above 65 MHz) |
+| TGA colour depths beyond 8 bpp (the ZLXp-E2/E3: 24-bit true colour as 32-bit pixels with an 8-bit overlay, the 21030's 12 bpp; 8/16 MB VRAM, the E2/E3 board ID in the ROM, the Bt485 in true-colour mode, the drawing engine's 32-bpp paths) | open | P3 | The user's wish (2026-11-04) after the video artefacts; the ZLXp-E1 we model is the 8-plane, 2 MB, 8 bpp board |
 | DECchip 21040 Ethernet (+ Ethernet ID ROM) | partial | P3 | `rtl/net/tulip21040.v` + `tulip_nb.v`, `docs/design/ethernet.md`: PCI device 11 (`a25bdb2`), OSD Network interface; SRM lists ewa0 (build 16). Main's bridge installed on the board 2026-11-01; no traffic tested yet |
 | 21040: error conditions, the guest's own station address for Main's filter, external loopback to the wire | open | P4 | ethernet.md 9 |
 | Sound: AD1848 (WSS 530h; SRM's PCXBJ: IRQ 9, DMA 0/1) | partial | P4 | `rtl/audio/wss_ad1848.v`, `docs/design/audio.md`: in the machine since build 15 (playback by DMA, IRQ; capture is silence). Not yet heard on the board (needs an OS driver) |

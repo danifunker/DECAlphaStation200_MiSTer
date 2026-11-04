@@ -33,7 +33,7 @@ module dbg_trace #(
     input  wire [31:0] ent_pc,          // EXC_ADDR<31:0>
     input  wire [31:0] ent_va,          // VA<31:0>
     output reg         txd,
-    output reg         full             // the ring is within 64 events of overflowing (for the TGA throttle)
+    output reg         full             // the ring holds 3800+ events (the TGA throttle; the reader skips ahead at 4000)
 );
     wire en = sel != 2'd0;
 
@@ -72,7 +72,7 @@ module dbg_trace #(
     reg   [7:0] ch;
     reg   [5:0] len;
     wire [11:0] behind = ew - er;
-    always @(posedge clk) full <= en && behind >= 12'd4032;
+    always @(posedge clk) full <= en && behind >= 12'd3800;   // below the skip-ahead at 4000, with room for the TGA's queue
     always @* begin
         len = 6'd2;
         ch = 8'h20;
