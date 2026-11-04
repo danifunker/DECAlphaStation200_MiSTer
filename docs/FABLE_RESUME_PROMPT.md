@@ -34,7 +34,29 @@ add a bench case that fails on the old RTL, fit, check on the board.
   OSD P5 Video debug overlay showed PXP = 00000001 on the board). Fixed in `tga.v` (one `pxm` + `os_v`,
   GMOR<23> GPXR state on reads), `tools/tgareplay.py`, `verilator/tb/tb_tga.cpp` (fails on the old
   RTL). Captures: `scratch/replay5/menu` (the Start menu opening: the replay shows the x%4 != 0 pixels
-  the board left grey). Board check pending at the time of writing.
+  the board left grey). **Board build `0e7a496` (`_Unstable/DECAlphaStation200_20261104b.rbf`, also on .92):
+  the Start menu is right; 25 traced mouse drags of the Run dialog (pixel shifts 0-7 both ways, with and
+  without dy) match byte for byte (`scratch/replay5/dr*`, `c*`, `s*`); large-window drags (My Computer) over
+  other windows, the icons and past the screen edges are clean.**
+- **Still open (2026-11-04, afternoon):** (1) maximize + restore leaves a black band across the restored
+  window's first icon row (the band is where the maximized icon row lands under the restore's client copy,
+  displacement (203, 56)); F5 repaints it. (2) Minimize leaves a black wedge on the desktop with staircase
+  edges (`scratch/shots/mn1.png`): NT's minimize animation. Its frames are block fills (mode 2D) with the
+  colours 00/07/f8/ff/04 at rop 0, which block fill ignores (manual 4.4.3: block fill, block stipple and
+  DMA-write copy always do dest = src), so the fills themselves are right; the residue must come from the
+  background save/restore copies around them (copies to and from off-screen VRAM below line 600, which NT
+  uses as a bitmap cache; unwritten off-screen VRAM reads as 0 = black). Both bursts overflow the 4096-event
+  trace ring (30k+ events lost), so the writers were never captured: hence the **TGA trace throttle** (OSD
+  P5, status bit 25, `3a467d3` + `483f51b`): with Serial port = TGA trace the TGA holds the host's writes
+  while the ring holds 3800+ events, so nothing is lost and NT just draws slower. (The first build's
+  threshold, 4032, sat above the reader's skip-ahead at 4000 and never fired.) Next: load the `483f51b`
+  build, trace `alt+space n` (minimize) and a maximize/restore with `scratch/tgakeys_w.sh` (it waits for
+  the UART to drain), `tgareplay.py --who X,Y` on a black pixel, fix, bench, fit.
+- **Mouse drags from the command line:** `misterkvms-cli mouse drag DX DY [--steps N] [--step-ms MS]` and
+  `--path "dx,dy dx,dy ..."` (added to the user's MiSTerKVMS cli, commits `9941804`, `d4688ba`): a separate
+  `mouse down` is released when its process exits. NT doubles a move of 30 px to 60 and adds a tail of
+  1-4 px as is (path "30,0 3,0" gives 62..64), and moves under ~4 px start no drag. `scratch/tgadrag_w.sh`,
+  `dragbatch2.sh` (a batch file of name<TAB>path), `titlebar.py` (the active title bar for the grab point).
 - Earlier suspects (before the root cause above), none tested:
   - **Mouse drags** (all tests so far were keyboard moves of one small dialog): many small moves in a
     row, full-window drag if enabled, moves while the window overlaps others or the screen edge.
@@ -64,7 +86,8 @@ add a bench case that fails on the old RTL, fit, check on the board.
   the user's repo danifunker/MiSTerKVMS). The capture is 800x600 while NT's GUI runs, 1284x964 in ARC.
   **On the Windows machine (2026-11-04):** the repo is `C:\Temp\mistercore\DECAlphaStation200_MiSTer`
   (WSL: `/mnt/c/Temp/mistercore/DECAlphaStation200_MiSTer`; `scratch/` is there); misterkvms-cli is
-  `C:\Temp\mistercore\MiSTerKVMS	argetelease\misterkvms-cli.exe` (its settings file names the
+  `C:\Temp\mistercore\MiSTerKVMS	arget
+elease\misterkvms-cli.exe` (its settings file names the
   capture stream); ssh to the board works only from WSL (Ubuntu-24.04) with `-i ~/.ssh/mister_only`,
   so the dumps and the trace capture run there (`scratch/ms.sh`, `trace_start.sh`, `trace_stop.sh`,
   `vramdump.sh`; call WSL as `wsl.exe -d Ubuntu-24.04 -- bash -lc "cd /mnt/c/... && ..."` from Git
