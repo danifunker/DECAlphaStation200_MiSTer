@@ -120,8 +120,11 @@ module tga #(
     wire  [1:0] h_rgn = h_off[21:20];           // 0 ROM, 1 registers, 2-3 frame buffer
     wire        h_csr = h_rgn == 2'd1 && h_off[9:3] == 7'h3F;     // 1F8 / 1FC command status
 
-    // command queue: {frame buffer, offset<20:0>, byte enables, data}
-    reg  [57:0] cq [0:7];
+    // command queue: {frame buffer, offset<20:0>, byte enables, data}. In logic, not an M10K:
+    // as a RAM Quartus took c_* (E_IDLE) in as its output register, and the M10K's clock-to-out
+    // then fed E_DEC's decode (sr_q, s[], g_*) at -1.6 ns; on the board NT's text came out with
+    // most of its pixels missing (build 20500af)
+    (* ramstyle = "logic" *) reg [57:0] cq [0:7];
     reg   [2:0] cq_h, cq_t;
     reg   [3:0] cq_n;
     reg         cq_push, cq_pop;
