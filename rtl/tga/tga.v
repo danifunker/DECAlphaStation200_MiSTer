@@ -304,8 +304,15 @@ module tga #(
     wire  [7:0] c_idx = c_off[9:2];
     wire [20:0] cp_blk = pshift[3] ? {c_off[20:3], 3'b000} - 21'd24 : {c_off[20:2], 2'b00};  // copy mode's block
     wire [20:0] cp_src = cp_blk - {{17{pshift[3]}}, pshift};   // ... and its source start
-    // right to left: pixel (A&~7) - 24 + j has mask bit (j + 8 - (A&7)) & 31
-    wire [31:0] cp_msk = !pshift[3] ? c_d : c_off[2] ? {c_d[3:0], c_d[31:4]} : {c_d[7:0], c_d[31:8]};
+    // right to left: the mask's byte lanes go to the block's quadwords in reverse address
+    // order, <7:0> for [A, A+8), <15:8> for [A-8, A), <23:16> for [A-16, A-8), <31:24> for
+    // [A-24, A-16), bit (j - A) & 7 within a quadword: the byte-swapped mask for NT's 8-aligned A.
+    // (NT 4.0's right-edge pairs write FFFF0000 | (2^n - 1) << 8 for the 16 + n pixels up to the
+    // window's edge, its left-edge ones 00FEFFFF for 23 pixels from the edge; with the lanes in
+    // address order a 1-7 pixel column at the right edge stayed stale after vertical moves)
+    wire [31:0] cp_ln  = {c_d[7:0], c_d[15:8], c_d[23:16], c_d[31:24]};
+    wire [31:0] cp_msk = !pshift[3] ? c_d : c_off[2] ? {cp_ln[27:0], cp_ln[31:28]} : cp_ln;
+    wire [31:0] px_ln  = {pxm[7:0], pxm[15:8], pxm[23:16], pxm[31:24]};
     wire  [7:0] m8 = mode[7:0];
     // transparent is mode bit 2 (21030: 05 transparent stipple, 25 transparent fill, as 0D/2D block;
     // Linux tgafb's values, and what NT's tga.dll draws its text with); 03/23 are kept as the same
@@ -500,7 +507,7 @@ module tga #(
                     g_q <= cp_blk[20:3]; g_n <= cp_blk[2] ? 10'd5 : 10'd4;
                     g_bef <= 8'hFF; g_bel <= 8'hFF;
                     g_st <= {8'd0, cp_msk} << {cp_blk[2], 2'b00};
-                    g_pw <= {8'd0, pshift[3] ? (c_off[2] ? {pxm[3:0], pxm[31:4]} : {pxm[7:0], pxm[31:8]}) : pxm} << {cp_blk[2], 2'b00};
+                    g_pw <= {8'd0, pshift[3] ? (c_off[2] ? {px_ln[27:0], px_ln[31:28]} : px_ln) : pxm} << {cp_blk[2], 2'b00};
                     g_use_pw <= 1'b1; g_use_st <= 1'b1; g_rop_en <= 1'b1; g_dsel <= D_CPY;
                     g_fs <= cp_p0[2:0] - cp_blk[2:0];
                     g_m1 <= cp_p0[2:0] < cp_blk[2:0];

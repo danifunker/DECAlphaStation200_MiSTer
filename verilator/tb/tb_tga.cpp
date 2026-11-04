@@ -517,7 +517,10 @@ int main(int argc, char **argv) {
             } else {
                 fb_wr(sa, 0xFFFFFFFF); fb_wr(da, mask);
                 for (uint32_t k = 0; k < len; k++) {
-                    uint32_t bit = bwd ? (k + 8 - (da & 7)) & 31 : k;
+                    // right to left: the mask's lanes in reverse quadword order, <7:0> [A, A+8),
+                    // <15:8> [A-8, A), <23:16> [A-16, A-8), <31:24> [A-24, A-16) (NT 4.0's edge masks)
+                    uint32_t o = (k + 8 - (da & 7)) & 31;               // the in-order bit
+                    uint32_t bit = !bwd ? k : o < 8 ? o : o < 16 ? o + 16 : o < 24 ? o : o - 16;
                     if (mask >> bit & 1) put(ds + k, out[k], true);
                 }
             }
