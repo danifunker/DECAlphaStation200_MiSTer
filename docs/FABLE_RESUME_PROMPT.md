@@ -119,8 +119,9 @@ add a bench case that fails on the old RTL, fit, check on the board.
   MiSTer key into COM1 as ASCII (ps2_ascii, from the bring-up). NT sat in KD (callkd, v0 16h, a0 1),
   clock and mouse stopped. Fixed in `90933f8` (keys into COM1 only while the picture is the terminal);
   `ntkd.py` now steps over such a hard-coded breakpoint, so attaching it releases a stopped machine.
-  Build `_Unstable/DECAlphaStation200_20261104h.rbf` (on .143 and .92; -1.868 ns, 36.1k ALMs) is not
-  yet loaded or checked on the board: type a 'b' in cmd.exe with /DEBUG still on.
+  Build `_Unstable/DECAlphaStation200_20261104h.rbf` (on .143 and .92; -1.868 ns, 36.1k ALMs) runs on
+  .143: ARC takes its keys through the 8242, NT boots, and 'b' in cmd.exe (`dir /a/s/w *.bat`, `cd
+  ubench`) no longer stops it, /DEBUG still on.
 
 ## Ground rules (from the user; they hold)
 
