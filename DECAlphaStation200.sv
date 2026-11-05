@@ -283,7 +283,7 @@ wire [1:0] cfg_mem = (cfg[2:1] == 2'd2 && !sdram_128) ? 2'd0 : cfg[2:1];
 
 wire       com1_tx_stb;
 wire [7:0] com1_tx_byte;
-wire       kbd_stb;
+wire       kbd_stb, kbd_tga;
 wire [7:0] kbd_ascii;
 wire [7:0] leds;
 wire       srom_txd;
@@ -379,7 +379,7 @@ as200_sys machine
 	.com1_rxd(UART_RXD),
 	.com1_tx_stb(com1_tx_stb),
 	.com1_tx_byte(com1_tx_byte),
-	.com1_kbd_stb(kbd_stb),
+	.com1_kbd_stb(kbd_stb & ~kbd_tga),
 	.com1_kbd_byte(kbd_ascii),
 	.com2_txd(),
 	.com2_rxd(1'b1),
@@ -476,7 +476,10 @@ ddr3_arb ddr3_arb
 	.DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE)
 );
 
-// The MiSTer keyboard types into COM1 until the 8242 and a graphics console exist.
+// The MiSTer keyboard types into COM1 while the picture is the terminal (a serial console);
+// while it is the TGA the guest reads the keyboard through the 8242 alone. (NT's kernel debugger
+// on COM1 takes a received 'b' as a break-in: every 'b' typed in NT stopped the machine.)
+assign kbd_tga = status[4:3] == 2'd0 && tga_on;
 ps2_ascii ps2_ascii
 (
 	.clk(clk_sys),

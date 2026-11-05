@@ -288,6 +288,36 @@ def get_context():
             return d
 
 
+def step_bpt(thread, addr):
+    """a hard-coded breakpoint (DbgBreakPoint's bpt, or the callkd of DbgBreakPointWithStatus,
+    which KeBugCheckEx calls before the blue screen with v0 = 16h, a0 = 1): on Alpha the kernel reports Fir at the bpt
+    itself and continuing re-executes it (the system hangs in the debugger), so log the caller
+    and move Fir past it with DbgKdSetContextApi, as a debugger does"""
+    ctx = get_context()
+    key = struct.pack('<q', addr - (1 << 32) if addr & 0x80000000 else addr)
+    i = ctx.rfind(key)
+    r = context_regs(ctx, addr)
+    if i < 0 or not r:
+        out('  hard-coded breakpoint at %08x: no context, left as it is' % addr)
+        return
+    out('BPT %08x (hard-coded) v0 %08x a0 %08x a1 %08x a2 %08x ra %08x sp %08x; %s' % (
+        addr, r[0] & 0xFFFFFFFF, r[16] & 0xFFFFFFFF, r[17] & 0xFFFFFFFF, r[18] & 0xFFFFFFFF,
+        r[26] & 0xFFFFFFFF, r[30] & 0xFFFFFFFF, who(thread)))
+    sp = r[30] & 0xFFFFFFFF
+    st = read_mem(sp, 0x100)
+    if st:
+        out('  stack %08x: %s' % (sp, ' '.join('%08x' % v for v in struct.unpack_from('<%dI' % (len(st) // 4), st))))
+    nxt = struct.pack('<q', addr + 4 - (1 << 32) if addr & 0x80000000 else addr + 4)
+    ctx = struct.pack('<I', 0x3133) + ctx[4:8] + struct.pack('<I', 0) + ctx[12:i] + nxt + ctx[i + 8:]
+    send_packet(T_MANIPULATE, ctx)
+    while True:
+        ptype, d = read_packet()
+        if ptype == T_MANIPULATE and struct.unpack_from('<I', d, 0)[0] == 0x3133:
+            if struct.unpack_from('<I', d, 8)[0]:
+                out('  set context refused: %08x' % struct.unpack_from('<I', d, 8)[0])
+            return
+
+
 def modules():
     """the current process's loaded modules from its PEB (0x7FFDF000): Ldr (+0xC) ->
     InLoadOrderModuleList (+0xC); entries: DllBase +0x18, SizeOfImage +0x20, BaseDllName +0x2C"""
@@ -389,6 +419,9 @@ while True:
             manipulate_continue(DBG_CONTINUE)
             continue
         st = state_change(data)
+        if new == 0x3030 and struct.unpack_from('<I', data, 20)[0] == 0x80000003 and \
+                read_mem(struct.unpack_from('<I', data, 32)[0], 4) in (b'\x80\0\0\0', b'\xad\0\0\0'):
+            step_bpt(thread, struct.unpack_from('<I', data, 32)[0])
         if new == 0x3031 and struct.unpack_from('<I', data, 24)[0] == 0x80080000 and BPS:
             bp_handle.clear(); bp_step.clear()          # a new boot: the old handles are gone
             for a in BPS:
