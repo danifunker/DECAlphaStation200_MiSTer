@@ -114,6 +114,13 @@ add a bench case that fails on the old RTL, fit, check on the board.
   - Windows 2000 uses its own display driver build: its register stream may use modes or patterns NT 4.0's
     tga.dll never did (other raster ops, line modes, 0E/Z modes not drawn by the model at all).
   - Timing: worst slack -1.795 ns at 100 MHz, all in `ev4_core` now; re-check the TGA after any change.
+- **2026-11-04, late: NT froze on every 'b' typed (cmd.exe).** Not a CPU fault: NT boots with /DEBUG on
+  COM1, the kernel debugger takes a received 'b' (0x62) as a break-in, and the top still typed every
+  MiSTer key into COM1 as ASCII (ps2_ascii, from the bring-up). NT sat in KD (callkd, v0 16h, a0 1),
+  clock and mouse stopped. Fixed in `90933f8` (keys into COM1 only while the picture is the terminal);
+  `ntkd.py` now steps over such a hard-coded breakpoint, so attaching it releases a stopped machine.
+  Build `_Unstable/DECAlphaStation200_20261104h.rbf` (on .143 and .92; -1.868 ns, 36.1k ALMs) is not
+  yet loaded or checked on the board: type a 'b' in cmd.exe with /DEBUG still on.
 
 ## Ground rules (from the user; they hold)
 
