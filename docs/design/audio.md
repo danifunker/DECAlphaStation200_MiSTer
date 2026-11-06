@@ -28,10 +28,19 @@ also mixes the CD-ROM's analogue audio and the motherboard speaker.
 - The card's IRQ and DMA are **software-selected** through the WSS command register (BASE+0), so
   the hardware has no fixed IRQ/DMA: the driver writes them. Out of reset the command register is
   0 (no IRQ, no DMA).
-- NT's WSS driver (not among the binaries here) and Linux's `ad1848.c` find the card by the WSS
-  version at BASE+3 (04h), wait for INIT to clear, then probe the codec's indirect registers
-  (section 2). The Windows 2000 RC1 Alpha ISO in `scratch/isos` carries no WSS driver, so the NT
-  side is from the data sheet and Linux's probe.
+- Linux's `ad1848.c` finds the card by the WSS version at BASE+3 (04h), waits for INIT to clear,
+  then probes the codec's indirect registers (section 2).
+- **NT 4.0's `sndsys.sys`** (on the CD as `ALPHA\SNDSYS.SY_`; disassembled in `scratch/ntsnd/`) checks,
+  in order: R0 without INIT; I12 reads 09h, 0Ah or 8Ah and does not take a write; the version at
+  BASE+3. Then the **interrupt scan**: for each of IRQ 7, 9, 10, 11 it writes the command register
+  with IRQSENS and that IRQSEL and takes the line as free only if BASE+3 bit 6 reads 1 (an idle ISA
+  line is high; manual: "the status register returns the state of the selected interrupt channel").
+  With no free line it gives up with configuration error 10. Bit 7 clear allows every DMA and IRQ.
+  It uses one DMA channel, DMASEL 1-3, with I9's SDC for capture. Last comes a **live test** of
+  both directions: start, wait 75 ms, stop, then an interrupt must have come and HalReadDmaCounter
+  must read between 1 and the buffer size less 5 (errors 2 and 3).
+- **Windows 2000** uses a WDM driver (`wdma_wss.inf`, `*PNPB007`, default 530h, 388h, IRQ 10, DMA 1
+  and 0) that runs none of those checks.
 - FM: software probes the OPL at 388h by its timers (AdLib detection) and tells an OPL3 from an
   OPL2 by the status bits 2:1 (0 on an OPL3, 1 on an OPL2).
 
@@ -42,7 +51,7 @@ Ports (BASE = 530h, a parameter):
 | Port | R/W | Register |
 |---|---|---|
 | BASE+0 | W | command: bit 6 IRQSENS, 5:3 IRQSEL (1 IRQ7, 2 IRQ9, 3 IRQ10, 4 IRQ11, else none), 2:0 DMASEL |
-| BASE+0..3 | R | ID and status: bit 7 ChannelAvail (0: all channels free), 6 IrqSense (the codec's INT and IEN), 5:0 version 04h |
+| BASE+0..3 | R | ID and status: bit 7 ChannelAvail (0: all channels free), 6 IrqSense (the codec's INT and IEN; with IRQSENS written, 1 for IRQSEL 1-4, an idle line), 5:0 version 04h |
 | BASE+4 | R/W | R0 index: 7 INIT (read only), 6 MCE, 5 TRD, 3:0 the indirect register |
 | BASE+5 | R/W | R1 indirect data |
 | BASE+6 | R/W | R2 status: 0 INT, 1 PRDY, 4 SOUR, 5 CRDY. Any write clears INT; a read clears PUR/COR |

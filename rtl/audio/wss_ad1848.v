@@ -9,7 +9,8 @@
 //   BASE+0      (W) the WSS command register: bits 5:3 IRQSEL (1 IRQ7, 2 IRQ9,
 //               3 IRQ10, 4 IRQ11), 2:0 DMASEL (the AS200 table 11-5), 6 IRQSENS
 //   BASE+0..3   (R) ID and status: bit 7 ChannelAvail (0: all channels), 6
-//               IrqSense (the codec's interrupt line), 5:0 the version, 04h
+//               IrqSense (the codec's interrupt line; with IRQSENS written, the
+//               selected ISA line, high when idle), 5:0 the version, 04h
 //   BASE+4      R0 index: 7 INIT (R/O), 6 MCE, 5 TRD, 3:0 the register
 //   BASE+5      R1 indexed data: I0-I15 (I16-I31 alias them)
 //   BASE+6      R2 status: 0 INT, 1 PRDY, 4 SOUR, 5 CRDY; a write clears INT
@@ -100,6 +101,9 @@ module wss_ad1848 #(
     wire       w16  = fmt == 2'b10;
     wire [2:0] fbytes = w16 ? (st ? 3'd4 : 3'd2) : (st ? 3'd2 : 3'd1);
     wire       irq_line = int_st && ien;
+    // IRQSENS: the selected line's state. NT's sndsys.sys counts an IRQ as free only if this reads 1
+    wire       irq_sel  = cfg[5:3] >= 3'd1 && cfg[5:3] <= 3'd4;
+    wire       irq_stat = cfg[6] ? irq_sel : irq_line;
 
     // the AS200's DMA selection (EK-PCDSA-TI table 11-5)
     wire [2:0] dsel = cfg[2:0];
@@ -201,7 +205,7 @@ module wss_ad1848 #(
             3'd5:    io_dout = dq;
             3'd6:    io_dout = {2'b00, crdy, pur | cor, 2'b00, prdy, int_st};
             3'd7:    io_dout = cap_byte;
-            default: io_dout = {1'b0, irq_line, 6'h04};
+            default: io_dout = {1'b0, irq_stat, 6'h04};
         endcase
     end
 

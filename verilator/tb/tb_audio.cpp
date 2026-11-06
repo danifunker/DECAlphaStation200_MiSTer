@@ -76,6 +76,17 @@ int main(int argc, char **argv) {
     printf("-- WSS ID, AD1848 INIT and registers\n");
     CHECK((inb(WSS + 3) & 0x3F) == 0x04, "WSS version %02x", inb(WSS + 3));
     CHECK((inb(WSS + 3) & 0x80) == 0, "ChannelAvail set");
+    // NT 4.0 sndsys.sys's interrupt scan: IRQSENS with each IRQSEL, bit 6 set = a free line
+    for (int s = 1; s <= 4; s++) {
+        outb(WSS + 0, 0x40 | s << 3);
+        CHECK(inb(WSS + 3) & 0x40, "IRQSENS, IRQSEL %d: status %02x", s, inb(WSS + 3));
+        CHECK((inb(WSS + 3) & 0x3F) == 0x04, "version under IRQSENS %02x", inb(WSS + 3));
+    }
+    outb(WSS + 0, 0x40);
+    CHECK(!(inb(WSS + 3) & 0x40), "IRQSENS with no line selected");
+    outb(WSS + 0, 0x10);
+    CHECK(!(inb(WSS + 3) & 0x40), "bit 6 without IRQSENS and no interrupt");
+    outb(WSS + 0, 0x00);
     CHECK(inb(WSS + 4) == 0x80, "INIT after reset: %02x", inb(WSS + 4));
     wait(2100);
     CHECK(inb(WSS + 4) == 0x40, "R0 after INIT %02x (MCE set)", inb(WSS + 4));
