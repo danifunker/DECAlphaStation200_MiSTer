@@ -7,7 +7,7 @@ the board notes in `docs/FABLE_RESUME_PROMPT.md` still hold (OSD-only core loads
 The order is fixed: the OS survey first, on the current core, so that a failure can't be blamed on new
 CPU or video work. The CPU work belongs to a separate Fable session (section 3), started after the survey.
 
-## 1. OS survey (board .143, core `DECAlphaStation200_20261104h.rbf` = `90933f8`)
+## 1. OS survey (board .143, core `DECAlphaStation200_20261106.rbf` = `0640b37`)
 
 Install in this order; all the ISOs are already in `games/DECAlphaStation200/` on .143:
 
@@ -61,4 +61,4 @@ suites and an NT boot. Video and CPU share the remaining ALMs (36.1k of about 41
 
 The rest of `docs/gaps.md`, in this order: flash save-back (and with it the default ARC boot entry),
 NVRAM and CMOS persistence, machine checks and error interrupts, anything the survey turned up, then
-what was built but never proven on the board (Ethernet traffic, WSS audio, CD audio, a floppy image).
+what was built but never proven on the board (Ethernet traffic, CD audio, a floppy image).

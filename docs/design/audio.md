@@ -38,7 +38,8 @@ also mixes the CD-ROM's analogue audio and the motherboard speaker.
   With no free line it gives up with configuration error 10. Bit 7 clear allows every DMA and IRQ.
   It uses one DMA channel, DMASEL 1-3, with I9's SDC for capture. Last comes a **live test** of
   both directions: start, wait 75 ms, stop, then an interrupt must have come and HalReadDmaCounter
-  must read between 1 and the buffer size less 5 (errors 2 and 3).
+  must read between 1 and the buffer size less 5 (errors 2 and 3). All of this passes on the board
+  since `0640b37`; at NT's default IRQ 11 the dialog reports the line used and moves to 7.
 - **Windows 2000** uses a WDM driver (`wdma_wss.inf`, `*PNPB007`, default 530h, 388h, IRQ 10, DMA 1
   and 0) that runs none of those checks.
 - FM: software probes the OPL at 388h by its timers (AdLib detection) and tells an OPL3 from an
