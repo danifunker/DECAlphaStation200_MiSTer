@@ -327,6 +327,8 @@ wire [13:0] dbg_ent_off;
 wire [63:0] dbg_exc_addr, dbg_va;
 wire [14:0] dbg_mm_csr;
 wire [10:0] dbg_dtb_pr;
+wire        dbg_psw;
+wire  [7:0] dbg_psv;
 wire        dbg_rwr;                // the retire lines of the CPU exceptions trace
 wire        dbg_mwr;                // a retired store and its data (the retire lines)
 wire [63:0] dbg_mval;
@@ -351,6 +353,7 @@ dbg_trace #(.CLK_HZ(100000000)) dbg_trace
 (
 	.clk(clk_sys), .sel(status[28:27]),
 	.rw(tdbg_rw), .rq(tdbg_rq), .ri(tdbg_ri), .rd(tdbg_rd), .fw(tdbg_fw), .fa(tdbg_fa), .fd(tdbg_fd), .fbe(tdbg_fbe), .mode(tdbg_mode),
+	.psw(dbg_psw), .psv(dbg_psv),
 	.ent(dbg_ent), .ent_off(dbg_ent_off), .ent_pc(dbg_ent_off == 14'h01E0 ? dbg_ent_ir : dbg_exc_addr[31:0]),   // D_FAULT: the instruction
 	.rt(dbg_retire), .rt_pal(dbg_pal), .rt_pc(dbg_pc), .rt_wr(dbg_rwr), .rt_num(dbg_rnum), .rt_val(dbg_rval[31:0]), .rt_mwr(dbg_mwr), .rt_mval(dbg_mval[31:0]),
 	.mw(d_req && d_ack), .mw_we(d_we), .mw_addr(d_addr), .mw_be(d_be), .mw_data(d_wdata), .mw_dma(dbg_dm_req),
@@ -427,7 +430,7 @@ as200_sys machine
 	.dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(), .dbg_rwr(dbg_rwr), .dbg_rnum(dbg_rnum), .dbg_rval(dbg_rval),
 	.dbg_mwr(dbg_mwr), .dbg_maddr(), .dbg_mval(dbg_mval), .dbg_msize(), .dbg_pal(dbg_pal), .dbg_irqh(dbg_irqh), .dbg_dm_req(dbg_dm_req),
 	.ndbg_stb(ndbg_stb), .ndbg_tag(ndbg_tag), .ndbg_a(ndbg_a), .ndbg_b(ndbg_b),
-	.dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_ent_ir(dbg_ent_ir), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va), .dbg_mm_csr(dbg_mm_csr), .dbg_dtb_pr(dbg_dtb_pr),
+	.dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_ent_ir(dbg_ent_ir), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va), .dbg_mm_csr(dbg_mm_csr), .dbg_dtb_pr(dbg_dtb_pr), .dbg_psw(dbg_psw), .dbg_psv(dbg_psv),
 	.tdbg_rq(tdbg_rq), .tdbg_rw(tdbg_rw), .tdbg_ri(tdbg_ri), .tdbg_rd(tdbg_rd), .tdbg_fw(tdbg_fw), .tdbg_fa(tdbg_fa), .tdbg_fd(tdbg_fd), .tdbg_fbe(tdbg_fbe), .tdbg_mode(tdbg_mode), .tdbg_st(tdbg_st),
 	.tdbg_stall(status[25] && status[28:27] == 2'd1 && trace_full)
 );

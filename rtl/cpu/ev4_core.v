@@ -79,7 +79,9 @@ module ev4_core (
     output wire [63:0] dbg_exc_addr,
     output wire [63:0] dbg_va,
     output wire [14:0] dbg_mm_csr,    // MM_CSR as the last D-stream fault left it (the board's E01E0 line)
-    output reg  [10:0] dbg_dtb_pr     // at that fault: {more than one DTB entry matched, the OR of the matching entries' {FOW, FOR, UWE..KWE, URE..KRE}}
+    output reg  [10:0] dbg_dtb_pr,    // at that fault: {more than one DTB entry matched, the OR of the matching entries' {FOW, FOR, UWE..KWE, URE..KRE}}
+    output reg         dbg_psw,       // a PAL write of PS (hw_mtpr PS): dbg_psv = the value's low byte, dbg_pc its PC
+    output reg   [7:0] dbg_psv
 );
     // ================================================================ classes
     localparam C_NOP = 4'd0, C_ALU = 4'd1, C_SHF = 4'd2, C_MUL = 4'd3, C_LDA = 4'd4,
@@ -1143,7 +1145,7 @@ module ev4_core (
 
             // ------------------------------------------------ W: retire
             r_v <= rf_we; r_dst <= w_dst; r_res <= w_res;
-            dbg_ent <= 1'b0;
+            dbg_ent <= 1'b0; dbg_psw <= 1'b0;
             if (w_v) begin
                 if (w_exc == E_NONE || w_exc == E_ARITH) begin
                     fpcr_f <= fpcr_f | w_fs;            // FP arithmetic flags, trap or not
@@ -1191,7 +1193,7 @@ module ev4_core (
                         if (w_ir[5]) case (w_ir[4:0])
                             5'd2: begin iccsr_fpe <= w_res[42]; iccsr_map <= w_res[41]; iccsr_hwe <= w_res[40]; end
                             5'd4: exc_addr <= w_res;
-                            5'd9: ps_cm <= w_res[4:3];
+                            5'd9: begin ps_cm <= w_res[4:3]; dbg_psw <= 1'b1; dbg_psv <= w_res[7:0]; end
                             5'd11: pal_base <= w_res[33:14];
                             5'd22: sl_xmit <= w_res[4];               // SL_XMIT
                             5'd13: sirr <= w_res[47:33];                               // SIRR
