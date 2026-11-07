@@ -96,9 +96,10 @@ seems to expect the chip to be free when it restarts at 12D4. The script hands t
 driver through a store to memory (LOADSTORE to 82000034 before the INT), not through registers.
 **Gap in the log:** host register reads are not logged (`ncr host read` count 0: the `$display` under
 `sel && !we` in `ncr53c810.v` never fires; check where reads are decoded), so whether the driver reads
-DSTAT/DSPS/SBCL before resuming is not known. The checkpoint `v3.ck` (every 1e9 cycles, last at 9e9 at
-most) loads into `obj_sys_fast3` only; `v3_6e9` was not kept, so copy `v3.ck` at a cycle before 7e9 if a
-later run writes one, or rerun (about 5.5 h to 6e9).
+DSTAT/DSPS/SBCL before resuming is not known. A checkpoint just before the stall is kept:
+`scratch/simruns/v3_6e9.ck` (cycle 6e9; loads only into `obj_sys_fast3`, e.g.
+`sim3.sh TAG --restore ../scratch/simruns/v3_6e9.ck --cd ../scratch/isos/vms73.iso --cycles 1200000000`;
+the abort comes about 1e9 cycles later).
 
 Lines to look at: `grep -a -n 'dstat 10' scratch/simruns/v3.log` and the 400 lines before; the target's
 SDTR reply is built in `rtl/scsi/scsi_targets.v` (extended message in), and whether a real RRD45 answers
