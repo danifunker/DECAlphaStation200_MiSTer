@@ -63,6 +63,35 @@ dka400 (right after a reset: the SRM P0 failure, section 3, hits about every oth
 date, take option 1, target DKA0. Then backup `VMS73_2GB.installed-<date>.img.bak`, boot from dka0,
 and the rest of the ladder (login, the SCSI disk, EWA0, the TGA). Licence PAKs: ask the user.
 
+### 2c. The other two OpenVMS CDs on `_20261107j` (2026-11-07, later)
+
+**8.4 boots to its installation menu** (V8.4 banner, date, known files, devices, EWA0, options 1-9;
+`scratch/vms84_menu.png`), on the first boot after an OSD reset; the three tries before it from one SRM
+session all failed in the P0 way (two "halt code 5, PC 180000020", one "halt code 5, PC 0" right after
+"reading 1230 blocks", a variant not seen before). So the install ladder of 2a applies to 8.4 too
+(a second blank 2 GB image for it).
+
+**6.2 hangs after its banner**: the old bootstrap ACCVIO was the P0 failure and is gone; now "OpenVMS
+(TM) Alpha Operating System, Version V6.2" prints and nothing follows (5 min, no key reaction;
+`scratch/vms62_hang.png`). The exec is alive (OSD Advanced "CPU state line": PCs in S0 80015xxx..
+800394BC, 13 M instr/s; the CPU exceptions trace shows interrupts, IPL changes, queue CALL_PALs,
+MTPR_SIRR). The SCRIPTS trace (OSD Serial port = TGA trace, `scratch/vms62_trace2.log`, tag lines
+`E3F01` fetch / `E3F02` interrupt / `E3F03` host write / `E3F04` bus change `{sfbr, bus, state, CDB
+opcode}`) shows 6.2's PKR driver cycling the CD through INQUIRY, MODE SENSE(6), READ CAPACITY and TEST
+UNIT READY a couple of times a second for ever: SIGP kick, job start (DSP = 1204), a phase-mismatch
+interrupt at 54C restarted by the host (a short DATA IN), INT at 11F4, next command. A unit-init retry
+loop: one of the four answers (status, sense, or the MODE SENSE page bytes) is one 6.2 rejects and
+7.3/8.4 accept. The board ring drops most fetches, so the simulator is the tool: `scratch/simruns/
+v62.log` (started 17:45 on 2026-11-07: `sh scratch/sim5.sh v62 --mem 2 +ccstep=16 --cd
+../scratch/isos/vms62.iso --cd-ua --type 'boot dka400\n' --type-at 3400000000 --save-every 1000000000
+--ckpt ../scratch/simruns/v62.ck --cycles 9000000000`; the banner at ~4.5e9, 2.5 h in) prints every
+CDB (`tgt 2 lun 0 cdb ...`) and status (`tgt 2 status xx`): look at the first command whose status is
+02 (CHECK CONDITION) or whose answer differs from what 7.3's driver got (`scratch/simruns/v8.log`,
+same build, same CD model), fix it in `rtl/scsi/scsi_targets.v` (the CD-ROM command set), bench it
+in `verilator/tb/tb_ncr810.cpp` or the SCSI bench, refit. Likely suspects from 6.2-era DKDRIVER: MODE
+SENSE(6) page 3F / page 0 with DBD clear (the block descriptor), READ CAPACITY on a CD, INQUIRY's
+version/ANSI bytes, or a UNIT ATTENTION that is never cleared.
+
 ### 2b. History of the diagnosis (for reference)
 
 Board, three runs, identical (before the fix): after "Installing required known files...":
@@ -105,18 +134,20 @@ noted in gaps.md. The SIGP bug does not touch SRM (its pke SCRIPTS have no WAIT 
 ## 4. Then the rest of the sweep (OPUS_RESUME_PROMPT section 1)
 
 NetBSD 10.2 (installed, `NETBSD_2GB.img`; re-check `boot dka0 -fl a` on the new build and the P0 rate),
-OpenVMS 6.2 (its bootstrap ACCVIO, PC 20005034, may be the same P0 family), OpenVMS 8.4, Tru64 4.0G,
-FreeBSD 4.6. Each failure: a bench or T3 case, a fix, `docs/gaps.md`.
+OpenVMS 6.2 (section 2c: the post-banner SCSI loop), Tru64 4.0G, FreeBSD 4.6 (OpenVMS 8.4 boots to its
+menu, section 2c). Each failure: a bench or T3 case, a fix, `docs/gaps.md`.
 
 ## 5. Board and tree state at hand-off
 
 .143 runs `_Unstable/DECAlphaStation200_20261107j.rbf` (`4d4c728`: both fixes, the trace windows on the
-old ACCVIO), the OSD set (not saved) to Console SRM, Display Serial console, CD = `OpenVMS 7.3
-Alpha.iso`, Pri. disk `NETBSD_2GB.img`, 128 MB, eth0; it sits at the OpenVMS installation menu.
+old ACCVIO), the OSD set (not saved) to Console SRM, Display Serial console, CD = `OpenVMS 6.2
+Alpha.iso`, Pri. disk `NETBSD_2GB.img`, 128 MB, eth0; it sits in 6.2's post-banner loop (section 2c).
+The OSD's Advanced page: Right does not change a setting, Enter cycles it; from the main page's first
+row 11 Downs reach "Apply and reset" (`scratch/vmsboot.sh N` does that and N boot tries).
 `_Unstable` also has `_20261107i.rbf` (`b94298c`-era trace build); .92 has `_20261107e.rbf` and
 `_20261107j.rbf`. Simulator: `scratch/simruns/v8.log`/`v9.log` = a VMS boot from reset in
 `obj_sys_fast5` (the fixed core; stage 2 types the date from the 7e9 checkpoint), started 15:50 on
-2026-11-07, for a regression check and as a base for later checkpoints. Core loads: OSD only (`scratch/k.sh OUT.png
+2026-11-07, for a regression check and as a base for later checkpoints; `v62.log` = the 6.2 boot, section 2c. Core loads: OSD only (`scratch/k.sh OUT.png
 keys...` sends keys over misterkvms-cli and screenshots; System page → Core → the rbf list). Fits: Quartus
 17.0 on this Windows machine in `../DECAlphaStation200_fit` (`git -C ../DECAlphaStation200_fit checkout
 --detach <commit>`, then `quartus_sh --flow compile DECAlphaStation200` from PowerShell; ~40 min), the
