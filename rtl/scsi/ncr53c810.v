@@ -449,6 +449,10 @@ always @(posedge clk) begin : engine
         // ISTAT.SRST holds the chip in reset until the host clears it
         if (sel && we && off == 5'h05 && be[0] && !wdata[6]) srst <= 1'b0;
         if (sel && !we) rdata <= {reg_rd({off, 2'd3}), reg_rd({off, 2'd2}), reg_rd({off, 2'd1}), reg_rd({off, 2'd0})};
+`ifdef NCR_TRACE
+        if (sel && !we && off != 5'h05)
+            $display("ncr host read %02X -> %02X%02X%02X%02X (dsp %08X)", {off, 2'd0}, reg_rd({off, 2'd3}), reg_rd({off, 2'd2}), reg_rd({off, 2'd1}), reg_rd({off, 2'd0}), dsp);
+`endif
     end else begin
         // ------------------------------------------------ the host's register access (registered request)
         if (sel) begin
@@ -865,10 +869,16 @@ always @(posedge clk) begin
     dbg_stb <= 1'b0;
     if (sel && we) begin
         dbg_stb <= 1'b1; dbg_tag <= 4'd3; dbg_a <= dsp; dbg_b <= {be, 3'd0, off, 2'd0, 2'd0, wdata[15:0]};
+`ifdef NCR_TRACE
+        $display("ncr host write %02X be %X data %08X (dsp %08X)", {off, 2'd0}, be, wdata, dsp);
+`endif
     end else if (q_s0 != 8'd0 || q_s1 != 3'd0 || q_ds != 8'd0) begin
         dbg_stb <= 1'b1; dbg_tag <= 4'd2; dbg_a <= dsp; dbg_b <= {q_ds, q_s0, 5'd0, q_s1, istat};
     end else if (dbg_bus != dbg_bus_q) begin
         dbg_stb <= 1'b1; dbg_tag <= 4'd4; dbg_a <= dsp; dbg_b <= {sfbr, dbg_bus, 3'd0, tgt_st};
+`ifdef NCR_TRACE
+        $display("ncr bus %02X (sel con atn ackhold bsy phase) target st %0d", dbg_bus, tgt_st[12:8]);
+`endif
     end else if (est == E_PRE) begin
         dbg_stb <= 1'b1; dbg_tag <= 4'd1; dbg_a <= dsp - 32'd8; dbg_b <= ins0;
     end

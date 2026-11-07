@@ -12,7 +12,7 @@
 //                            trapping instruction instead of VA)
 // sel = 3, the CPU exceptions: the same lines without the frequent entries (ITB/DTB misses,
 //   interrupts, and the CALL_PALs NT makes thousands of times a second: 06 08 09 0E 0F 1C 1E 3F,
-//   86 83 AB), so arithmetic, unaligned, opcode and access faults, gentrap, bugcheck and reboot
+//   86 83 AB, and those of SRM's idle loop and scheduler), so arithmetic, unaligned, opcode and access faults, gentrap, bugcheck and reboot
 //   all get through the UART; and a line per instruction retired outside PAL mode in the PC windows
 //   RT_LO0..RT_HI0 and RT_LO1..RT_HI1 (default SRM's cb_open and fopen):
 //   E3Cnn pppppppp vvvvvvvv   PC, the result's low half; nn = 20 + register if it wrote one
@@ -64,7 +64,11 @@ module dbg_trace #(
     wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0 || ent_off == 14'h09E0 || ent_off == 14'h00E0 ||
                       ent_off == 14'h2180 || ent_off == 14'h2200 || ent_off == 14'h2240 || ent_off == 14'h2380 ||
                       ent_off == 14'h23C0 || ent_off == 14'h2700 || ent_off == 14'h2780 || ent_off == 14'h2FC0 ||
-                      ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0;
+                      ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0 ||
+                      // SRM's idle loop and scheduler
+                      ent_off == 14'h24C0 || ent_off == 14'h2500 || ent_off == 14'h3740 || ent_off == 14'h3480 ||
+                      ent_off == 14'h2300 || ent_off == 14'h2B80 || ent_off == 14'h25C0 || ent_off == 14'h2440 ||
+                      ent_off == 14'h2100 || ent_off == 14'h20C0;
     wire        rt_in = rt && !rt_pal && rt_pc[63:32] == 32'd0 &&
                         ((rt_pc[31:0] >= RT_LO0 && rt_pc[31:0] < RT_HI0) || (rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1));
     always @* begin
