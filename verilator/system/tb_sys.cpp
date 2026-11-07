@@ -27,6 +27,8 @@
 //     --key STR        type STR on the PS/2 keyboard (into the 8242): ASCII, \n = Enter,
 //                      {up} {down} {left} {right} {esc} {f1}..{f12} {tab} {bs};
 //                      one key every 20 ms of machine time from --key-at cycles
+//     --ccstep N       after --restore: CC advances N a cycle from here on (1 = the board's timing)
+//     --disk-lat N     every block request waits N cycles before the transfer (Main and the SD card)
 //     --vram-every N   every N cycles write the TGA's 2 MB VRAM to --vram FILE
 //                      (default ../scratch/vram.bin; tools/vram2png.py shows it)
 //
@@ -34,6 +36,7 @@
 // the SROM serial port's output (the DROM's console: SL_XMIT decoded as a
 // 19200-baud line, the DROM's own timing at 100 MHz) and COM1's output.
 #include "Vas200_sys.h"
+#include "Vas200_sys___024root.h"
 #include "verilated.h"
 #include "verilated_save.h"
 #include <cstdio>
@@ -81,6 +84,8 @@ int main(int argc, char **argv) {
     uint64_t cycles = 200000000, trace_from = 0, trace_lo = 0, trace_hi = ~0ull;
     int mem = 0, until_led = -1, jumpers = 0x03, save_led = -1;
     uint64_t save_at = 0;
+    int ccstep = 0;
+    uint64_t disk_lat = 0, disk_wait = 0;
     std::string ckpt = "../scratch/sys.ckpt", restore, typed;
     uint64_t type_at = 0, key_at = 0, vram_every = 0;
     bool arc = false, flash_wp = false, cd_ua = false;
@@ -117,6 +122,8 @@ int main(int argc, char **argv) {
         else if (a == "--cd-ua") cd_ua = true;
         else if (a == "--nvram") nvram_file = next();
         else if (a == "--save-every") save_every = strtoull(next(), 0, 0);
+        else if (a == "--ccstep") ccstep = atoi(next());
+        else if (a == "--disk-lat") disk_lat = strtoull(next(), 0, 0);
         else if (a == "--key") keys += next();
         else if (a == "--key-at") key_at = strtoull(next(), 0, 0);
         else if (a == "--vram-every") vram_every = strtoull(next(), 0, 0);
@@ -191,6 +198,7 @@ int main(int argc, char **argv) {
         }
         fclose(f);
         cycles += cyc;
+        if (ccstep) t->rootp->as200_sys__DOT__cpu__DOT__cc_step = ccstep;
         fprintf(stderr, "restored %s at cycle %" PRIu64 ", %" PRIu64 " instructions\n", restore.c_str(), cyc, retired);
     }
     auto save = [&]() {
@@ -320,8 +328,11 @@ int main(int argc, char **argv) {
         cyc++;
         // the hps_io block devices (as in verilator/tb/tb_ncr810.cpp): one byte a cycle
         t->sd_buff_wr = 0;
-        if (sd_slot < 0) {
+        if (sd_slot < 0 && !(t->sd_rd | t->sd_wr)) disk_wait = 0;
+        else if (sd_slot < 0 && disk_wait < disk_lat) disk_wait++;
+        else if (sd_slot < 0) {
             for (int sl = 0; sl < 3; sl++) if ((t->sd_rd | t->sd_wr) & (1 << sl)) {
+                disk_wait = 0;
                 sd_slot = sl; sd_dir = (t->sd_wr >> sl) & 1; sd_pos = -1;
                 sd_len = ((int)((t->sd_blk_cnt >> (6 * sl)) & 63) + 1) * 512;
                 sd_lba_q = t->sd_lba[sl];

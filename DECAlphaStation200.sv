@@ -319,11 +319,15 @@ wire        f_req, f_we, f_ack;
 wire [20:0] f_addr;
 wire  [7:0] f_wdata, f_rdata;
 
+wire [63:0] dbg_pc;
 wire        dbg_retire, dbg_pal;    // the CPU state line (con_mux)
 wire        dbg_ent;                // the CPU's PAL entries (dbg_trace)
 wire [31:0] dbg_ent_ir;             // the instruction in W at the entry
 wire [13:0] dbg_ent_off;
 wire [63:0] dbg_exc_addr, dbg_va;
+wire        dbg_rwr;                // the retire lines of the CPU exceptions trace
+wire  [4:0] dbg_rnum;
+wire [63:0] dbg_rval;
 wire        ndbg_stb;               // the SCRIPTS trace
 wire  [3:0] ndbg_tag;
 wire [31:0] ndbg_a, ndbg_b;
@@ -343,11 +347,11 @@ dbg_trace #(.CLK_HZ(100000000)) dbg_trace
 	.clk(clk_sys), .sel(status[28:27]),
 	.rw(tdbg_rw), .rq(tdbg_rq), .ri(tdbg_ri), .rd(tdbg_rd), .fw(tdbg_fw), .fa(tdbg_fa), .fd(tdbg_fd), .fbe(tdbg_fbe), .mode(tdbg_mode),
 	.ent(dbg_ent), .ent_off(dbg_ent_off), .ent_pc(dbg_exc_addr[31:0]),
+	.rt(dbg_retire), .rt_pal(dbg_pal), .rt_pc(dbg_pc), .rt_wr(dbg_rwr), .rt_num(dbg_rnum), .rt_val(dbg_rval[31:0]),
 	.ne(ndbg_stb), .ne_tag(ndbg_tag), .ne_a(ndbg_a), .ne_b(ndbg_b),
 	.ent_va(dbg_ent_off == 14'h0060 ? dbg_ent_ir : dbg_va[31:0]),       // an arithmetic trap's line: the instruction, not VA
 	.txd(trace_txd), .full(trace_full)
 );
-wire [63:0] dbg_pc;
 wire  [5:0] dbg_irqh;
 as200_sys machine
 (
@@ -413,7 +417,7 @@ as200_sys machine
 	.speaker(),
 	.aud_l(aud_l), .aud_r(aud_r), .aud_tgl(aud_tgl),
 
-	.dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(), .dbg_rwr(), .dbg_rnum(), .dbg_rval(),
+	.dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(), .dbg_rwr(dbg_rwr), .dbg_rnum(dbg_rnum), .dbg_rval(dbg_rval),
 	.dbg_mwr(), .dbg_maddr(), .dbg_mval(), .dbg_msize(), .dbg_pal(dbg_pal), .dbg_irqh(dbg_irqh),
 	.ndbg_stb(ndbg_stb), .ndbg_tag(ndbg_tag), .ndbg_a(ndbg_a), .ndbg_b(ndbg_b),
 	.dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_ent_ir(dbg_ent_ir), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va),

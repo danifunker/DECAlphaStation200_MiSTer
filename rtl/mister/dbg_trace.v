@@ -13,12 +13,16 @@
 // sel = 3, the CPU exceptions: the same lines without the frequent entries (ITB/DTB misses,
 //   interrupts, and the CALL_PALs NT makes thousands of times a second: 06 08 09 0E 0F 1C 1E 3F,
 //   86 83 AB), so arithmetic, unaligned, opcode and access faults, gentrap, bugcheck and reboot
-//   all get through the UART
+//   all get through the UART; and a line per instruction retired outside PAL mode in the PC windows
+//   RT_LO0..RT_HI0 and RT_LO1..RT_HI1 (default SRM's cb_open and fopen):
+//   E3Cnn pppppppp vvvvvvvv   PC, the result's low half; nn = 20 + register if it wrote one
 // Events go into a 4096-entry ring that overwrites the oldest: when the UART falls behind,
 // the oldest are lost (a line "Dnnnnnnnn" counts them), so after a hang or a halt the last
 // 4096 events before it are still sent.
 module dbg_trace #(
-    parameter CLK_HZ = 100000000
+    parameter CLK_HZ = 100000000,
+    parameter [31:0] RT_LO0 = 32'h0003F430, RT_HI0 = 32'h0003FB48,
+    parameter [31:0] RT_LO1 = 32'h0004A708, RT_HI1 = 32'h0004AC58
 ) (
     input  wire        clk,
     input  wire  [1:0] sel,             // 0 off, 1 TGA, 2 CPU, 3 CPU exceptions
@@ -35,6 +39,12 @@ module dbg_trace #(
     input  wire [13:0] ent_off,
     input  wire [31:0] ent_pc,          // EXC_ADDR<31:0>
     input  wire [31:0] ent_va,          // VA<31:0>
+    input  wire        rt,              // a retired instruction
+    input  wire        rt_pal,
+    input  wire [63:0] rt_pc,
+    input  wire        rt_wr,
+    input  wire  [4:0] rt_num,
+    input  wire [31:0] rt_val,
     input  wire        ne,              // a SCRIPTS trace event (with sel = 1: E3F0t lines, ncr53c810.v)
     input  wire  [3:0] ne_tag,
     input  wire [31:0] ne_a,
@@ -55,12 +65,15 @@ module dbg_trace #(
                       ent_off == 14'h2180 || ent_off == 14'h2200 || ent_off == 14'h2240 || ent_off == 14'h2380 ||
                       ent_off == 14'h23C0 || ent_off == 14'h2700 || ent_off == 14'h2780 || ent_off == 14'h2FC0 ||
                       ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0;
+    wire        rt_in = rt && !rt_pal && rt_pc[63:32] == 32'd0 &&
+                        ((rt_pc[31:0] >= RT_LO0 && rt_pc[31:0] < RT_HI0) || (rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1));
     always @* begin
         push = 1'b0; pv = 80'd0;
         if (sel == 2'd1 && (rw || rq) && !(rw && ri == 8'h7C && rd[12:11] == 2'b11)) begin push = 1'b1; pv = {2'd0, rq, 5'd0, ri, rd, 32'd0}; end
         else if (sel == 2'd1 && fw) begin push = 1'b1; pv = {2'd1, 1'b0, fbe, mode, 12'd0, fa, fd}; end
         else if (sel == 2'd1 && ne) begin push = 1'b1; pv = {2'd3, 10'h3F0, ne_tag, ne_a, ne_b}; end
         else if ((sel == 2'd2 || (sel == 2'd3 && !hot)) && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
+        else if (sel == 2'd3 && rt_in) begin push = 1'b1; pv = {2'd3, 8'hF0, rt_wr, rt_num, rt_pc[31:0], rt_val}; end
     end
     always @(posedge clk) begin
         if (push) begin evq[ew] <= pv; ew <= ew + 12'd1; end

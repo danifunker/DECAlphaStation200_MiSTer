@@ -324,10 +324,8 @@ wire d_idle = !dmst && !d_go && !d_done;
 // the timers: 2^code units (code 0: none); the compares registered
 always @(posedge clk) begin
     // The selection timeout runs 64 times faster than programmed: nobody can answer late here (the
-    // targets say at once that an ID is empty), and SRM depends on it. A boot's first console open
-    // restarts the drivers, the SCSI scan runs through the five empty IDs in order at 512 ms each,
-    // and cb_open waits about 2 s for the device: at full length the open failed, cb_open left
-    // the caller's R0 as it was, and the read that followed took that for a file (PC 180000020)
+    // targets say at once that an ID is empty), and SRM's scan of the empty IDs takes 8 ms each, not
+    // 512 ms. It did not cure the failing first console open (docs/gaps.md).
     sto_lim <= stime0[3:0] == 4'd0 ? 32'hFFFF_FFFF : sto_full[31:12] != 20'd0 ? sto_full >> 6 : sto_full;
     gen_lim <= STO_UNIT << stime1[3:0];
     sto_hit <= sto_cnt == sto_lim;
