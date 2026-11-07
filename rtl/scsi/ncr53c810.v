@@ -264,6 +264,7 @@ reg         first_byte;
 reg         fl_next;                            // after E_FLUSH: the next instruction (else halt)
 reg         stepped;                            // an instruction ran since the start (single step)
 reg  [31:0] sto_cnt, sto_lim, gen_cnt, gen_lim;
+wire [31:0] sto_full = STO_UNIT << stime0[3:0];
 reg         sto_hit, gen_hit, gen_on;
 // a SELECT in progress: SCRIPTS go on meanwhile (as on the chip, until an instruction that needs
 // the bus); a selection timeout raises STO and halts them at the next instruction boundary
@@ -322,7 +323,12 @@ wire d_idle = !dmst && !d_go && !d_done;
 
 // the timers: 2^code units (code 0: none); the compares registered
 always @(posedge clk) begin
-    sto_lim <= stime0[3:0] == 4'd0 ? 32'hFFFF_FFFF : STO_UNIT << stime0[3:0];
+    // The selection timeout runs 64 times faster than programmed: nobody can answer late here (the
+    // targets say at once that an ID is empty), and SRM depends on it. A boot's first console open
+    // restarts the drivers, the SCSI scan runs through the five empty IDs in order at 512 ms each,
+    // and cb_open waits about 2 s for the device: at full length the open failed, cb_open left
+    // the caller's R0 as it was, and the read that followed took that for a file (PC 180000020)
+    sto_lim <= stime0[3:0] == 4'd0 ? 32'hFFFF_FFFF : sto_full[31:12] != 20'd0 ? sto_full >> 6 : sto_full;
     gen_lim <= STO_UNIT << stime1[3:0];
     sto_hit <= sto_cnt == sto_lim;
     gen_hit <= gen_cnt == gen_lim;
@@ -507,6 +513,8 @@ always @(posedge clk) begin : engine
         // SELECT take the request off the queue, and with a SELECT that held them until the
         // timeout, the timed-out requests stayed queued and ran again later.
         if (selecting) begin
+            // the bus is taken: the target looks at sel only when it is free, so keep asking
+            if (!sb_sel && !sb_bsy && !sb_sel_done && !sb_sel_fail) sb_sel <= 1'b1;
             if (sb_sel_done) begin
                 selecting <= 1'b0;
                 con <= 1'b1;
