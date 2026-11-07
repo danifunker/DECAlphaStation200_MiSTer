@@ -252,7 +252,7 @@ All registers are readable and writable as in the RS6K port.
 | ISTAT | ABRT, SRST (holds the chip in reset until cleared), SIGP, SEM, CON, INTF (write 1 clears), SIP, DIP |
 | CTEST0/4/5/6 | Stored |
 | CTEST1 | F0 |
-| CTEST2 | CIO/DACK; SIGP clears on read |
+| CTEST2 | CIO/DACK; SIGP clears on read, by the host or by the SCRIPTS (a register-to-SFBR move or a memory move from the register: the idle loops of OpenVMS, Linux and NetBSD clear it that way after WAIT RESELECT's SIGP exit; `2925f2b`) |
 | CTEST3 | Revision; CLF reads 0 |
 | DFIFO | DBC<6:0> (no FIFO) |
 | DMODE, DIEN, DWT, DCNTL | DCNTL STD starts, SSM single step, IRQD masks INTA |
