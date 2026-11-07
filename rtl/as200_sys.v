@@ -153,6 +153,7 @@ module as200_sys #(
     output wire [63:0] dbg_exc_addr,
     output wire [63:0] dbg_va,
     output wire [14:0] dbg_mm_csr,
+    output wire [10:0] dbg_dtb_pr,
     // the TGA's debug taps (rtl/tga/tga.v dbg_*)
     output wire        tdbg_rq,
     output wire        tdbg_rw,
@@ -208,7 +209,7 @@ module as200_sys #(
         .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_insn(dbg_insn), .dbg_rwr(dbg_rwr),
         .dbg_rnum(dbg_rnum), .dbg_rval(dbg_rval), .dbg_mwr(dbg_mwr), .dbg_maddr(dbg_maddr),
         .dbg_mval(dbg_mval), .dbg_msize(dbg_msize), .dbg_pal(dbg_pal),
-        .dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_ent_ir(dbg_ent_ir), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va), .dbg_mm_csr(dbg_mm_csr)
+        .dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_ent_ir(dbg_ent_ir), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va), .dbg_mm_csr(dbg_mm_csr), .dbg_dtb_pr(dbg_dtb_pr)
     );
 
     // ------------------------------------------------------------ 21071

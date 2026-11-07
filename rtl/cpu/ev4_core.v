@@ -78,7 +78,8 @@ module ev4_core (
     output reg  [31:0] dbg_ent_ir,     // the instruction in W at the entry (an arithmetic trap's trapping instruction)
     output wire [63:0] dbg_exc_addr,
     output wire [63:0] dbg_va,
-    output wire [14:0] dbg_mm_csr     // MM_CSR as the last D-stream fault left it (the board's E01E0 line)
+    output wire [14:0] dbg_mm_csr,    // MM_CSR as the last D-stream fault left it (the board's E01E0 line)
+    output reg  [10:0] dbg_dtb_pr     // at that fault: {more than one DTB entry matched, the OR of the matching entries' {FOW, FOR, UWE..KWE, URE..KRE}}
 );
     // ================================================================ classes
     localparam C_NOP = 4'd0, C_ALU = 4'd1, C_SHF = 4'd2, C_MUL = 4'd3, C_LDA = 4'd4,
@@ -479,6 +480,7 @@ module ev4_core (
     reg   [3:0] m2_exc0;                // the exception known in M1
     reg         m2_tchk;                // a DTB-translated memory access: check the vectors
     reg  [31:0] m2_dtbm, m2_vacv, m2_vfor, m2_vfow;
+    reg  [10:0] m2_dpr, w_dpr;          // debug: the matching DTB entries' protection, and whether several matched
     wire        m2_acv = |m2_vacv, m2_for = |m2_vfor, m2_fow = |m2_vfow;
     wire  [3:0] m2_exc = m2_exc0 != E_NONE ? m2_exc0 :
                          !m2_tchk ? E_NONE :
@@ -1094,6 +1096,7 @@ module ev4_core (
                 m2_exc0 <= (m1_exc != E_NONE || !m1_mem) ? m1_exc : m1_unal ? E_UNAL : E_NONE;
                 m2_tchk <= m1_exc == E_NONE && m1_mem && !m1_unal && !m1_spx;
                 m2_dtbm <= dtb_m; m2_vacv <= dtb_acv; m2_vfor <= dtb_for; m2_vfow <= dtb_fow;
+                m2_dpr <= {(dtb_m & (dtb_m - 32'd1)) != 32'd0, dtb_spr};
                 m2_dq <= dc_q; m2_dt <= dct_q; m2_dv <= dcv_q; m2_hitq <= m1_hit;
                 // store history as M2 will see it: sh1 -> sh2, sh0 -> sh1, M2's commit -> sh0
                 mg2_v <= sh1_v && sh1_a == m1_pa[33:3]; mg2_d <= sh1_d; mg2_b <= sh1_b;
@@ -1128,7 +1131,7 @@ module ev4_core (
             else begin
                 w_v <= m2_v && !stall_m2;
                 w_pc <= m2_pc; w_ir <= m2_ir; w_cls <= m2_cls; w_exc <= m2_exc;
-                w_dst <= m2_dst; w_dst_v <= m2_dst_v; w_va <= m2_va; w_cmf <= m2_cmf; w_fb <= m2_fb; w_fs <= m2_fs; w_es <= m2_es;
+                w_dst <= m2_dst; w_dst_v <= m2_dst_v; w_va <= m2_va; w_cmf <= m2_cmf; w_fb <= m2_fb; w_fs <= m2_fs; w_es <= m2_es; w_dpr <= m2_dpr;
                 w_res <= m2_load ? m2_lres : (m2_store && m2_stc) ? {63'd0, m2_stc_ok} : m2_res;
                 w_st <= m2_store && m2_exc == E_NONE && !(m2_stc && !m2_stc_ok);
                 w_sdata <= m2_quad ? m2_sd : {32'd0, m2_sd[31:0]};
@@ -1258,6 +1261,7 @@ module ev4_core (
                         va_ipr <= w_va;
                         mm_csr <= {w_ir[31:26], w_ir[25:21], w_exc == E_DFAULT ? w_fb : 3'b000, w_cls == C_ST};   // opcode, Ra, FOW FOR ACV, WR
                         mm_lock <= 1'b1;
+                        dbg_dtb_pr <= w_dpr;
                     end
                 end
                 dbg_ent <= w_ent; dbg_ent_off <= w_off; dbg_ent_ir <= w_ir;

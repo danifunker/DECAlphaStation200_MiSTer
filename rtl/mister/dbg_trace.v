@@ -8,8 +8,8 @@
 //                            the cursor position writes, RS 12-15, are left out)
 //   Wmm b oooooo dddddddd    a frame buffer write in mode mm: byte enables b, offset, data
 // sel = 2, the CPU trace: a line per PAL entry (exception, interrupt, CALL_PAL):
-//   Eoooo aaaaaaaa vvvvvvvv   PAL offset oooo, EXC_ADDR<31:0>, VA<31:0> (a D_FAULT, 01E0: MM_CSR<14:0> then
-//                            VA<15:0>; an arithmetic trap, 0060: the
+//   Eoooo aaaaaaaa vvvvvvvv   PAL offset oooo, EXC_ADDR<31:0>, VA<31:0> (a D_FAULT, 01E0: the instruction, then {0, MM_CSR<14:0>, 5 zeros,
+//                            several DTB entries matched, their protection bits FOW FOR UWE SWE EWE KWE URE SRE ERE KRE}; an arithmetic trap, 0060: the
 //                            trapping instruction instead of VA)
 // sel = 3, the CPU exceptions: the same lines without the frequent entries (ITB/DTB misses,
 //   interrupts, and the CALL_PALs NT makes thousands of times a second: 06 08 09 0E 0F 1C 1E 3F,
