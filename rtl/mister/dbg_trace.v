@@ -14,8 +14,8 @@
 //   interrupts, and the CALL_PALs NT makes thousands of times a second: 06 08 09 0E 0F 1C 1E 3F,
 //   86 83 AB, and those of SRM's idle loop and scheduler), so arithmetic, unaligned, opcode and access faults, gentrap, bugcheck and reboot
 //   all get through the UART; and a line per instruction retired outside PAL mode in the PC windows
-//   RT_LO0..RT_HI0 and RT_LO1..RT_HI1 (default SRM's cb_open and fopen):
-//   E3Cnn pppppppp vvvvvvvv   PC, the result's low half; nn = 20 + register if it wrote one
+//   RT_LO0..RT_HI0 and RT_LO1..RT_HI1 (default SRM's semaphore init 71418 and fopen):
+//   E3Cnn pppppppp vvvvvvvv   PC, the result's low half (a store's data); nn = 20 + register if it wrote one
 //   and a line per DRAM write that carries the longword WATCH (from the CPU or a DMA):
 //   E3E0d pppppppp aaaaaaaa   the last retired PC, the longword's address; d = 1 a DMA
 // Events go into a 4096-entry ring that overwrites the oldest: when the UART falls behind,
@@ -23,7 +23,7 @@
 // 4096 events before it are still sent.
 module dbg_trace #(
     parameter CLK_HZ = 100000000,
-    parameter [31:0] RT_LO0 = 32'h0003F430, RT_HI0 = 32'h0003FB48,
+    parameter [31:0] RT_LO0 = 32'h00071418, RT_HI0 = 32'h000714A8,
     parameter [31:0] RT_LO1 = 32'h0004A708, RT_HI1 = 32'h0004AC58,
     parameter [31:0] WATCH = 32'h00029A92
 ) (
@@ -48,6 +48,8 @@ module dbg_trace #(
     input  wire        rt_wr,
     input  wire  [4:0] rt_num,
     input  wire [31:0] rt_val,
+    input  wire        rt_mwr,          // a store: rt_mval is its data
+    input  wire [31:0] rt_mval,
     input  wire        mw,              // a DRAM access acknowledged (as200_sys d_*)
     input  wire        mw_we,
     input  wire [26:3] mw_addr,
@@ -89,7 +91,7 @@ module dbg_trace #(
         else if (sel == 2'd1 && fw) begin push = 1'b1; pv = {2'd1, 1'b0, fbe, mode, 12'd0, fa, fd}; end
         else if (sel == 2'd1 && ne) begin push = 1'b1; pv = {2'd3, 10'h3F0, ne_tag, ne_a, ne_b}; end
         else if ((sel == 2'd2 || (sel == 2'd3 && !hot)) && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
-        else if (sel == 2'd3 && rt_in) begin push = 1'b1; pv = {2'd3, 8'hF0, rt_wr, rt_num, rt_pc[31:0], rt_val}; end
+        else if (sel == 2'd3 && rt_in) begin push = 1'b1; pv = {2'd3, 8'hF0, rt_wr, rt_num, rt_pc[31:0], rt_mwr ? rt_mval : rt_val}; end
     end
     always @(posedge clk) begin
         if (push) begin evq[ew] <= pv; ew <= ew + 12'd1; end
