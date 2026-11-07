@@ -354,7 +354,7 @@ dbg_trace #(.CLK_HZ(100000000)) dbg_trace
 	.clk(clk_sys), .sel(status[28:27]),
 	.rw(tdbg_rw), .rq(tdbg_rq), .ri(tdbg_ri), .rd(tdbg_rd), .fw(tdbg_fw), .fa(tdbg_fa), .fd(tdbg_fd), .fbe(tdbg_fbe), .mode(tdbg_mode),
 	.psw(dbg_psw), .psv(dbg_psv),
-	.ent(dbg_ent), .ent_off(dbg_ent_off), .ent_pc(dbg_ent_off == 14'h01E0 ? dbg_ent_ir : dbg_exc_addr[31:0]),   // D_FAULT: the instruction
+	.ent(dbg_ent), .ent_xpc(dbg_exc_addr[31:0]), .ent_off(dbg_ent_off), .ent_pc(dbg_ent_off == 14'h01E0 ? dbg_ent_ir : dbg_exc_addr[31:0]),   // D_FAULT: the instruction
 	.rt(dbg_retire), .rt_pal(dbg_pal), .rt_pc(dbg_pc), .rt_wr(dbg_rwr), .rt_num(dbg_rnum), .rt_val(dbg_rval[31:0]), .rt_mwr(dbg_mwr), .rt_mval(dbg_mval[31:0]),
 	.mw(d_req && d_ack), .mw_we(d_we), .mw_addr(d_addr), .mw_be(d_be), .mw_data(d_wdata), .mw_dma(dbg_dm_req),
 	.ne(ndbg_stb), .ne_tag(ndbg_tag), .ne_a(ndbg_a), .ne_b(ndbg_b),

@@ -22,7 +22,8 @@
 //                            writes that keep kernel mode are left out
 //   and a line per DRAM write that carries the longword WATCH (from the CPU or a DMA):
 //   E3E0d pppppppp aaaaaaaa   the last retired PC, the longword's address; d = 1 a DMA
-// Events go into a 4096-entry ring that overwrites the oldest: when the UART falls behind,
+// With sel = 3 the ring stops taking events at a D_FAULT whose PC is in window 0 (the next sel change
+// restarts it). Events go into a 4096-entry ring that overwrites the oldest: when the UART falls behind,
 // the oldest are lost (a line "Dnnnnnnnn" counts them), so after a hang or a halt the last
 // 4096 events before it are still sent.
 module dbg_trace #(
@@ -46,7 +47,8 @@ module dbg_trace #(
     input  wire  [7:0] psv,
     input  wire        ent,             // a PAL entry
     input  wire [13:0] ent_off,
-    input  wire [31:0] ent_pc,          // EXC_ADDR<31:0>
+    input  wire [31:0] ent_pc,          // EXC_ADDR<31:0> (the top substitutes the instruction for a D_FAULT)
+    input  wire [31:0] ent_xpc,         // EXC_ADDR<31:0> always (the freeze test)
     input  wire [31:0] ent_va,          // VA<31:0>
     input  wire        rt,              // a retired instruction
     input  wire        rt_pal,
@@ -90,9 +92,14 @@ module dbg_trace #(
                         ((rt_pc[31:0] >= RT_LO0 && rt_pc[31:0] < RT_HI0) || (rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1));
     wire        mw_lo = mw && mw_we && mw_be[3:0] != 4'd0 && mw_data[31:0] == WATCH;
     wire        mw_hi = mw && mw_we && mw_be[7:4] != 4'd0 && mw_data[63:32] == WATCH;
+    // the ring freezes at a D_FAULT whose PC is in window 0 (the fault under study), so the events
+    // before it survive whatever the machine does next; the next change of sel thaws it
+    reg         frozen;
+    wire        freeze = sel == 2'd3 && ent && ent_off == 14'h01E0 && ent_xpc >= RT_LO0 && ent_xpc < RT_HI0;
     always @* begin
         push = 1'b0; pv = 80'd0;
-        if (sel == 2'd3 && (mw_lo || mw_hi)) begin push = 1'b1; pv = {2'd3, 13'h1F00, mw_dma, rt_pc[31:0], 5'd0, mw_addr, mw_hi, 2'b00}; end
+        if (frozen) ;
+        else if (sel == 2'd3 && (mw_lo || mw_hi)) begin push = 1'b1; pv = {2'd3, 13'h1F00, mw_dma, rt_pc[31:0], 5'd0, mw_addr, mw_hi, 2'b00}; end
         else if (sel == 2'd1 && (rw || rq) && !(rw && ri == 8'h7C && rd[12:11] == 2'b11)) begin push = 1'b1; pv = {2'd0, rq, 5'd0, ri, rd, 32'd0}; end
         else if (sel == 2'd1 && fw) begin push = 1'b1; pv = {2'd1, 1'b0, fbe, mode, 12'd0, fa, fd}; end
         else if (sel == 2'd1 && ne) begin push = 1'b1; pv = {2'd3, 10'h3F0, ne_tag, ne_a, ne_b}; end
@@ -103,6 +110,8 @@ module dbg_trace #(
     reg   [7:0] psv_q;                  // the PS byte before this write (kernel-to-kernel writes are left out: the idle loop's flood)
     always @(posedge clk) begin
         if (psw) psv_q <= psv;
+        if (freeze) frozen <= 1'b1;
+        if (!en) frozen <= 1'b0;
         if (push) begin evq[ew] <= pv; ew <= ew + 12'd1; end
         if (!en) ew <= 12'd0;
     end
