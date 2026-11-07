@@ -38,9 +38,34 @@ How the trace was taken (reusable for any OS bug in the simulator): run the fast
 checkpoint with `--trace T --cycles N` (a few 1e7 cycles make a 2-4 GB trace); find the event in the
 trace by a store of a known value (`grep -n '=00000000010012d4/4'`), then `tracedis.py --from`.
 
-## 2. Next: OpenVMS 7.3's installer ACCVIO (P0 for the sweep)
+## 2. OpenVMS 7.3's installer ACCVIO: solved later on 2026-11-07 (`4d4c728`)
 
-Board, three runs, identical: after "Installing required known files...":
+The core ignored RWC (ir[13], read with write check) on HW_LD. OpenVMS's PALcode implements PROBEW
+with `hw_ld/ar` (ALT mode + RWC); DCL's user-mode half probed its supervisor-stack frame for user
+write, got "yes", stored, and the DTB (rightly) took ACV. Found with the simulator: `scratch/simruns/
+v6.ck` (7.30e9 cycles, just before the fault, loads into `obj_sys_fast4`), the traced replay
+`v7.trace`, `v7_fault.txt` / `v7_pre.txt` (tracedis output). `tests/cpu/t3_rwc.py` (`make -C verilator
+t3-rwc`, alphaasm, no binutils needed) fails on the old core. **Board `_20261107j.rbf` (`4d4c728`):
+`boot dka400` reaches the OpenVMS installation menu** (option 1 Upgrade/install ... 8 Shut down). The
+rest of this section is the history of the diagnosis; skip to section 3.
+
+The dbg_trace additions made on the way (all in `rtl/mister/dbg_trace.v`, OSD Serial port = CPU
+exceptions): the `E01E0` D_FAULT line now carries the faulting instruction, MM_CSR and the matching DTB
+entries' protection; `E3D00` lines for PAL writes of PS that enter or leave a non-kernel mode (old and
+new PS byte); the ring freezes at a D_FAULT inside retire window 0 (set `RT_LO0/HI0` on the fault under
+study; the next change of the OSD Serial port thaws it). The simulator remains the better tool once a
+checkpoint near the event exists.
+
+### 2a. The next step for VMS: the install itself
+
+Mount `VMS73_2GB.img` on the OSD's Pri. disk slot (ID 0), Console SRM, Display Serial console, boot
+dka400 (right after a reset: the SRM P0 failure, section 3, hits about every other boot), enter the
+date, take option 1, target DKA0. Then backup `VMS73_2GB.installed-<date>.img.bak`, boot from dka0,
+and the rest of the ladder (login, the SCSI disk, EWA0, the TGA). Licence PAKs: ask the user.
+
+### 2b. History of the diagnosis (for reference)
+
+Board, three runs, identical (before the fix): after "Installing required known files...":
 `%SYSTEM-F-ACCVIO, access violation, reason mask=04, virtual address=000000007FFAC4B0,
 PC=000000007FE96B50, PS=0000001B`, "Improperly handled condition, image exit forced", the SYSTEM job
 terminates. Registers in `docs/gaps.md` (OS table). VA and PC are in P1 space (7FExxxxx: the installed
