@@ -1,5 +1,9 @@
 # Resume prompt: SRM OS boots (NetBSD, OpenVMS, FreeBSD) — state on 2026-11-07
 
+**Superseded by `docs/OS_SWEEP_RESUME_PROMPT.md` (2026-11-07, later): section 3 below (the OpenVMS SCSI
+stall) is solved (`2925f2b`, SIGP not cleared by the SCRIPTS' read of CTEST2); sections 2, 4 and 5 still
+apply.**
+
 Paste this into a new session. Read `CLAUDE.md`, then `docs/gaps.md` (rows "SRM boots: the first
 console open fails", "SCSI target: a selection ... lost", the OS table), then
 `docs/OPUS_RESUME_PROMPT.md` (the survey plan and its rules, still in force). The user's standing
