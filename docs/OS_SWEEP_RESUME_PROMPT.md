@@ -110,10 +110,13 @@ FreeBSD 4.6. Each failure: a bench or T3 case, a fix, `docs/gaps.md`.
 
 ## 5. Board and tree state at hand-off
 
-.143 runs `_Unstable/DECAlphaStation200_20261107e.rbf` (`2925f2b`), the OSD set (not saved) to Console
-SRM, Display Serial console, CD = `OpenVMS 7.3 Alpha.iso`, Pri. disk `NETBSD_2GB.img`, 128 MB, eth0; it
-sits at the installer's ACCVIO. `_Unstable` also has `_20261107d.rbf` (`3d4a006`, the debug-window
-build); .92 has `_20261106.rbf` and `_20261107e.rbf`. Core loads: OSD only (`scratch/k.sh OUT.png
+.143 runs `_Unstable/DECAlphaStation200_20261107j.rbf` (`4d4c728`: both fixes, the trace windows on the
+old ACCVIO), the OSD set (not saved) to Console SRM, Display Serial console, CD = `OpenVMS 7.3
+Alpha.iso`, Pri. disk `NETBSD_2GB.img`, 128 MB, eth0; it sits at the OpenVMS installation menu.
+`_Unstable` also has `_20261107i.rbf` (`b94298c`-era trace build); .92 has `_20261107e.rbf` and
+`_20261107j.rbf`. Simulator: `scratch/simruns/v8.log`/`v9.log` = a VMS boot from reset in
+`obj_sys_fast5` (the fixed core; stage 2 types the date from the 7e9 checkpoint), started 15:50 on
+2026-11-07, for a regression check and as a base for later checkpoints. Core loads: OSD only (`scratch/k.sh OUT.png
 keys...` sends keys over misterkvms-cli and screenshots; System page → Core → the rbf list). Fits: Quartus
 17.0 on this Windows machine in `../DECAlphaStation200_fit` (`git -C ../DECAlphaStation200_fit checkout
 --detach <commit>`, then `quartus_sh --flow compile DECAlphaStation200` from PowerShell; ~40 min), the
