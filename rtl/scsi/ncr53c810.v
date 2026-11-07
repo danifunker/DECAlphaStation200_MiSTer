@@ -73,7 +73,16 @@ module ncr53c810 #(
     output reg   [7:0] sb_idata,
     output reg         sb_ackhold,
     output reg         sb_atn,
-    output reg         sb_rst
+    output reg         sb_rst,
+
+    // the SCRIPTS trace (dbg_trace, OSD Serial port = TGA trace): E3F0t aaaaaaaa bbbbbbbb, t =
+    // 1 an instruction (DSP, DCMD|DBC), 2 interrupt bits raised (DSP, {DSTAT, SIST0, SIST1, ISTAT}),
+    // 3 a host write (DSP, {be, reg, data low 16}), 4 the bus changed (DSP, {flags, target state and CDB opcode})
+    input  wire [12:0] tgt_st,
+    output reg         dbg_stb,
+    output reg   [3:0] dbg_tag,
+    output reg  [31:0] dbg_a,
+    output reg  [31:0] dbg_b
 );
 
 // ---- PCI configuration header ---------------------------------------------------------------
@@ -839,6 +848,23 @@ always @(posedge clk) begin : engine
         if (q_s0 != 8'd0 || q_s1 != 3'd0 || q_ds != 8'd0)
             $display("ncr set dstat %02X sist0 %02X sist1 %01X  (irq %0d istat %02X)", q_ds, q_s0, q_s1, irq, istat);
 `endif
+    end
+end
+
+// ---- the SCRIPTS trace ------------------------------------------------------------------------
+wire [7:0] dbg_bus = {selecting, con, sb_atn, sb_ackhold, sb_bsy, sb_phase};
+reg  [7:0] dbg_bus_q;
+always @(posedge clk) begin
+    dbg_bus_q <= dbg_bus;
+    dbg_stb <= 1'b0;
+    if (sel && we) begin
+        dbg_stb <= 1'b1; dbg_tag <= 4'd3; dbg_a <= dsp; dbg_b <= {be, 3'd0, off, 2'd0, 2'd0, wdata[15:0]};
+    end else if (q_s0 != 8'd0 || q_s1 != 3'd0 || q_ds != 8'd0) begin
+        dbg_stb <= 1'b1; dbg_tag <= 4'd2; dbg_a <= dsp; dbg_b <= {q_ds, q_s0, 5'd0, q_s1, istat};
+    end else if (dbg_bus != dbg_bus_q) begin
+        dbg_stb <= 1'b1; dbg_tag <= 4'd4; dbg_a <= dsp; dbg_b <= {sfbr, dbg_bus, 3'd0, tgt_st};
+    end else if (est == E_PRE) begin
+        dbg_stb <= 1'b1; dbg_tag <= 4'd1; dbg_a <= dsp - 32'd8; dbg_b <= ins0;
     end
 end
 

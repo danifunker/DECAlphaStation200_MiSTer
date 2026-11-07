@@ -104,7 +104,8 @@ module scsi_targets #(
     output wire signed [15:0] cd_audio_l,
     output wire signed [15:0] cd_audio_r,
     output wire        cd_audio_stb,
-    output wire        activity
+    output wire        activity,
+    output wire [12:0] dbg_st              // the SCRIPTS trace: {state, the CDB's opcode}
 );
     // INQUIRY identification: vendor (8), product (16), revision (4)
     localparam [223:0] ID_DISK = "DEC     RZ28     (C) DEC442D";
@@ -148,6 +149,7 @@ module scsi_targets #(
     reg  [1:0]  dev;                     // 0, 1 disks, 2 CD-ROM
     reg  [2:0]  lun;
     reg  [7:0]  cdb [0:11];
+    assign dbg_st = {st, cdb[0]};
     reg  [4:0]  cdb_n, cdb_len;
     reg  [7:0]  msg [0:4];
     reg  [2:0]  msg_n;

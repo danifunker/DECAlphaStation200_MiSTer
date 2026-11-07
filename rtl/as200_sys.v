@@ -161,7 +161,11 @@ module as200_sys #(
     output wire [31:0] tdbg_fd,
     output wire  [3:0] tdbg_fbe,
     output wire  [7:0] tdbg_mode,
-    output wire [319:0] tdbg_st
+    output wire [319:0] tdbg_st,
+    output wire        ndbg_stb,        // the SCRIPTS trace (ncr53c810.v)
+    output wire  [3:0] ndbg_tag,
+    output wire [31:0] ndbg_a,
+    output wire [31:0] ndbg_b
 );
     // ------------------------------------------------------------ SROM (XC1765D image)
     reg  [7:0] srom [0:8191];
@@ -248,6 +252,7 @@ module as200_sys #(
     wire        sb_sel, sb_sel_atn, sb_sel_done, sb_sel_fail, sb_bsy, sb_req, sb_ack, sb_ackhold, sb_atn, sb_rst;
     wire  [2:0] sb_sel_id, sb_phase;
     wire  [7:0] sb_tdata, sb_idata;
+    wire [12:0] tgt_st;
     scsi_targets #(.DISK0_ID(3'd0), .DISK1_ID(3'd1), .CD_ID(3'd4)) targets (
         .clk(clk), .rst(rst),
         .sel(sb_sel), .sel_id(sb_sel_id), .sel_atn(sb_sel_atn), .sel_done(sb_sel_done), .sel_fail(sb_sel_fail),
@@ -257,7 +262,8 @@ module as200_sys #(
         .sd_lba(sd_lba), .sd_blk_cnt(sd_blk_cnt), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
         .sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din),
         .sd_buff_wr(sd_buff_wr),
-        .cd_change(cd_change), .cd_audio_l(cd_audio_l), .cd_audio_r(cd_audio_r), .cd_audio_stb(cd_audio_stb)
+        .cd_change(cd_change), .cd_audio_l(cd_audio_l), .cd_audio_r(cd_audio_r), .cd_audio_stb(cd_audio_stb),
+        .dbg_st(tgt_st)
     );
     // DMA masters: the 53C810 and the SIO's 8237s, fixed priority, the owner
     // kept until its transfer is acknowledged
@@ -337,7 +343,8 @@ module as200_sys #(
         .inta_n(scsi_inta_n),
         .sb_sel(sb_sel), .sb_sel_id(sb_sel_id), .sb_sel_atn(sb_sel_atn), .sb_sel_done(sb_sel_done),
         .sb_sel_fail(sb_sel_fail), .sb_bsy(sb_bsy), .sb_req(sb_req), .sb_phase(sb_phase), .sb_tdata(sb_tdata),
-        .sb_ack(sb_ack), .sb_idata(sb_idata), .sb_ackhold(sb_ackhold), .sb_atn(sb_atn), .sb_rst(sb_rst)
+        .sb_ack(sb_ack), .sb_idata(sb_idata), .sb_ackhold(sb_ackhold), .sb_atn(sb_atn), .sb_rst(sb_rst),
+        .tgt_st(tgt_st), .dbg_stb(ndbg_stb), .dbg_tag(ndbg_tag), .dbg_a(ndbg_a), .dbg_b(ndbg_b)
     );
 
     // the 82378 SIO (device 7) and everything on ISA: I/O no other device

@@ -35,6 +35,10 @@ module dbg_trace #(
     input  wire [13:0] ent_off,
     input  wire [31:0] ent_pc,          // EXC_ADDR<31:0>
     input  wire [31:0] ent_va,          // VA<31:0>
+    input  wire        ne,              // a SCRIPTS trace event (with sel = 1: E3F0t lines, ncr53c810.v)
+    input  wire  [3:0] ne_tag,
+    input  wire [31:0] ne_a,
+    input  wire [31:0] ne_b,
     output reg         txd,
     output reg         full             // the ring holds 3800+ events (the TGA throttle; the reader skips ahead at 4000)
 );
@@ -55,6 +59,7 @@ module dbg_trace #(
         push = 1'b0; pv = 80'd0;
         if (sel == 2'd1 && (rw || rq) && !(rw && ri == 8'h7C && rd[12:11] == 2'b11)) begin push = 1'b1; pv = {2'd0, rq, 5'd0, ri, rd, 32'd0}; end
         else if (sel == 2'd1 && fw) begin push = 1'b1; pv = {2'd1, 1'b0, fbe, mode, 12'd0, fa, fd}; end
+        else if (sel == 2'd1 && ne) begin push = 1'b1; pv = {2'd3, 10'h3F0, ne_tag, ne_a, ne_b}; end
         else if ((sel == 2'd2 || (sel == 2'd3 && !hot)) && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
     end
     always @(posedge clk) begin
