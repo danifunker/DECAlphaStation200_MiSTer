@@ -155,6 +155,11 @@ obj_sys_fast/Vas200_sys: $(SYS_RTL) system/tb_sys.cpp
 		-GSROM_HEX='"../srom/build/avanti_srom.bitstream.hex"' -GSIM_FAST=$(SIM_FAST) +define+SIM_PCILOG \
 		+define+NCR_TRACE +define+SIM_NOFM $^
 
+# the same build under another name (obj_sys_fast2, ...): keeps a binary and its checkpoints
+# while the RTL moves on (a checkpoint loads only into the binary that wrote it)
+obj_sys_fast%/Vas200_sys: $(SYS_RTL) system/tb_sys.cpp
+	$(TB_V) --Mdir obj_sys_fast$* --top-module as200_sys -Wno-BLKSEQ --savable 		-GSROM_HEX='"../srom/build/avanti_srom.bitstream.hex"' -GSIM_FAST=$(SIM_FAST) +define+SIM_PCILOG 		+define+NCR_TRACE +define+SIM_NOFM $^
+
 system-fast: obj_sys_fast/Vas200_sys $(FLASH)
 	obj_sys_fast/Vas200_sys --flash $(FLASH) --drom $(DROM) +ccstep=16 $(SYSARGS)
 

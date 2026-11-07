@@ -300,6 +300,7 @@ assign dm_addr = {d_addr[31:2], 2'b00};
 
 wire [7:0] reg_imm = ins0[15:8];
 wire [6:0] reg_adr = ins0[22:16];
+wire host_istat_wr = sel && we && off == 5'h05 && be[0];      // the host sets SIGP this cycle: it wins
 
 // an address that is the chip's own registers: memory space through BAR1, I/O through BAR0
 function self_hit;
@@ -449,10 +450,6 @@ always @(posedge clk) begin : engine
         // ISTAT.SRST holds the chip in reset until the host clears it
         if (sel && we && off == 5'h05 && be[0] && !wdata[6]) srst <= 1'b0;
         if (sel && !we) rdata <= {reg_rd({off, 2'd3}), reg_rd({off, 2'd2}), reg_rd({off, 2'd1}), reg_rd({off, 2'd0})};
-`ifdef NCR_TRACE
-        if (sel && !we && off != 5'h05)
-            $display("ncr host read %02X -> %02X%02X%02X%02X (dsp %08X)", {off, 2'd0}, reg_rd({off, 2'd3}), reg_rd({off, 2'd2}), reg_rd({off, 2'd1}), reg_rd({off, 2'd0}), dsp);
-`endif
     end else begin
         // ------------------------------------------------ the host's register access (registered request)
         if (sel) begin
@@ -658,6 +655,13 @@ always @(posedge clk) begin : engine
             // data to SFBR, 111 read-modify-write; operand, ALU, write in three cycles
             E_REG_RD: begin
                 r_src <= ins0[29:27] == 3'b101 ? sfbr : reg_rd(reg_adr);
+                // a SCRIPTS read of CTEST2 clears SIGP like the host's (the drivers' idle loops:
+                // WAIT RESELECT's SIGP exit, then MOVE CTEST2 TO SFBR to take the signal). Without
+                // it, OpenVMS's PKR driver found SIGP still set when the job ended and its SCRIPTS
+                // ran the finished job's table again (a second SDTR) before the driver had queued
+                // the next one; the driver logged the stray interrupt, restarted the idle loop
+                // while connected, and its next SELECT hung (gaps.md, OpenVMS 7.3)
+                if (ins0[29:27] != 3'b101 && reg_adr == 7'h1A && !host_istat_wr) sigp <= 1'b0;
                 est <= E_REG_ALU;
             end
             E_REG_ALU: begin
@@ -805,7 +809,7 @@ always @(posedge clk) begin : engine
 
             // ---- memory move, LOAD, STORE: a byte at a time through the read cache and the write buffer
             E_MM_RD: begin
-                if (mm_sreg) begin mm_byte <= reg_rd(dnad[6:0]); est <= E_MM_WR; end
+                if (mm_sreg) begin mm_byte <= reg_rd(dnad[6:0]); if (dnad[6:0] == 7'h1A && !host_istat_wr) sigp <= 1'b0; est <= E_MM_WR; end
                 else if (rc_valid && rc_addr == dnad[31:2]) begin mm_byte <= rc_data[8 * dnad[1:0] +: 8]; est <= E_MM_WR; end
                 else if (wb_valid && d_idle) wb_out;
                 else if (d_idle && !wb_valid) dma_rd(dnad);
@@ -871,6 +875,10 @@ always @(posedge clk) begin
         dbg_stb <= 1'b1; dbg_tag <= 4'd3; dbg_a <= dsp; dbg_b <= {be, 3'd0, off, 2'd0, 2'd0, wdata[15:0]};
 `ifdef NCR_TRACE
         $display("ncr host write %02X be %X data %08X (dsp %08X)", {off, 2'd0}, be, wdata, dsp);
+`endif
+`ifdef NCR_TRACE
+    end else if (sel && !we) begin
+        $display("ncr host read %02X be %X -> %02X%02X%02X%02X (dsp %08X istat %02X)", {off, 2'd0}, be, reg_rd({off, 2'd3}), reg_rd({off, 2'd2}), reg_rd({off, 2'd1}), reg_rd({off, 2'd0}), dsp, istat);
 `endif
     end else if (q_s0 != 8'd0 || q_s1 != 3'd0 || q_ds != 8'd0) begin
         dbg_stb <= 1'b1; dbg_tag <= 4'd2; dbg_a <= dsp; dbg_b <= {q_ds, q_s0, 5'd0, q_s1, istat};

@@ -586,7 +586,26 @@ int main(int argc, char **argv) {
         }
         CHECK(steps == 2 && rb(SCRATCHA) == 2, "single step: %d steps, SCRATCHA0 %02X", steps, rb(SCRATCHA));
         wb(DCNTL, 0x09); wb(DIEN, 0x04);
-        printf("register ops, LOAD/STORE, memory moves, single step: %s\n", fails ? "see failures" : "ok");
+        // SIGP: set by the host, WAIT RESELECT takes its alternate address, and the SCRIPTS' own
+        // read of CTEST2 (the drivers' idle loops: VMS's PKR, Linux, NetBSD) clears it like a host
+        // read; a second WAIT RESELECT then waits. OpenVMS 7.3 hung on a SIGP that stayed set
+        // (gaps.md): its SCRIPTS ran the finished job's table again
+        p = SCRIPT;
+        ins(0x50000000, SCRIPT + 0x10);                          // WAIT RESELECT, alt (absolute) -> next
+        ins(0x98080000, 0x7B);                                   // (a reselection: not here)
+        ins(0x761A0000, 0);                                      // MOVE CTEST2 TO SFBR
+        ins(0x6E340000, 0);                                      // MOVE SFBR TO SCRATCHA0
+        ins(0x50000000, SCRIPT + 0x28);                          // WAIT RESELECT again: must wait
+        ins(0x98080000, 0x7C);                                   // SIGP still set: the alternate
+        wb(ISTAT, 0x20);
+        wl(DSP, SCRIPT);
+        for (int k = 0; k < 2000; k++) tick();
+        CHECK(!(rb(ISTAT) & 0x21) && rb(SCRATCHA) == 0x61 && rl(DSP) == SCRIPT + 0x28,
+              "SIGP: istat %02X ctest2 seen %02X dsp %08X (expected waiting at %08X)", rb(ISTAT), rb(SCRATCHA), rl(DSP), SCRIPT + 0x28);
+        wb(ISTAT, 0x20);                                         // now the second one goes
+        uint8_t si = wait_int(); rb(DSTAT);
+        CHECK((si & 1) && rl(DSPS) == 0x7C, "SIGP second exit: istat %02X dsps %X", si, rl(DSPS));
+        printf("register ops, LOAD/STORE, memory moves, single step, SIGP: %s\n", fails ? "see failures" : "ok");
     }
 
     // ---- the CD-ROM at ID 4: 2048-byte blocks, then 512 after MODE SELECT (as SRM sets)
