@@ -18,7 +18,8 @@
 //   RT_LO0..RT_HI0 and RT_LO1..RT_HI1 (default SRM's semaphore init 71418 and fopen):
 //   E3Cnn pppppppp vvvvvvvv   PC, the result's low half (a store's data); nn = 20 + register if it wrote one
 //   and a line per PAL write of PS (every REI and CHMx; the mode VMS runs in next):
-//   E3D00 pppppppp 000000vv   the hw_mtpr's PC (in PAL), the PS byte written (CM in <4:3>)
+//   E3D00 pppppppp 0000oovv   the hw_mtpr's PC (in PAL), the PS byte before (oo) and the one written (vv; CM in <4:3>);
+//                            writes that keep kernel mode are left out
 //   and a line per DRAM write that carries the longword WATCH (from the CPU or a DMA):
 //   E3E0d pppppppp aaaaaaaa   the last retired PC, the longword's address; d = 1 a DMA
 // Events go into a 4096-entry ring that overwrites the oldest: when the UART falls behind,
@@ -97,9 +98,11 @@ module dbg_trace #(
         else if (sel == 2'd1 && ne) begin push = 1'b1; pv = {2'd3, 10'h3F0, ne_tag, ne_a, ne_b}; end
         else if ((sel == 2'd2 || (sel == 2'd3 && !hot)) && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
         else if (sel == 2'd3 && rt_in) begin push = 1'b1; pv = {2'd3, 8'hF0, rt_wr, rt_num, rt_pc[31:0], rt_mwr ? rt_mval : rt_val}; end
-        else if (sel == 2'd3 && psw) begin push = 1'b1; pv = {2'd3, 14'h3D00, rt_pc[31:0], 24'd0, psv}; end
+        else if (sel == 2'd3 && psw && (psv[4:3] != 2'd0 || psv_q[4:3] != 2'd0)) begin push = 1'b1; pv = {2'd3, 14'h3D00, rt_pc[31:0], 16'd0, psv_q, psv}; end
     end
+    reg   [7:0] psv_q;                  // the PS byte before this write (kernel-to-kernel writes are left out: the idle loop's flood)
     always @(posedge clk) begin
+        if (psw) psv_q <= psv;
         if (push) begin evq[ew] <= pv; ew <= ew + 12'd1; end
         if (!en) ew <= 12'd0;
     end
