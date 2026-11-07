@@ -77,7 +77,8 @@ module ev4_core (
     output reg  [13:0] dbg_ent_off,
     output reg  [31:0] dbg_ent_ir,     // the instruction in W at the entry (an arithmetic trap's trapping instruction)
     output wire [63:0] dbg_exc_addr,
-    output wire [63:0] dbg_va
+    output wire [63:0] dbg_va,
+    output wire [14:0] dbg_mm_csr     // MM_CSR as the last D-stream fault left it (the board's E01E0 line)
 );
     // ================================================================ classes
     localparam C_NOP = 4'd0, C_ALU = 4'd1, C_SHF = 4'd2, C_MUL = 4'd3, C_LDA = 4'd4,
@@ -94,6 +95,7 @@ module ev4_core (
     assign dbg_pal = pal;
     assign dbg_exc_addr = exc_addr;
     assign dbg_va = va_ipr;
+    assign dbg_mm_csr = mm_csr;
     reg         iccsr_fpe, iccsr_map, iccsr_hwe;
     reg  [63:0] exc_addr;
     reg   [1:0] ps_cm;
