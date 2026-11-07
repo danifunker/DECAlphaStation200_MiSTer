@@ -762,7 +762,8 @@ For loads, stores and virtual HW_LD/HW_ST. "Mode" below is PS.CM, or ALT_MODE fo
    tag[42:13+3*GH]; PA = {PFN[33:13+3*GH], VA[12+3*GH:0]}. No match -> **DTB_MISS** (PAL or native).
 5. Protection: read needs xRE, write needs xWE for the mode, else ACV -> **D_FAULT**. Then FOR (read with
    PTE.FOR) or FOW (write with PTE.FOW) -> **D_FAULT**. RWC HW_LD checks both read and write (and FOW,
-   **Impl**). Superpage hits have no protection beyond the kernel check.
+   **Impl**; in the RTL since `4d4c728`: OpenVMS's PROBEW is a `hw_ld/ar`, and without the check it said
+   the supervisor stack was user-writable, `t3_rwc.py`). Superpage hits have no protection beyond the kernel check.
 - No TNV in hardware: TBs never hold invalid PTEs; PALcode reports TNV (HRM 4.7.1).
 - HW_LD/HW_ST with PHY: PA = effective address [33:0], no checks.
 
