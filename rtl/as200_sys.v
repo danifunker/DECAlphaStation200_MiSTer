@@ -146,6 +146,7 @@ module as200_sys #(
     output wire  [3:0] dbg_msize,
     output wire        dbg_pal,
     output wire  [5:0] dbg_irqh,
+    output wire        dbg_dm_req,      // a PCI master's DMA is pending (the board's memory write watch)
     output wire        dbg_ent,         // the CPU's PAL entries (ev4_core dbg_ent*)
     output wire [13:0] dbg_ent_off,
     output wire [31:0] dbg_ent_ir,
@@ -268,6 +269,7 @@ module as200_sys #(
     // DMA masters: the 53C810 and the SIO's 8237s, fixed priority, the owner
     // kept until its transfer is acknowledged
     wire        dm_req, dm_we, dm_ack;
+    assign dbg_dm_req = dm_req;
     wire [31:0] dm_addr, dm_wdata, dm_rdata;
     wire  [3:0] dm_be;
     wire        scsi_dm_req, scsi_dm_we;

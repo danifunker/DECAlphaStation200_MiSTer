@@ -16,13 +16,16 @@
 //   all get through the UART; and a line per instruction retired outside PAL mode in the PC windows
 //   RT_LO0..RT_HI0 and RT_LO1..RT_HI1 (default SRM's cb_open and fopen):
 //   E3Cnn pppppppp vvvvvvvv   PC, the result's low half; nn = 20 + register if it wrote one
+//   and a line per DRAM write that carries the longword WATCH (from the CPU or a DMA):
+//   E3E0d pppppppp aaaaaaaa   the last retired PC, the longword's address; d = 1 a DMA
 // Events go into a 4096-entry ring that overwrites the oldest: when the UART falls behind,
 // the oldest are lost (a line "Dnnnnnnnn" counts them), so after a hang or a halt the last
 // 4096 events before it are still sent.
 module dbg_trace #(
     parameter CLK_HZ = 100000000,
     parameter [31:0] RT_LO0 = 32'h0003F430, RT_HI0 = 32'h0003FB48,
-    parameter [31:0] RT_LO1 = 32'h0004A708, RT_HI1 = 32'h0004AC58
+    parameter [31:0] RT_LO1 = 32'h0004A708, RT_HI1 = 32'h0004AC58,
+    parameter [31:0] WATCH = 32'h00029A92
 ) (
     input  wire        clk,
     input  wire  [1:0] sel,             // 0 off, 1 TGA, 2 CPU, 3 CPU exceptions
@@ -45,6 +48,12 @@ module dbg_trace #(
     input  wire        rt_wr,
     input  wire  [4:0] rt_num,
     input  wire [31:0] rt_val,
+    input  wire        mw,              // a DRAM access acknowledged (as200_sys d_*)
+    input  wire        mw_we,
+    input  wire [26:3] mw_addr,
+    input  wire  [7:0] mw_be,
+    input  wire [63:0] mw_data,
+    input  wire        mw_dma,
     input  wire        ne,              // a SCRIPTS trace event (with sel = 1: E3F0t lines, ncr53c810.v)
     input  wire  [3:0] ne_tag,
     input  wire [31:0] ne_a,
@@ -71,9 +80,12 @@ module dbg_trace #(
                       ent_off == 14'h2100 || ent_off == 14'h20C0;
     wire        rt_in = rt && !rt_pal && rt_pc[63:32] == 32'd0 &&
                         ((rt_pc[31:0] >= RT_LO0 && rt_pc[31:0] < RT_HI0) || (rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1));
+    wire        mw_lo = mw && mw_we && mw_be[3:0] != 4'd0 && mw_data[31:0] == WATCH;
+    wire        mw_hi = mw && mw_we && mw_be[7:4] != 4'd0 && mw_data[63:32] == WATCH;
     always @* begin
         push = 1'b0; pv = 80'd0;
-        if (sel == 2'd1 && (rw || rq) && !(rw && ri == 8'h7C && rd[12:11] == 2'b11)) begin push = 1'b1; pv = {2'd0, rq, 5'd0, ri, rd, 32'd0}; end
+        if (sel == 2'd3 && (mw_lo || mw_hi)) begin push = 1'b1; pv = {2'd3, 13'h1F00, mw_dma, rt_pc[31:0], 5'd0, mw_addr, mw_hi, 2'b00}; end
+        else if (sel == 2'd1 && (rw || rq) && !(rw && ri == 8'h7C && rd[12:11] == 2'b11)) begin push = 1'b1; pv = {2'd0, rq, 5'd0, ri, rd, 32'd0}; end
         else if (sel == 2'd1 && fw) begin push = 1'b1; pv = {2'd1, 1'b0, fbe, mode, 12'd0, fa, fd}; end
         else if (sel == 2'd1 && ne) begin push = 1'b1; pv = {2'd3, 10'h3F0, ne_tag, ne_a, ne_b}; end
         else if ((sel == 2'd2 || (sel == 2'd3 && !hot)) && ent) begin push = 1'b1; pv = {2'd3, ent_off, ent_pc, ent_va}; end
