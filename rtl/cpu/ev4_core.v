@@ -742,6 +742,10 @@ module ev4_core (
     // and the D-cache tag compare, both per entry and ORed (no serial select
     // of the matching entry first: cpu-timing.md)
     wire        m1_wr   = m1_cls == C_ST;
+    // HW_LD with RWC (ir[13], virtual): the read also needs write access and takes FOW (the PAL's
+    // PROBEW; cpu.md 11.5). OpenVMS's PROBEW said yes to a user write of the supervisor stack
+    // without it, and DCL then took the ACCVIO (gaps.md, OpenVMS 7.3's installer)
+    wire        m1_rwc  = m1_hw && m1_ir[31:26] == 6'h1B && m1_ir[13] && !m1_phys;
     wire        m1_spx  = m1_phys || m1_sp2 || m1_sp1;
     reg  [31:0] dtb_acv, dtb_for, dtb_fow, dtb_teq;
     integer dj;
@@ -753,9 +757,9 @@ module ev4_core (
                  dtb_gh[dj][1]      ? m1_va[18:16] : dtb_pfn[dj][18:16],
                  dtb_gh[dj] != 2'd0 ? m1_va[15:13] : dtb_pfn[dj][15:13]};
             dtb_teq[dj] = dtb_m[dj] && p == dct_q && p[33:32] == 2'd0;
-            dtb_acv[dj] = dtb_m[dj] && (m1_wr ? !dtb_pr[dj][4 + m1_cm] : !dtb_pr[dj][m1_cm]);
+            dtb_acv[dj] = dtb_m[dj] && (m1_wr ? !dtb_pr[dj][4 + m1_cm] : (!dtb_pr[dj][m1_cm] || (m1_rwc && !dtb_pr[dj][4 + m1_cm])));
             dtb_for[dj] = dtb_m[dj] && !m1_wr && dtb_pr[dj][8];
-            dtb_fow[dj] = dtb_m[dj] &&  m1_wr && dtb_pr[dj][9];
+            dtb_fow[dj] = dtb_m[dj] && (m1_wr || m1_rwc) && dtb_pr[dj][9];
         end
     end
     wire        m1_acv  = !m1_spx && |dtb_acv;

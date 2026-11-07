@@ -10,6 +10,8 @@
 //   5  an ACV: PS = user, the mapping has KRE only -> D_FAULT (0x1E0), MM_CSR.ACV
 //   6  DTB_PTE read -> DTB_PTE_TEMP has the PFN and KRE/KWE of entry 0
 //   7  DTBIS of VA 0x200000, then the load misses again (DTB_MISS)
+//   9  HW_LD with RWC (PROBEW): a user-mode ALT read of a URE-only page passes, the
+//      same load with RWC takes D_FAULT (ACV); in kernel mode (KWE) it passes
 //   8  the ITB: VA 0x10000000 -> PA 0x6000 (KRE), HW_REI into it in kernel
 //      mode (MAP off): the code there runs and CALL_PALs back with r21 = 0x77
 //
@@ -154,6 +156,36 @@ init:
 	bis	$20, $31, $4
 	lda	$3, 1($31)
 	CHECK	7
+
+	// ---- 9: HW_LD with RWC (the PAL's PROBEW): the mapping gets URE but no UWE; an ALT-mode
+	// (user) HW_LD reads it, the same load with RWC takes D_FAULT with MM_CSR.ACV. OpenVMS's
+	// PROBEW said a supervisor-stack page was user-writable without it (gaps.md)
+	hw_mtpr	$31, 0x46			// DTBZAP
+	hw_mtpr	$31, 0x40			// TB_CTL: GH = 0
+	hw_mtpr	$11, 0x20			// TB_TAG = VA 0x200000
+	sll	$10, 19, $2
+	lda	$3, 0x1900($31)			// KWE (12) | URE (11) | KRE (8)
+	bis	$2, $3, $2
+	hw_mtpr	$2, 0x42			// DTB_PTE
+	lda	$1, 0x18($31)
+	hw_mtpr	$1, 0x4F			// ALT_MODE = user
+	bis	$31, $31, $20
+	.long	0x6CEB5008			// hw_ldq/a $7, 8($11): user read, allowed
+	bis	$20, $31, $4
+	bis	$31, $31, $3
+	CHECK	9
+	.long	0x6CEB7008			// hw_ldq/ar $7, 8($11): RWC, no UWE -> D_FAULT
+	bis	$20, $31, $4
+	lda	$3, 2($31)
+	CHECK	9
+	and	$22, 2, $4			// MM_CSR.ACV
+	lda	$3, 2($31)
+	CHECK	9
+	hw_mtpr	$31, 0x4F			// ALT_MODE = kernel
+	.long	0x6CEB7008			// RWC in kernel mode: KWE -> no fault
+	bis	$20, $31, $4
+	lda	$3, 2($31)			// (r20 still 2 from the fault above)
+	CHECK	9
 
 	// ---- 8: the ITB: VA 0x10000000 -> PA 0x6000, KRE
 	hw_mtpr	$31, 0x40			// TB_CTL: small page

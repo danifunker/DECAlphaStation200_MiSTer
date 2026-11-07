@@ -111,6 +111,11 @@ t3-fpld: obj_pipe/Vev4_core
 	IRQRATE=40 IRQSEED=5 MEMDELAY=20 FASTLINE=1 obj_pipe/Vev4_core $(T0)/t3_fpld.bin --max 60000000
 	IRQRATE=25 IRQSEED=11 MEMDELAY=7 FASTLINE=1 obj_pipe/Vev4_core $(T0)/t3_fpld.bin --max 60000000
 
+# T3 rwc: HW_LD with RWC (PROBEW) against the DTB's protection (OpenVMS 7.3's installer ACCVIO)
+t3-rwc: obj_pipe/Vev4_core
+	python3 -I ../tests/cpu/t3_rwc.py $(T0)/t3_rwc.bin
+	obj_pipe/Vev4_core $(T0)/t3_rwc.bin
+
 t3: obj_pipe/Vev4_core
 	$(MAKE) -C ../tests/cpu t3 >/dev/null
 	obj_pipe/Vev4_core $(T0)/t3_tlb.bin --trace $(T0)/t3_tlb.pipe.trace
@@ -121,7 +126,7 @@ t3: obj_pipe/Vev4_core
 	obj_pipe/Vev4_core $(T0)/t3_lock.bin --iosink --trace $(T0)/t3_lock.pipe.trace
 	obj_pipe/Vev4_core $(T0)/t3_intrprio.bin --trace $(T0)/t3_intrprio.pipe.trace
 
-.PHONY: cputest cputest-pipe sromload t3
+.PHONY: cputest cputest-pipe sromload t3 t3-rwc
 
 # ---------------------------------------------------------------- system simulation
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the
