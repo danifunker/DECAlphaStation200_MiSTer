@@ -175,6 +175,15 @@ module scsi_targets #(
     reg  [9:0]  ms_i, ms_ps;
     reg  [7:0]  ms_bdl, ms_blhi, ms_pl;
     reg  [5:0]  ms_pg;
+    // the mode page store: a page's bytes 2.. as MODE SELECTed, per device and page slot
+    // (01 02 03 04 08 0A 0D 0E), served as the current values once selected (every parameter
+    // byte reports changeable); the block descriptor's density code too. OpenVMS's DKDRIVER
+    // sets the pages it cares about at unit init and gives up on a device whose changeable
+    // mask does not cover a field it wants to change (6.2 retried the init for ever).
+    reg  [7:0]  mp_ram [0:767];          // {dev[1:0], slot[2:0], byte[4:0]}
+    reg  [7:0]  mp_q;
+    reg  [23:0] mp_valid;                // {dev, slot}
+    reg  [7:0]  mp_dens [0:2];
     // READ CAPACITY / block descriptor values, taken at the command
     reg  [31:0] cap_n, cap_last;
     reg  [7:0]  cap_bl;                  // the block length's byte 2 (0x08 or 0x02)
@@ -295,6 +304,13 @@ module scsi_targets #(
             default: page_next = 6'h00;
         endcase
     endfunction
+    function [2:0] page_slot;
+        input [5:0] pg;
+        case (pg)
+            6'h01: page_slot = 3'd0; 6'h02: page_slot = 3'd1; 6'h03: page_slot = 3'd2; 6'h04: page_slot = 3'd3;
+            6'h08: page_slot = 3'd4; 6'h0A: page_slot = 3'd5; 6'h0D: page_slot = 3'd6; default: page_slot = 3'd7;
+        endcase
+    endfunction
     function [7:0] pages_len;
         input [5:0] pg;
         input       cd;
@@ -323,6 +339,7 @@ module scsi_targets #(
     reg  [7:0]  rt_h2, rt_h3;
     reg  [7:0]  syn, syn_r;
     always @(posedge clk) syn_r <= syn;
+    always @(posedge clk) mp_q <= mp_ram[{dev, page_slot(ms_cpg), ms_po}];
 
     always @* begin : synth
         reg [7:0] op;
@@ -418,16 +435,20 @@ module scsi_targets #(
                         default: ;
                     endcase
                 end else if (ms_sec == 2'd1) case (ms_po[2:0])  // block descriptor
+                    3'd0: syn = ms_pc == 2'd1 ? 8'hFF : ms_pc == 2'd2 ? 8'h00 : mp_dens[dev];
                     3'd1: syn = cap_n[23:16]; 3'd2: syn = cap_n[15:8]; 3'd3: syn = cap_n[7:0];
-                    3'd6: syn = cap_bl;
+                    3'd5: syn = ms_pc == 2'd1 ? 8'hFF : 8'h00;
+                    3'd6: syn = ms_pc == 2'd1 ? 8'hFF : cap_bl;
+                    3'd7: syn = ms_pc == 2'd1 ? 8'hFF : 8'h00;
                     default: ;
                 endcase
                 else if (ms_po == 5'd0) syn = {2'b00, ms_cpg};
                 else if (ms_po == 5'd1) syn = {3'd0, page_last(ms_cpg, is_cd)} - 8'd1;
-                else if (ms_pc == 2'd1) begin                    // changeable: page 0E's volume and selection
+                else if (ms_pc == 2'd1) begin                    // changeable: every parameter byte (0E's
+                    syn = 8'hFF;                                 // channel selections are 4-bit fields)
                     if (ms_cpg == 6'h0E && (ms_po == 5'd8 || ms_po == 5'd10)) syn = 8'h0F;
-                    if (ms_cpg == 6'h0E && (ms_po == 5'd9 || ms_po == 5'd11)) syn = 8'hFF;
-                end else case (ms_cpg)
+                end else if (ms_pc != 2'd2 && mp_valid[{dev, page_slot(ms_cpg)}]) syn = mp_q;
+                else case (ms_cpg)
                     6'h03: case (ms_po)                          // format: 64 sectors/track, 512 bytes
                         5'd11: syn = 8'd64; 5'd12: syn = 8'h02; default: ;
                     endcase
@@ -520,6 +541,10 @@ module scsi_targets #(
                 sd_lba[64 +: 32] <= fr_lba; sd_blk_cnt[12 +: 6] <= 6'd4; e_rd[2] <= 1'b1; sd_busy <= 1'b1;
                 aud_xfer <= 1'b1; fr_go <= 1'b1;
             end
+        end
+        if (rst) begin
+            mp_valid <= 24'd0;
+            for (d = 0; d < 3; d = d + 1) mp_dens[d] <= 8'd0;
         end
         if (rst || brst) begin
             st <= T_FREE; bsy <= 1'b0; req <= 1'b0;
@@ -869,8 +894,13 @@ module scsi_targets #(
                                     if ({ms_blhi, idata} == 16'h0200) cd_512 <= 1'b1;
                                     else if ({ms_blhi, idata} == 16'h0800) cd_512 <= 1'b0;
                                 end
-                                // the pages: code, length, then page 0E's ports 0 and 1
+                                if (ms_bdl != 8'd0 && ms_i == hl) mp_dens[dev] <= idata;
+                                // the pages: code, length, then the bytes into the store (and page 0E's ports)
                                 if (ms_i >= hl && ms_i == ms_ps) ms_pg <= idata[5:0];
+                                if (ms_i >= hl && ms_i > ms_ps + 10'd1 && ms_i - ms_ps < 10'd32) begin
+                                    mp_ram[{dev, page_slot(ms_pg), ms_i[4:0] - ms_ps[4:0]}] <= idata;
+                                    mp_valid[{dev, page_slot(ms_pg)}] <= 1'b1;
+                                end
                                 if (ms_i >= hl && ms_i == ms_ps + 10'd1) ms_pl <= idata;
                                 if (ms_i >= hl && ms_i > ms_ps + 10'd1 && ms_i == ms_ps + 10'd1 + {2'd0, ms_pl})
                                     ms_ps <= ms_i + 10'd1;

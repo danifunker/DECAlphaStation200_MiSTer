@@ -766,7 +766,7 @@ int main(int argc, char **argv) {
               "page 0E read back %02X %02X %02X %02X %02X %02X", mem[DATA], mem[DATA + 4], mem[DATA + 12], mem[DATA + 13],
               mem[DATA + 14], mem[DATA + 15]);
         CHECK(run(4, {0x1A, 0x08, 0x4E, 0, 255, 0}, P_DIN, 20) == 0 && mem[DATA + 12] == 0x0F && mem[DATA + 13] == 0xFF &&
-              mem[DATA + 6] == 0, "page 0E changeable");
+              mem[DATA + 6] == 0xFF, "page 0E changeable");
     }
     cap.clear(); cap_on = true;
     CHECK(run(4, {0x48, 0, 0, 0, 3, 1, 0, 3, 1, 0}, P_DIN, 0) == 0, "PLAY AUDIO TRACK/INDEX 3");
@@ -828,6 +828,20 @@ int main(int argc, char **argv) {
           mem[DATA], mem[DATA + 12], mem[DATA + 13], mem[DATA + 20], mem[DATA + 36], mem[DATA + 44]);
     CHECK(run(4, {0x1A, 0, 0x01, 0, 255, 0}, P_DIN, 20) == 0 && mem[DATA] == 19 && mem[DATA + 12] == 0x01 &&
           mem[DATA + 13] == 0x06, "CD MODE SENSE page 1: %d bytes, %02X %02X", mem[DATA] + 1, mem[DATA + 12], mem[DATA + 13]);
+    {   // the mode page store: page 1 and the density code as selected come back as the current
+        // values (OpenVMS's DKDRIVER sets them at unit init), every parameter byte changeable
+        uint8_t ms[20] = {0, 0, 0, 8, 0x01, 0, 0, 0, 0, 0, 2, 0, 0x01, 6, 0xC0, 5, 0, 0, 0, 0};
+        memcpy(mem + DATA, ms, 20);
+        CHECK(run(4, {0x15, 0x10, 0, 0, 20, 0}, P_DOUT, 20) == 0, "MODE SELECT page 1 + density");
+        CHECK(run(4, {0x1A, 0, 0x01, 0, 255, 0}, P_DIN, 20) == 0 && mem[DATA + 4] == 0x01 && mem[DATA + 12] == 0x01 &&
+              mem[DATA + 13] == 6 && mem[DATA + 14] == 0xC0 && mem[DATA + 15] == 5 && mem[DATA + 16] == 0,
+              "page 1 read back: %02X %02X %02X %02X", mem[DATA + 4], mem[DATA + 14], mem[DATA + 15], mem[DATA + 16]);
+        CHECK(run(4, {0x1A, 0, 0x41, 0, 255, 0}, P_DIN, 20) == 0 && mem[DATA + 4] == 0xFF && mem[DATA + 12] == 0x01 &&
+              mem[DATA + 13] == 6 && mem[DATA + 14] == 0xFF && mem[DATA + 19] == 0xFF && mem[DATA + 5] == 0,
+              "page 1 changeable: %02X %02X %02X", mem[DATA + 4], mem[DATA + 14], mem[DATA + 19]);
+        CHECK(run(4, {0x1A, 0, 0x81, 0, 255, 0}, P_DIN, 20) == 0 && mem[DATA + 14] == 0 && mem[DATA + 4] == 0,
+              "page 1 default: %02X %02X", mem[DATA + 4], mem[DATA + 14]);
+    }
     CHECK(run(4, {0x1A, 0, 0x04, 0, 255, 0}, P_DIN, 0) == 2 && sense(4) == 0x0524, "CD has no page 4");
     // ---- no disc: NOT READY, MEDIUM NOT PRESENT; INQUIRY still answers
     t->img_present = 0b001;
