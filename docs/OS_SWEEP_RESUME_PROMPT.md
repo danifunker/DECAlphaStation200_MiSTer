@@ -99,7 +99,7 @@ v62t_win.txt`, DKDRIVER at FFFFFFFF80230000, its mode-parameter routine at +A5C0
 compare +C728) checks mode parameter fields against DEC's wanted values and requires a differing one
 to be changeable: page 1 byte 2 wants TB, PER and DTE set (ours 0, nothing changeable) and the
 header's device-specific byte 0 (ours 0x80). Fixes `1dd6c4e`, `84789fd` (a mode page store: MODE
-SELECTed pages come back as current, all bytes changeable), `d65633c` (device-specific 0 on the CD).
+SELECTed pages come back as current, all bytes changeable), `d65633c` (device-specific 0 on the CD). **Verified: `_20261107l.rbf` (= `d65633c`) boots 6.2 to its installation menu (`scratch/vms62_menu.png`).**
 Two things that were *not* it, proven with DKDRIVER patched in ISO copies run from the 5e9
 checkpoint (`scratch/isos/vms62_inqff.iso`, `vms62_rrd45.iso`): the 53C810's phase-mismatch
 (underrun) handling and the device table. If a later build still loops: trace again (`--trace FILE
@@ -148,20 +148,26 @@ noted in gaps.md. The SIGP bug does not touch SRM (its pke SCRIPTS have no WAIT 
 ## 4. Then the rest of the sweep (OPUS_RESUME_PROMPT section 1)
 
 NetBSD 10.2 (installed, `NETBSD_2GB.img`; re-check `boot dka0 -fl a` on the new build and the P0 rate),
-OpenVMS 6.2 (section 2c: the post-banner SCSI loop), Tru64 4.0G, FreeBSD 4.6 (OpenVMS 8.4 boots to its
-menu, section 2c). Each failure: a bench or T3 case, a fix, `docs/gaps.md`.
+Tru64 4.0G, FreeBSD 4.6 (OpenVMS 6.2, 7.3 and 8.4 all boot to their installation menus, section 2c:
+the installs themselves are next, section 2a). Each failure: a bench or T3 case, a fix, `docs/gaps.md`.
 
 ## 5. Board and tree state at hand-off
 
-.143 runs `_Unstable/DECAlphaStation200_20261107j.rbf` (`4d4c728`: both fixes, the trace windows on the
-old ACCVIO), the OSD set (not saved) to Console SRM, Display Serial console, CD = `OpenVMS 6.2
-Alpha.iso`, Pri. disk `NETBSD_2GB.img`, 128 MB, eth0; it sits in 6.2's post-banner loop (section 2c).
+.143 runs `_Unstable/DECAlphaStation200_20261107l.rbf` (`d65633c`: the 6.2 mode page fixes on top of
+`4d4c728`), the OSD set (not saved) to Console SRM, Display Serial console, CD = `OpenVMS 6.2
+Alpha.iso`, Pri. disk `VMS73_2GB.img` (blank), 128 MB, eth0; it sits at 6.2's installation menu
+(2026-11-08). `_Unstable` also has `_20261107k.rbf` (`1dd6c4e`, the 8-byte page 1 alone: still
+looped); .92 has `_20261107k` and `_20261107l`. A core load through `/dev/MiSTer_cmd` (`echo load_core
+PATH > /dev/MiSTer_cmd` over ssh) comes up in the saved (ARC/NT) configuration: set Console SRM and
+Display Serial console in the OSD again before booting.
 The OSD's Advanced page: Right does not change a setting, Enter cycles it; from the main page's first
 row 11 Downs reach "Apply and reset" (`scratch/vmsboot.sh N` does that and N boot tries).
-`_Unstable` also has `_20261107i.rbf` (`b94298c`-era trace build); .92 has `_20261107e.rbf` and
-`_20261107j.rbf`. Simulator: `scratch/simruns/v8.log`/`v9.log` = a VMS boot from reset in
+Simulator: `scratch/simruns/v8.log`/`v9.log` = a VMS boot from reset in
 `obj_sys_fast5` (the fixed core; stage 2 types the date from the 7e9 checkpoint), started 15:50 on
-2026-11-07, for a regression check and as a base for later checkpoints; `v62.log` = the 6.2 boot, section 2c. Core loads: OSD only (`scratch/k.sh OUT.png
+2026-11-07, for a regression check and as a base for later checkpoints; `v62.log` = the 6.2 boot with the loop, `v62x.log` (`obj_sys_fast8` = `d65633c`, started 00:35 on
+2026-11-08, `--save-at 5e9 --ckpt v62x_5e9.ck`) = the same boot on the fixed core, for a checkpoint
+past the loop. The simulator helpers: `scratch/simN.sh TAG ARGS` (N = the obj_sys_fastN binary),
+`scratch/simps.sh` lists the running ones. Core loads: OSD only (`scratch/k.sh OUT.png
 keys...` sends keys over misterkvms-cli and screenshots; System page → Core → the rbf list). Fits: Quartus
 17.0 on this Windows machine in `../DECAlphaStation200_fit` (`git -C ../DECAlphaStation200_fit checkout
 --detach <commit>`, then `quartus_sh --flow compile DECAlphaStation200` from PowerShell; ~40 min), the
