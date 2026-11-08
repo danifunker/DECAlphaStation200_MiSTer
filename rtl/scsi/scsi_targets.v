@@ -68,7 +68,7 @@ module scsi_targets #(
     parameter       CLK_HZ    = 100000000,  // for the 44.1 kHz audio sample clock
     parameter       CD_BOOT512 = 0,         // the CD's power-on block length: 1 = 512 (as DEC's RRD
                                             // drives are said to start), 0 = 2048; MODE SELECT changes it
-    parameter [23:0] DISC_CYCLES = 24'd10000000 // a data phase waiting this long for hps_io (100 ms at
+    parameter [26:0] DISC_CYCLES = 27'd100000000 // a data phase waiting this long for hps_io (1 s at
                                             // 100 MHz) disconnects, if the IDENTIFY allowed it
 ) (
     input  wire        clk,
@@ -182,7 +182,7 @@ module scsi_targets #(
     // stall counter, the disconnected command (its device, LUN and the state to resume), and the
     // message byte count
     reg         disc_priv;
-    reg  [23:0] stall_cnt;
+    reg  [26:0] stall_cnt;
     reg         disc_pend;
     reg  [1:0]  sv_dev;
     reg  [2:0]  sv_lun;
@@ -567,8 +567,8 @@ module scsi_targets #(
         end
         // the hps_io stall counter: a data phase waiting for a block transfer
         if ((st == T_STORE || (st == T_DIN && !req && !din_synth)) && sd_busy) begin
-            if (stall_cnt != DISC_CYCLES) stall_cnt <= stall_cnt + 24'd1;
-        end else stall_cnt <= 24'd0;
+            if (stall_cnt != DISC_CYCLES) stall_cnt <= stall_cnt + 27'd1;
+        end else stall_cnt <= 27'd0;
         if (rst || brst) begin
             disc_pend <= 1'b0; resel <= 1'b0; disc_priv <= 1'b0;
             st <= T_FREE; bsy <= 1'b0; req <= 1'b0;

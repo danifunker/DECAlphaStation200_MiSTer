@@ -59,8 +59,8 @@ module tb_ncr810_top (
     );
 
     // CLK_HZ: the bench's sample clock runs 44100 / 441000 = 10x faster than real time
-    // DISC_CYCLES: a data phase stalled 5000 clocks on hps_io disconnects (100 ms on the board)
-    scsi_targets #(.CLK_HZ(441000), .DISC_CYCLES(24'd5000)) tgt (
+    // DISC_CYCLES: a data phase stalled 5000 clocks on hps_io disconnects (1 s on the board)
+    scsi_targets #(.CLK_HZ(441000), .DISC_CYCLES(27'd5000)) tgt (
         .clk(clk), .rst(reset),
         .sel(sel), .sel_id(sel_id), .sel_atn(sel_atn), .sel_done(sel_done), .sel_fail(sel_fail),
         .bsy(bsy), .req(req), .phase(phase), .tdata(tdata),

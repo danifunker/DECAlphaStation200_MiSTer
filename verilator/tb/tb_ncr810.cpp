@@ -76,6 +76,7 @@ static int dma_wait = -1;
 static int sd_slot = -1, sd_dir, sd_pos, sd_len;
 static uint32_t sd_lba_q;
 static int sd_delay = 0, sd_delay_left = -1;      // a one-shot: the next request waits sd_delay cycles (Main stalled)
+static int sd_delay_skip = 0;                     // ... after this many requests served normally (a mid-transfer stall)
 
 static uint32_t slot_lba(int s) { return t->sd_lba[s]; }
 static int slot_cnt(int s) { return (int)((t->sd_blk_cnt >> (6 * s)) & 63) + 1; }
@@ -98,11 +99,12 @@ static void models() {
     }
     // hps_io: one request at a time, a byte a cycle
     t->sd_buff_wr = 0;
-    if (sd_slot < 0 && (t->sd_rd | t->sd_wr) && sd_delay) {
+    if (sd_slot < 0 && (t->sd_rd | t->sd_wr) && sd_delay && !sd_delay_skip) {
         if (sd_delay_left < 0) sd_delay_left = sd_delay;
         else if (--sd_delay_left == 0) { sd_delay = 0; sd_delay_left = -1; }
     } else if (sd_slot < 0) {
         for (int s = 0; s < 3; s++) if ((t->sd_rd | t->sd_wr) & (1 << s)) {
+            if (sd_delay && sd_delay_skip) sd_delay_skip--;
             sd_slot = s; sd_dir = (t->sd_wr >> s) & 1; sd_pos = -1; sd_len = slot_cnt(s) * 512;
             sd_lba_q = slot_lba(s);
             t->sd_ack = 1 << s;
@@ -988,6 +990,100 @@ int main(int argc, char **argv) {
         }
     }
     printf("disconnect on an hps_io stall, BUSY meanwhile, reselection (WRITE and READ): %s\n", fails ? "see failures" : "ok");
+
+    // ================================================================ disconnect mid-transfer, same-target BUSY, the CD
+    // The board (OpenVMS 8.4 install, 2026-11-08): a CD READ went unserved ~7 s while the SCRIPTS
+    // sat at WAIT RESELECT between BUSY retries. These cases stall the second chunk of a disk READ
+    // (the first is already in the initiator's buffer), send a command to the same target meanwhile
+    // (BUSY), and run the CD (ID 4, 2048-byte blocks) with the stall on the first and second chunk.
+    {
+        const uint32_t S2 = 0x1800, TABLE2 = 0x2200, MSGIN2 = 0x2030;
+        auto prog = [&](uint32_t at, std::vector<std::pair<uint32_t, uint32_t>> v) {
+            uint32_t p = at;
+            for (auto &x : v) { put32(p, x.first); put32(p + 4, x.second); p += 8; }
+        };
+        uint8_t l_s0 = 0;
+        auto go = [&](uint32_t at) {                      // start, wait, take the interrupt's bits (clears them)
+            wl(DSP, at); uint8_t i = wait_int(600000);
+            rb(DSTAT); l_s0 = rb(SIST0); rb(SIST1);
+            return i;
+        };
+        struct Case { int id; uint32_t lba, blocks, len; int skip; uint32_t want_rest; const char *nm; };
+        Case cases[] = {
+            {0, 0x30, 8, 4096, 1, 2048, "disk READ, stall on chunk 2"},
+            {4, 0x10, 2, 4096, 0, 4096, "CD READ, stall on chunk 1"},
+            {4, 0x10, 2, 4096, 1, 2048, "CD READ, stall on chunk 2"},
+        };
+        // the CD's block length as the earlier cases left it (READ CAPACITY bytes 4-7)
+        uint32_t cd_bl = 2048;
+        {
+            uint8_t st_, m_;
+            if (run_cmd(4, {0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0}, P_DIN, 8, &st_, &m_) == 0x600D && st_ == 0)
+                cd_bl = (uint32_t)mem[DATA + 4] << 24 | mem[DATA + 5] << 16 | mem[DATA + 6] << 8 | mem[DATA + 7];
+        }
+        for (auto &c : cases) {
+            if (c.id == 4) c.blocks = c.len / cd_bl;
+            auto want = [&](uint32_t k) -> uint8_t {
+                if (c.id == 4) return cd_byte(c.lba * (cd_bl / 512) + k / 512, k % 512);
+                return (uint8_t)(0xA5 ^ k ^ (k >> 5));
+            };
+            for (uint32_t k = 0; k < c.len; k++) {
+                if (c.id == 0) img[0][c.lba * 512 + k] = want(k);
+                mem[DATA + k] = 0xEE;
+            }
+            mem[MSGOUT] = 0xC0;
+            uint8_t cdb[10] = {0x28, 0, 0, 0, (uint8_t)(c.lba >> 8), (uint8_t)c.lba, 0, 0, (uint8_t)c.blocks, 0};
+            memcpy(mem + CMD, cdb, 10);
+            put32(TABLE, c.len); put32(TABLE + 4, DATA);
+            mem[STS] = 0xAA; mem[MSGIN] = 0xAA; mem[MSGIN2] = 0xAA;
+            sd_delay = 40000; sd_delay_skip = c.skip;
+            prog(SCRIPT, {
+                {0x41000000 | (uint32_t)c.id << 16, 0},
+                {0x98000000 | P_MOUT << 24 | 0x30000, 0xE1},
+                {0x0E000001, MSGOUT},
+                {0x0A00000A, CMD},
+                {0x18000000 | (uint32_t)P_DIN << 24, 0},
+                {0x0B000001, STS}, {0x0F000001, MSGIN}, {0x60000040, 0}, {0x48000000, 0}, {0x98080000, 0x600D}});
+            wl(DSA, TABLE);
+            uint8_t i = go(SCRIPT);
+            uint8_t s0 = l_s0;
+            CHECK((i & 2) && (s0 & 0x80), "%s: a phase mismatch in the data phase (istat %02X sist0 %02X dsp %08X)", c.nm, i, s0, rl(DSP));
+            uint32_t rest = rl(DBC) & 0xFFFFFF, rest_a = rl(DNAD);
+            CHECK(rest == c.want_rest && rest_a == DATA + c.len - c.want_rest, "%s: residual %u at %08X (want %u at %08X)",
+                  c.nm, rest, rest_a, c.want_rest, DATA + c.len - c.want_rest);
+            prog(S2, {{0x0F000001, MSGIN2}, {0x60000040, 0}, {0x98080000, 0xD1}});
+            i = go(S2);
+            CHECK((i & 1) && rl(DSPS) == 0xD1 && mem[MSGIN2] == 0x02, "%s: SAVE DATA POINTER (msg %02X)", c.nm, mem[MSGIN2]);
+            prog(S2, {{0x0F000001, MSGIN2}, {0x60000040, 0}, {0x48000000, 0}, {0x98080000, 0xD2}});
+            i = go(S2);
+            CHECK((i & 1) && rl(DSPS) == 0xD2 && mem[MSGIN2] == 0x04, "%s: DISCONNECT (msg %02X)", c.nm, mem[MSGIN2]);
+            // the same target again while it is disconnected: BUSY (as VMS saw it)
+            {
+                uint8_t st_, m_;
+                uint32_t r = run_cmd(c.id, {0x12, 0, 0, 0, 36, 0}, P_DIN, 36, &st_, &m_);
+                CHECK(r == 0x600D && st_ == 0x08, "%s: INQUIRY to the same target meanwhile: BUSY (dsps %08X status %02X)", c.nm, r, st_);
+            }
+            put32(TABLE2, rest); put32(TABLE2 + 4, rest_a);
+            mem[MSGIN2] = 0xAA; mem[STS] = 0xAA; mem[MSGIN] = 0xAA;
+            rb(0x1A);
+            prog(S2, {
+                {0x50000000, S2 + 0x48},
+                {0x0F000001, MSGIN2}, {0x60000040, 0},
+                {0x18000000 | (uint32_t)P_DIN << 24, 0},
+                {0x0B000001, STS}, {0x0F000001, MSGIN}, {0x60000040, 0}, {0x48000000, 0}, {0x98080000, 0x600D},
+                {0x98080000, 0xD3}});
+            wl(DSA, TABLE2);
+            i = go(S2);
+            CHECK((i & 1) && rl(DSPS) == 0x600D, "%s: completes after the reselection (istat %02X dsps %08X dsp %08X)", c.nm, i, rl(DSPS), rl(DSP));
+            CHECK(rb(0x0A) == (0x80 | c.id), "%s: SSID = VAL | %d (%02X)", c.nm, c.id, rb(0x0A));
+            CHECK(mem[MSGIN2] == 0x80 && mem[STS] == 0 && mem[MSGIN] == 0, "%s: IDENTIFY %02X, status %02X, COMMAND COMPLETE %02X", c.nm, mem[MSGIN2], mem[STS], mem[MSGIN]);
+            int bad = 0;
+            for (uint32_t k = 0; k < c.len; k++) if (mem[DATA + k] != want(k)) bad++;
+            CHECK(bad == 0, "%s: %d bytes differ", c.nm, bad);
+            CHECK(sd_delay == 0, "%s: the stalled transfer happened", c.nm);
+        }
+    }
+    printf("disconnect mid-transfer, same-target BUSY, the CD: %s\n", fails ? "see failures" : "ok");
 
     // ================================================================ SRM's own SCRIPTS (pke_script) on the CD
     // the board's "bad SCSI status (b8)" at boot dka400 (2026-11-01): SRM's
