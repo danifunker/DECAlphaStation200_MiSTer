@@ -16,7 +16,7 @@ Every SRM OS on the list now boots from its CD to its installer on the current c
 |---|---|---|---|
 | NetBSD 10.2 | sysinst | **yes** (2026-11-06), boots from `dka0` to `login:` | `NETBSD_2GB.img` (+ `.installed-20261106.img.bak`) |
 | OpenVMS 7.3 | installation menu (options 1-8) | **yes** (2026-11-08), boots from `dka0`, SYSTEM login, copy checksums equal | `VMS73_2GB.img` (+ `.installed-20261108.img.bak`) |
-| OpenVMS 8.4 | **installed 2026-11-08** (65 min, all products, TCP/IP; one CD MOUNTVER, recovered); **first boot from dka0 hangs**: `%SYSTEM-F-ACCVIO` in `CDSA-I-InitCDSA` (PC 4BB920, user mode, "image exit forced"; the faulting VA is R16+0x200 just past a page boundary; reproduced on `_20261108b`) and nothing after it, Ctrl-T dead, bus idle; VMS itself stays alive. **Cause: the core executed `lds $f31,512(a0)` (PREFETCH_M) as a real load; fixed `3a74a68` = `_20261108c.rbf` (CPU table in gaps.md): on it the first boot runs through CDSA** | no (not past the first boot) | `VMS84_4GB.img` (+ `.installed-20261108.img.bak`, taken before any successful boot) |
+| OpenVMS 8.4 | **installed 2026-11-08** (65 min, all products, TCP/IP; one CD MOUNTVER, recovered). Its first boot died in `CDSA-I-InitCDSA` with an ACCVIO until the core stopped faulting on `lds $f31` prefetches (`3a74a68` = `_20261108c.rbf`); on that build the first boot ran CDSA, AUTOGEN and its own reboot | **yes** (2026-11-08), boots from `dka0` (`bootdef_dev` set), SYSTEM login, SHOW DEVICE clean | `VMS84_4GB.img` (+ `.installed-20261108.img.bak` pre-boot, `.firstboot-20261108.img.bak` after the clean shutdown) |
 | OpenVMS 6.2 | installation menu (options 1-5) | **yes** (2026-11-08), boots from `dka0`, SYSTEM login | `VMS62_2GB.img` (+ `.installed-20261108.img.bak`, `VMS62_scratch.img` spare) |
 | Tru64 UNIX 4.0G | not tried on the current core | no | to create: `TRU64_2GB.img` (4 GB if the base system won't fit) |
 | FreeBSD 4.6 | not tried on the current core | no | to create: `FREEBSD_2GB.img` |
@@ -27,7 +27,7 @@ Alpha.iso`, `OpenVMS 6.2 Alpha.iso`, `Tru64 UNIX 4.0G.iso` + Associated Products
 (`WIN2K_2GB.img`) are installed and are the user's; `NT4TSE_2GB.img` is the Terminal Server image to
 re-check later (its last state was a hang at the kernel banner, from before several CPU fixes).
 
-The work is **the installs themselves**, in this order: OpenVMS 8.4, Tru64, FreeBSD (7.3 and 6.2 are done; expect `MOUNTVER ... is offline` messages during heavy writes until the hps_io stall is fixed, `docs/FABLE_VMS73_SCSI_RESUME_PROMPT.md`: they recover), and for
+The work is **the installs themselves**, in this order: Tru64, FreeBSD (OpenVMS 8.4, 7.3 and 6.2 are done; the hps_io stall behind the `MOUNTVER ... is offline` messages is fixed on both sides since `_20261108a` + Main `decalpha-writer`, `docs/FABLE_VMS73_SCSI_RESUME_PROMPT.md`), and for
 each the rest of the ladder: boot from disk, log in, the disk (a copy and a checksum), the network
 (EWA0: DHCP, ping the router), graphics (`set console graphics` where the OS has a TGA driver: NetBSD
 and Tru64 do, OpenVMS has DECwindows on the ZLXp-E, FreeBSD 4.6 has none). `docs/gaps.md`'s OS table
