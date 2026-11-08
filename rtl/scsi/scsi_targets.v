@@ -259,7 +259,7 @@ module scsi_targets #(
     endfunction
 
     // ------------------------------------------------------ MODE SENSE pages
-    // disks 01 02 03 04 08 0A (100 bytes), the CD 01 02 0D 0E (52 bytes)
+    // disks 01 02 03 04 08 0A (100 bytes), the CD 01 02 0D 0E (48 bytes)
     function page_ok;
         input [5:0] pg;
         input       cd;
@@ -269,9 +269,15 @@ module scsi_targets #(
     endfunction
     function [4:0] page_last;            // a page's length - 1
         input [5:0] pg;
+        input       cd;
         case (pg)
             6'h02, 6'h0E: page_last = 5'd15;
             6'h03, 6'h04: page_last = 5'd23;
+            // the CD-ROM read error recovery page is the 8-byte one (SCSI-2 13.3.3), the disks'
+            // the 12-byte direct-access one. OpenVMS 6.2's DKDRIVER keeps two copies of each
+            // page in 8-byte slots and compares them: a 12-byte page 1 overran its slot, the
+            // copies compared unequal and the unit init retried for ever after the banner.
+            6'h01:        page_last = cd ? 5'd7 : 5'd11;
             6'h0D:        page_last = 5'd7;
             default:      page_last = 5'd11;
         endcase
@@ -292,7 +298,7 @@ module scsi_targets #(
     function [7:0] pages_len;
         input [5:0] pg;
         input       cd;
-        pages_len = pg == 6'h3F ? (cd ? 8'd52 : 8'd100) : pg == 6'h00 ? 8'd0 : {3'd0, page_last(pg)} + 8'd1;
+        pages_len = pg == 6'h3F ? (cd ? 8'd48 : 8'd100) : pg == 6'h00 ? 8'd0 : {3'd0, page_last(pg, cd)} + 8'd1;
     endfunction
 
     // ------------------------------------------------------ the synthesised IN data
@@ -417,7 +423,7 @@ module scsi_targets #(
                     default: ;
                 endcase
                 else if (ms_po == 5'd0) syn = {2'b00, ms_cpg};
-                else if (ms_po == 5'd1) syn = {3'd0, page_last(ms_cpg)} - 8'd1;
+                else if (ms_po == 5'd1) syn = {3'd0, page_last(ms_cpg, is_cd)} - 8'd1;
                 else if (ms_pc == 2'd1) begin                    // changeable: page 0E's volume and selection
                     if (ms_cpg == 6'h0E && (ms_po == 5'd8 || ms_po == 5'd10)) syn = 8'h0F;
                     if (ms_cpg == 6'h0E && (ms_po == 5'd9 || ms_po == 5'd11)) syn = 8'hFF;
@@ -738,7 +744,7 @@ module scsi_targets #(
                                 ms_bdlen <= cdb[1][3] ? 8'd0 : 8'd8;
                                 ms_sec <= 2'd0; ms_po <= 5'd0;
                                 ms_cpg <= cdb[2][5:0] == 6'h3F ? 6'h01 : cdb[2][5:0];
-                                good;
+                                skey[dev] <= 4'd0; sasc[dev] <= 8'd0;           // (not good: it would show STATUS on the lines until DATA IN)
                                 din_start((op == 8'h5A) ? {cdb[7], cdb[8]} : {8'd0, cdb[4]}, rl);
                             end
                         end
@@ -815,7 +821,7 @@ module scsi_targets #(
                                 end
                                 2'd1: if (ms_po == 5'd7) begin ms_sec <= 2'd2; ms_po <= 5'd0; end
                                       else ms_po <= ms_po + 5'd1;
-                                default: if (ms_po == page_last(ms_cpg)) begin
+                                default: if (ms_po == page_last(ms_cpg, is_cd)) begin
                                     ms_po <= 5'd0; ms_cpg <= page_next(ms_cpg, is_cd);
                                 end else ms_po <= ms_po + 5'd1;
                             endcase

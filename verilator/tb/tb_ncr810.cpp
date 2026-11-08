@@ -821,10 +821,13 @@ int main(int argc, char **argv) {
         for (int k = 0; k < 4096; k++) if (mem[DATA + k] != img[2][3 * 2048 + k]) { diff = k; break; }
         CHECK(st_ == 0 && diff < 0, "READ CD 2 sectors: status %02X, first difference at %d", st_, diff);
     }
-    CHECK(run(4, {0x1A, 0, 0x3F, 0, 255, 0}, P_DIN, 64) == 0 && mem[DATA] == 63 && mem[DATA + 2] == 0x80 &&
-          mem[DATA + 12] == 0x01 && mem[DATA + 24] == 0x02 && mem[DATA + 40] == 0x0D && mem[DATA + 48] == 0x0E &&
-          mem[DATA + 9 + 1] == 0x08, "CD MODE SENSE 3F %02X %02X %02X %02X %02X", mem[DATA], mem[DATA + 12], mem[DATA + 24],
-          mem[DATA + 40], mem[DATA + 48]);
+    // the CD's page 1 is the 8-byte CD-ROM one (OpenVMS 6.2 keeps it in an 8-byte slot)
+    CHECK(run(4, {0x1A, 0, 0x3F, 0, 255, 0}, P_DIN, 60) == 0 && mem[DATA] == 59 && mem[DATA + 2] == 0x80 &&
+          mem[DATA + 12] == 0x01 && mem[DATA + 13] == 0x06 && mem[DATA + 20] == 0x02 && mem[DATA + 36] == 0x0D &&
+          mem[DATA + 44] == 0x0E && mem[DATA + 9 + 1] == 0x08, "CD MODE SENSE 3F %02X %02X %02X %02X %02X %02X",
+          mem[DATA], mem[DATA + 12], mem[DATA + 13], mem[DATA + 20], mem[DATA + 36], mem[DATA + 44]);
+    CHECK(run(4, {0x1A, 0, 0x01, 0, 255, 0}, P_DIN, 20) == 0 && mem[DATA] == 19 && mem[DATA + 12] == 0x01 &&
+          mem[DATA + 13] == 0x06, "CD MODE SENSE page 1: %d bytes, %02X %02X", mem[DATA] + 1, mem[DATA + 12], mem[DATA + 13]);
     CHECK(run(4, {0x1A, 0, 0x04, 0, 255, 0}, P_DIN, 0) == 2 && sense(4) == 0x0524, "CD has no page 4");
     // ---- no disc: NOT READY, MEDIUM NOT PRESENT; INQUIRY still answers
     t->img_present = 0b001;

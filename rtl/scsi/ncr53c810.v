@@ -394,6 +394,9 @@ task wb_out;
     begin
         d_go <= 1'b1; dm_we <= 1'b1; d_addr <= {wb_addr, 2'b00}; dm_be <= wb_be; dm_wdata <= wb_data;
         wb_valid <= 1'b0;
+`ifdef NCR_TRACE
+        $display("ncr   dma wr %08X be %01X %08X", {wb_addr, 2'b00}, wb_be, wb_data);
+`endif
     end
 endtask
 task dma_rd;
