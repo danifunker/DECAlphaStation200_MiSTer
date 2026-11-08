@@ -424,13 +424,14 @@ module scsi_targets #(
                 if (ms_sec == 2'd0) begin
                     if (!ms_10) case (i[1:0])
                         2'd0: syn = ms_len;
-                        2'd2: syn = is_cd ? 8'h80 : 8'h00;        // write protected
-                        2'd3: syn = ms_bdlen;
+                        2'd2: syn = 8'h00;                        // device-specific: WP|DPOFUA on a disk (none),
+                        2'd3: syn = ms_bdlen;                     // reserved on a CD-ROM (SCSI-2; 0x80 here made
+                                                                  // OpenVMS 6.2's DKDRIVER reject the RRD45)
                         default: ;
                     endcase
                     else case (i[2:0])
                         3'd1: syn = ms_len;
-                        3'd3: syn = is_cd ? 8'h80 : 8'h00;
+                        3'd3: syn = 8'h00;
                         3'd7: syn = ms_bdlen;
                         default: ;
                     endcase

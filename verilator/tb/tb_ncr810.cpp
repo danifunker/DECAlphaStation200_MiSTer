@@ -822,7 +822,7 @@ int main(int argc, char **argv) {
         CHECK(st_ == 0 && diff < 0, "READ CD 2 sectors: status %02X, first difference at %d", st_, diff);
     }
     // the CD's page 1 is the 8-byte CD-ROM one (OpenVMS 6.2 keeps it in an 8-byte slot)
-    CHECK(run(4, {0x1A, 0, 0x3F, 0, 255, 0}, P_DIN, 60) == 0 && mem[DATA] == 59 && mem[DATA + 2] == 0x80 &&
+    CHECK(run(4, {0x1A, 0, 0x3F, 0, 255, 0}, P_DIN, 60) == 0 && mem[DATA] == 59 && mem[DATA + 2] == 0x00 &&
           mem[DATA + 12] == 0x01 && mem[DATA + 13] == 0x06 && mem[DATA + 20] == 0x02 && mem[DATA + 36] == 0x0D &&
           mem[DATA + 44] == 0x0E && mem[DATA + 9 + 1] == 0x08, "CD MODE SENSE 3F %02X %02X %02X %02X %02X %02X",
           mem[DATA], mem[DATA + 12], mem[DATA + 13], mem[DATA + 20], mem[DATA + 36], mem[DATA + 44]);
