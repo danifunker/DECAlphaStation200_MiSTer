@@ -50,10 +50,15 @@ Dropped hypotheses and their measurements are in the gaps.md OpenVMS row.
 already buffers; `flush_run` is what blocks. A writer thread (a queue of runs, `pthread`, the main
 thread only enqueues; `decalpha_disk_flush` waits for the queue to drain; the read path's
 `flush_overlap` must wait for the overlapping run's completion or serve the read from the run) makes
-the ack immediate. Main is built on the Linux box (`../Main_MiSTer-decalpha` worktree there; on this
-Windows machine only the remote branch in `../Main_MiSTer_scsi`), deployed by the user: **ask first**.
-A quick test of the diagnosis without any code: `mount -o remount,async /media/fat` on .143 during an
-install (also the user's call; and it risks the SD on a power-off) should make the events vanish.
+the ack immediate. **Done 2026-11-08**: branch `decalpha-writer` in the worktree
+`../Main_MiSTer_decalpha_fix` (`f2d29c2` the thread, `2074fbd` core-0 affinity like `offload.cpp`,
+`635fcad` the descriptor fix), built in WSL (`export PATH=$PATH:/opt/gcc-arm-10.2-2020.11-x86_64-arm-none-linux-gnueabihf/bin;
+make -j12` in the worktree; the binary is `bin/MiSTer`; if Ubuntu's `arm-linux-gnueabihf-g++` ever
+ran there, `rm -rf bin` first — its objects need glibc 2.39 symbols) and deployed to .143
+(`scratch/deploy_main.sh`: backup `/media/fat/MiSTer.before-writer-20261108`, copy, reboot). The
+pitfall that cost one install attempt: `fileTYPE.path` is empty for hps_io images (only `ide.cpp`
+fills it), so a writer must take its descriptor from the stream (`/proc/self/fd/N`) — and since the
+main thread reads through stdio, a read after writes purges the stream (`__fpurge`).
 
 **B. Core:** SCSI disconnect/reselect in `rtl/scsi/scsi_targets.v` while a target waits for hps_io
 (T_STORE/T_FETCH longer than, say, 10 ms): send SAVE DATA POINTER + DISCONNECT, free the bus, and when
@@ -61,12 +66,17 @@ the data is there, arbitrate, reselect the initiator (ID 7), IDENTIFY, continue 
 reselection in `rtl/scsi/ncr53c810.v` (the WAIT RESELECT path; the drivers' SCRIPTS all have it —
 VMS PKC/PKR, NetBSD siop, Linux, NT symc810: check `scratch/simruns/vms_scripts.txt`), the DISCONNECT
 privilege bit from the IDENTIFY message, and a `verilator/tb/tb_ncr810.cpp` case with a delayed
-hps_io ack (`--disk-lat` exists in `tb_sys`). This is SCSI-correct and also hides Main's latency from
-every OS, but it is a day of RTL and a fit (`OS_INSTALL_RESUME_PROMPT.md` section 5).
+hps_io ack (`--disk-lat` exists in `tb_sys`). **Done 2026-11-08**: `09336cd` (`docs/design/scsi.md`
+section 5, `tb_ncr810`'s WRITE/READ disconnect cases pass), fit `20261108a` (-1.607 ns at 100 MHz,
+36.6k ALMs, 87 %) on both boards, loaded on .143; the fast system sim on this RTL still finds every
+device in SRM's `show device`.
 
-Whichever: verify by re-running an install with `scratch/tracerot.sh` (trace in 10-min pieces, with
-the 100 ms `T` ticker) and `scratch/stallmon_start.sh` / `stallmon_stop.sh OUT` running, and count the
-MOUNTVERs (zero expected). The 8.4 install (`VMS84_4GB.img`, to create) is the natural test load.
+Verification (running 2026-11-08 from ~15:05): the OpenVMS 8.4 install onto `VMS84_4GB.img` with
+`scratch/tracerot84.sh` (pieces `scratch/inst84_trace_N.log`), `scratch/stallmon_start.sh` and
+`scratch/watch.sh 24 w84_` (a screenshot every 5 min, `scratch/w84_N.png`). After 20 min: 10 % done,
+no MOUNTVER, no Main block >= 300 ms (`/tmp/stall.log` on .143), no bus reset, no disconnect in the
+trace (none needed: Main never stalled). VMS's IDENTIFY is `C0`, so the core's disconnect path is
+armed if a stall ever comes.
 
 ## 4. Board helpers (in `scratch/`, not in git; Git Bash unless noted)
 
