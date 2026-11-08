@@ -391,8 +391,14 @@ module ev4_core (
         end
         // ---- floating point (cpu.md 8): FEN when ICCSR[FPE] = 0
         6'h20, 6'h21, 6'h22, 6'h23: begin                                 // LDF LDG LDS LDT
-            dc_cls = C_LD; dc_dst_v = 1'b1; dc_ub = 1'b1; dc_ldlat = 1'b1;
-            if (!iccsr_fpe) dc_exc = E_FEN;
+            // a load to F31 is a prefetch hint (LDS: PREFETCH_M, LDT: PREFETCH_MEN, ARM 4.11): no
+            // access, no exception, not even FEN. OpenVMS 8.4's CDSA shareables prefetch 0x200
+            // past an object with `lds $f31,512(a0)`, often into an unmapped page
+            if (d_ra[4:0] == 5'd31) dc_cls = C_NOP;
+            else begin
+                dc_cls = C_LD; dc_dst_v = 1'b1; dc_ub = 1'b1; dc_ldlat = 1'b1;
+                if (!iccsr_fpe) dc_exc = E_FEN;
+            end
         end
         6'h24, 6'h25, 6'h26, 6'h27: begin                                 // STF STG STS STT
             dc_cls = C_ST; dc_ua = 1'b1; dc_ub = 1'b1;

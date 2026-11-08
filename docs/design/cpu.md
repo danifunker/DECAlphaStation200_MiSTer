@@ -230,8 +230,11 @@ or register) AND NOT 0 (no extensions: BWX, FIX, CIX, MVI all absent); IMPLVER: 
 - Loads/stores: LDL/STL need 4-byte, LDQ/STQ 8-byte alignment; misaligned -> UNALIGN (section 5.2).
   LDQ_U/STQ_U clear VA[2:0]. LDA/LDAH never access memory. There are no byte or word accesses on the bus:
   write masks are per longword (HRM Table 6-4, `cWMask_h[7:0]`).
-- A load to R31/F31 still accesses memory and can fault (ARM 2nd ed. has no "prefetch" form). **Impl:**
-  do the access, discard the data.
+- A load to R31 or F31 is a prefetch hint (LDL/LDQ R31: PREFETCH; LDS F31: PREFETCH_M; LDT F31:
+  PREFETCH_MEN; LDQ_U R31 is UNOP) and **never faults**, not even FEN: compiled code prefetches past
+  the end of an object into pages that may not be mapped (OpenVMS 8.4's CDSA shareables, `lds
+  $f31,512(a0)`, ACCVIO at first boot until 2026-11-08). LDL_L/LDQ_L to R31 are real loads (they set
+  the lock flag). **Impl:** decode them as no-ops (`C_NOP`), no D-cache or DTB access.
 - Jumps (op 1A, `disp[15:14]`, HRM Table 2-1): 0 JMP, 1 JSR, 2 RET, 3 JSR_COROUTINE. All: target =
   Rb AND NOT 3, Ra <- PC+4 (computed before Rb is read, so `jsr r1,(r1)` works). The hint and the 4-entry
   return stack are performance only.

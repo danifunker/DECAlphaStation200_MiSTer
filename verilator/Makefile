@@ -116,6 +116,11 @@ t3-rwc: obj_pipe/Vev4_core
 	python3 -I ../tests/cpu/t3_rwc.py $(T0)/t3_rwc.bin
 	obj_pipe/Vev4_core $(T0)/t3_rwc.bin
 
+# T3 prefetch: loads to R31/F31 never fault (OpenVMS 8.4's CDSA, lds $$f31 into an unmapped page)
+t3-prefetch: obj_pipe/Vev4_core
+	python3 -I ../tests/cpu/t3_prefetch.py $(T0)/t3_prefetch.bin
+	obj_pipe/Vev4_core $(T0)/t3_prefetch.bin
+
 t3: obj_pipe/Vev4_core
 	$(MAKE) -C ../tests/cpu t3 >/dev/null
 	obj_pipe/Vev4_core $(T0)/t3_tlb.bin --trace $(T0)/t3_tlb.pipe.trace
@@ -126,7 +131,7 @@ t3: obj_pipe/Vev4_core
 	obj_pipe/Vev4_core $(T0)/t3_lock.bin --iosink --trace $(T0)/t3_lock.pipe.trace
 	obj_pipe/Vev4_core $(T0)/t3_intrprio.bin --trace $(T0)/t3_intrprio.pipe.trace
 
-.PHONY: cputest cputest-pipe sromload t3 t3-rwc
+.PHONY: cputest cputest-pipe sromload t3 t3-rwc t3-prefetch
 
 # ---------------------------------------------------------------- system simulation
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the

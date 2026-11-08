@@ -280,6 +280,9 @@ module ev4_seq (
             6'h14, 6'h15, 6'h16, 6'h17, 6'h20, 6'h21, 6'h22, 6'h23, 6'h24, 6'h25, 6'h26, 6'h27,
             6'h31, 6'h32, 6'h33, 6'h35, 6'h36, 6'h37: begin
                 if (op == 6'h14) enter_pal(14'h13E0, pc | {63'd0, pal});    // FIX: OPCDEC
+                else if (op[5:2] == 4'h8 && ra == 5'd31) begin              // LDx F31: a prefetch hint, no-op
+                    pc <= pc4; dbg_retire <= 1'b1;
+                end
                 else if (!iccsr_fpe) enter_pal(14'h17E0, pc | {63'd0, pal});// FEN
                 else enter_pal(14'h13E0, pc | {63'd0, pal});                // STUB: FPU
             end
