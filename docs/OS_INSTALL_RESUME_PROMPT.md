@@ -16,7 +16,7 @@ Every SRM OS on the list now boots from its CD to its installer on the current c
 |---|---|---|---|
 | NetBSD 10.2 | sysinst | **yes** (2026-11-06), boots from `dka0` to `login:` | `NETBSD_2GB.img` (+ `.installed-20261106.img.bak`) |
 | OpenVMS 7.3 | installation menu (options 1-8) | **yes** (2026-11-08), boots from `dka0`, SYSTEM login, copy checksums equal | `VMS73_2GB.img` (+ `.installed-20261108.img.bak`) |
-| OpenVMS 8.4 | **installed 2026-11-08** (65 min, all products, TCP/IP; one CD MOUNTVER, recovered); **first boot from dka0 hangs**: `%SYSTEM-F-ACCVIO` in `CDSA-I-InitCDSA` (PC 4BB920, user mode, "image exit forced") and nothing after it, Ctrl-T dead, bus idle | no (not past the first boot) | `VMS84_4GB.img` (+ `.installed-20261108.img.bak`, taken before any successful boot) |
+| OpenVMS 8.4 | **installed 2026-11-08** (65 min, all products, TCP/IP; one CD MOUNTVER, recovered); **first boot from dka0 hangs**: `%SYSTEM-F-ACCVIO` in `CDSA-I-InitCDSA` (PC 4BB920, user mode, "image exit forced"; the faulting VA is R16+0x200 just past a page boundary; reproduced on `_20261108b`, gaps.md's OpenVMS row has the registers and the leads) and nothing after it, Ctrl-T dead, bus idle; VMS itself stays alive (log flushes keep writing the image) | no (not past the first boot) | `VMS84_4GB.img` (+ `.installed-20261108.img.bak`, taken before any successful boot) |
 | OpenVMS 6.2 | installation menu (options 1-5) | **yes** (2026-11-08), boots from `dka0`, SYSTEM login | `VMS62_2GB.img` (+ `.installed-20261108.img.bak`, `VMS62_scratch.img` spare) |
 | Tru64 UNIX 4.0G | not tried on the current core | no | to create: `TRU64_2GB.img` (4 GB if the base system won't fit) |
 | FreeBSD 4.6 | not tried on the current core | no | to create: `FREEBSD_2GB.img` |
