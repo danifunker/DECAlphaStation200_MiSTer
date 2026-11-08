@@ -42,6 +42,8 @@ module tb_ncr810_top (
     wire       sel, sel_atn, sel_done, sel_fail, bsy, req, ack, ackhold, atn, brst;
     wire [2:0] sel_id, phase;
     wire [7:0] tdata, idata;
+    wire       resel, resel_ok, resel_ack;
+    wire [2:0] resel_id;
 
     ncr53c810 #(.DEVNUM(6), .STO_UNIT(16)) ncr (
         .clk(clk), .reset(reset),
@@ -52,15 +54,18 @@ module tb_ncr810_top (
         .inta_n(inta_n),
         .sb_sel(sel), .sb_sel_id(sel_id), .sb_sel_atn(sel_atn), .sb_sel_done(sel_done), .sb_sel_fail(sel_fail),
         .sb_bsy(bsy), .sb_req(req), .sb_phase(phase), .sb_tdata(tdata),
-        .sb_ack(ack), .sb_idata(idata), .sb_ackhold(ackhold), .sb_atn(atn), .sb_rst(brst)
+        .sb_ack(ack), .sb_idata(idata), .sb_ackhold(ackhold), .sb_atn(atn), .sb_rst(brst),
+        .sb_resel(resel), .sb_resel_id(resel_id), .sb_resel_ok(resel_ok), .sb_resel_ack(resel_ack)
     );
 
     // CLK_HZ: the bench's sample clock runs 44100 / 441000 = 10x faster than real time
-    scsi_targets #(.CLK_HZ(441000)) tgt (
+    // DISC_CYCLES: a data phase stalled 5000 clocks on hps_io disconnects (100 ms on the board)
+    scsi_targets #(.CLK_HZ(441000), .DISC_CYCLES(24'd5000)) tgt (
         .clk(clk), .rst(reset),
         .sel(sel), .sel_id(sel_id), .sel_atn(sel_atn), .sel_done(sel_done), .sel_fail(sel_fail),
         .bsy(bsy), .req(req), .phase(phase), .tdata(tdata),
         .ack(ack), .idata(idata), .ackhold(ackhold), .atn(atn), .brst(brst),
+        .resel(resel), .resel_id(resel_id), .resel_ok(resel_ok), .resel_ack(resel_ack),
         .img_present(img_present), .img_blocks(img_blocks),
         .sd_lba(sd_lba), .sd_blk_cnt(sd_blk_cnt), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
         .sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din),

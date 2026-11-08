@@ -66,8 +66,10 @@ module scsi_targets #(
     parameter [2:0] CD_ID     = 3'd4,
     parameter       CD_ALWAYS = 1,          // the CD drive answers selection with no image
     parameter       CLK_HZ    = 100000000,  // for the 44.1 kHz audio sample clock
-    parameter       CD_BOOT512 = 0          // the CD's power-on block length: 1 = 512 (as DEC's RRD
+    parameter       CD_BOOT512 = 0,         // the CD's power-on block length: 1 = 512 (as DEC's RRD
                                             // drives are said to start), 0 = 2048; MODE SELECT changes it
+    parameter [23:0] DISC_CYCLES = 24'd10000000 // a data phase waiting this long for hps_io (100 ms at
+                                            // 100 MHz) disconnects, if the IDENTIFY allowed it
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -86,6 +88,12 @@ module scsi_targets #(
     input  wire        ackhold,
     input  wire        atn,
     input  wire        brst,
+    // reselection (after a disconnect): the target raises resel with its ID when resel_ok says the
+    // initiator sits at WAIT RESELECT with the bus free; resel_ack is the initiator's answer
+    output reg         resel,
+    output reg   [2:0] resel_id,
+    input  wire        resel_ok,
+    input  wire        resel_ack,
     // the images: slot 0 disk 0, 1 disk 1, 2 CD-ROM (hps_io block devices,
     // 512-byte blocks, 8-bit); img_* quasi-static
     input  wire  [2:0] img_present,
@@ -144,7 +152,7 @@ module scsi_targets #(
                      T_DIN = 5'd5, T_DOUT = 5'd6, T_FETCH = 5'd7, T_STORE = 5'd8, T_STAT = 5'd9,
                      T_DONE = 5'd10, T_DISC = 5'd11, T_TOC = 5'd12, T_TOCW = 5'd13, T_TOCCP = 5'd14,
                      T_TOCFK = 5'd15, T_TRK = 5'd16, T_PRE1 = 5'd17, T_PRE2 = 5'd18, T_DLEN = 5'd19,
-                     T_PLAY = 5'd20;
+                     T_PLAY = 5'd20, T_DMSG = 5'd21, T_RSEL = 5'd22, T_RMSG = 5'd23;
     reg  [4:0]  st;
     reg  [1:0]  dev;                     // 0, 1 disks, 2 CD-ROM
     reg  [2:0]  lun;
@@ -170,6 +178,16 @@ module scsi_targets #(
     reg  [11:0] chunk;                   // bytes left in the buffer chunk
     reg  [1:0]  pend;                    // clocks until the next byte (syn_r / b_q) is valid
     reg         hold_seen;
+    // a disconnect while hps_io stalls (docs/design/scsi.md 5): the IDENTIFY's privilege bit, the
+    // stall counter, the disconnected command (its device, LUN and the state to resume), and the
+    // message byte count
+    reg         disc_priv;
+    reg  [23:0] stall_cnt;
+    reg         disc_pend;
+    reg  [1:0]  sv_dev;
+    reg  [2:0]  sv_lun;
+    reg  [4:0]  sv_st;
+    reg  [1:0]  dmsg_n;
     // MODE SELECT / FORMAT UNIT parameter list: byte, block descriptor length,
     // the page being read (code, start, length), a high byte
     reg  [9:0]  ms_i, ms_ps;
@@ -547,7 +565,12 @@ module scsi_targets #(
             mp_valid <= 24'd0;
             for (d = 0; d < 3; d = d + 1) mp_dens[d] <= 8'd0;
         end
+        // the hps_io stall counter: a data phase waiting for a block transfer
+        if ((st == T_STORE || (st == T_DIN && !req && !din_synth)) && sd_busy) begin
+            if (stall_cnt != DISC_CYCLES) stall_cnt <= stall_cnt + 24'd1;
+        end else stall_cnt <= 24'd0;
         if (rst || brst) begin
+            disc_pend <= 1'b0; resel <= 1'b0; disc_priv <= 1'b0;
             st <= T_FREE; bsy <= 1'b0; req <= 1'b0;
             for (d = 0; d < 3; d = d + 1) begin skey[d] <= 4'd0; sasc[d] <= 8'd0; end
             pend <= 2'd0;
@@ -562,16 +585,47 @@ module scsi_targets #(
                 T_FREE: if (sel) begin
                     if (id_hit != 3'd0) begin
                         dev <= id_hit[0] ? 2'd0 : id_hit[1] ? 2'd1 : 2'd2;
-                        bsy <= 1'b1; sel_done <= 1'b1; lun <= 3'd0; msg_n <= 3'd0; sdtr_reply <= 1'b0;
+                        bsy <= 1'b1; sel_done <= 1'b1; lun <= 3'd0; msg_n <= 3'd0; sdtr_reply <= 1'b0; disc_priv <= 1'b0;
                         if (sel_atn) begin st <= T_MOUT; req <= 1'b1; phase <= P_MOUT; end
                         else begin st <= T_CMD; req <= 1'b1; phase <= P_CMD; cdb_n <= 5'd0; end
                     end else sel_fail <= 1'b1;
+                end else if (disc_pend && !sd_busy && resel_ok) begin
+                    // the disconnected command's data is there: reselect the initiator
+                    bsy <= 1'b1; resel <= 1'b1;
+                    resel_id <= sv_dev == 2'd0 ? DISK0_ID : sv_dev == 2'd1 ? DISK1_ID : CD_ID;
+                    st <= T_RSEL;
+                end
+                // the initiator took the reselection: IDENTIFY, then the data phase goes on
+                T_RSEL: if (resel_ack) begin
+                    resel <= 1'b0; dev <= sv_dev; lun <= sv_lun; disc_pend <= 1'b0;
+                    st <= T_RMSG; req <= 1'b1; phase <= P_MIN; tdata <= {5'b10000, sv_lun}; hold_seen <= 1'b0;
+                end else if (!resel_ok) begin
+                    // the SCRIPTS left WAIT RESELECT as the reselection began: let go, try again later
+                    resel <= 1'b0; bsy <= 1'b0; st <= T_FREE;
+                end
+                T_RMSG: begin
+                    if (ack && req) begin req <= 1'b0; hold_seen <= 1'b0; end
+                    else if (!req) begin
+                        if (ackhold) hold_seen <= 1'b1;
+                        else if (atn) begin st <= T_MOUT; req <= 1'b1; phase <= P_MOUT; msg_n <= 3'd0; end
+                        else if (sv_st == T_STORE) begin st <= T_STORE; phase <= P_DOUT; end   // the store is done: the next chunk
+                        else begin st <= T_DIN; phase <= P_DIN; pend <= 2'd2; end
+                    end
+                end
+                // SAVE DATA POINTER, DISCONNECT, then the bus is free until the data is there
+                T_DMSG: begin
+                    if (ack && req) begin req <= 1'b0; hold_seen <= 1'b0; dmsg_n <= dmsg_n + 2'd1; end
+                    else if (!req) begin
+                        if (ackhold) hold_seen <= 1'b1;
+                        else if (dmsg_n == 2'd1) begin req <= 1'b1; tdata <= 8'h04; end
+                        else if (dmsg_n == 2'd2) begin st <= T_FREE; bsy <= 1'b0; end
+                    end
                 end
 
                 // MESSAGE OUT while ATN is asserted
                 T_MOUT: if (ack && req) begin
                     m = idata;
-                    if (msg_n == 3'd0 && m[7]) lun <= m[2:0];                 // IDENTIFY
+                    if (msg_n == 3'd0 && m[7]) begin lun <= m[2:0]; disc_priv <= m[6]; end   // IDENTIFY
                     if (msg_n == 3'd0 && m == 8'h01) msg_n <= 3'd1;           // extended message
                     else if (msg_n != 3'd0) begin
                         msg[msg_n] <= m;
@@ -644,7 +698,8 @@ module scsi_targets #(
                                  op == 8'h55 || op == 8'h1B || op == 8'h1E || op == 8'h4E);
                     st <= T_PRE2;
                 end
-                T_PRE2: begin
+                T_PRE2: if (disc_pend) go_status(8'h08);                    // BUSY: a command is disconnected
+                else begin
                     t0 = cdb[6];
                     end_r <= lba_r + cnt_r;
                     tl_r <= toc_first + toc_n - 8'd1;
@@ -871,6 +926,10 @@ module scsi_targets #(
                         else if (!din_synth && chunk == 12'd0) st <= T_FETCH;
                         else if (pend != 2'd0) pend <= pend - 2'd1;
                         else begin req <= 1'b1; tdata <= din_synth ? syn_r : b_q; end
+                    end else if (!req && sd_busy && !din_synth && disc_priv && stall_cnt == DISC_CYCLES) begin
+                        sv_st <= T_DIN; st <= T_DMSG;
+                        disc_pend <= 1'b1; sv_dev <= dev; sv_lun <= lun;
+                        dmsg_n <= 2'd0; req <= 1'b1; phase <= P_MIN; tdata <= 8'h02; hold_seen <= 1'b0;
                     end
                 end
 
@@ -935,6 +994,10 @@ module scsi_targets #(
                         st <= T_DOUT; b_addr <= 11'd0; req <= 1'b1;
                         chunk <= (x_blocks >= 4) ? 12'd2048 : {x_blocks[2:0], 9'd0};
                     end
+                end else if (disc_priv && stall_cnt == DISC_CYCLES) begin
+                    sv_st <= T_STORE; st <= T_DMSG;
+                    disc_pend <= 1'b1; sv_dev <= dev; sv_lun <= lun;
+                    dmsg_n <= 2'd0; req <= 1'b1; phase <= P_MIN; tdata <= 8'h02; hold_seen <= 1'b0;
                 end
 
                 // the track table: 2 blocks from the window into the buffer, then

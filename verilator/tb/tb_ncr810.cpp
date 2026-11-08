@@ -75,6 +75,7 @@ static int stb_count;
 static int dma_wait = -1;
 static int sd_slot = -1, sd_dir, sd_pos, sd_len;
 static uint32_t sd_lba_q;
+static int sd_delay = 0, sd_delay_left = -1;      // a one-shot: the next request waits sd_delay cycles (Main stalled)
 
 static uint32_t slot_lba(int s) { return t->sd_lba[s]; }
 static int slot_cnt(int s) { return (int)((t->sd_blk_cnt >> (6 * s)) & 63) + 1; }
@@ -97,7 +98,10 @@ static void models() {
     }
     // hps_io: one request at a time, a byte a cycle
     t->sd_buff_wr = 0;
-    if (sd_slot < 0) {
+    if (sd_slot < 0 && (t->sd_rd | t->sd_wr) && sd_delay) {
+        if (sd_delay_left < 0) sd_delay_left = sd_delay;
+        else if (--sd_delay_left == 0) { sd_delay = 0; sd_delay_left = -1; }
+    } else if (sd_slot < 0) {
         for (int s = 0; s < 3; s++) if ((t->sd_rd | t->sd_wr) & (1 << s)) {
             sd_slot = s; sd_dir = (t->sd_wr >> s) & 1; sd_pos = -1; sd_len = slot_cnt(s) * 512;
             sd_lba_q = slot_lba(s);
@@ -888,6 +892,102 @@ int main(int argc, char **argv) {
     CHECK(run(0, {0x88, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0}, P_DIN, 0) == 2 && sense(0) == 0x0520,
           "a 16-byte CDB is taken whole");
     printf("disks: READ/WRITE(6/12), mode pages, DBD, FORMAT UNIT, READ DEFECT DATA: %s\n", fails ? "see failures" : "ok");
+
+    // ================================================================ disconnect while hps_io stalls, reselection
+    // Main blocked for seconds in an SD write made the target hold DATA OUT until OpenVMS's port
+    // driver gave up (3 s) and reset the bus (gaps.md, 2026-11-08). With the IDENTIFY's disconnect
+    // privilege, a data phase stalled DISC_CYCLES on hps_io now sends SAVE DATA POINTER and
+    // DISCONNECT; meanwhile other commands get BUSY; when the data is there and the SCRIPTS sit at
+    // WAIT RESELECT the target reselects, IDENTIFYs and the data phase goes on. The C++ side plays
+    // the driver: the phase-mismatch interrupt, the message bytes, the residual from DBC/DNAD.
+    {
+        const uint32_t S2 = 0x1800, TABLE2 = 0x2200, MSGIN2 = 0x2030;
+        auto prog = [&](uint32_t at, std::vector<std::pair<uint32_t, uint32_t>> v) {
+            uint32_t p = at;
+            for (auto &x : v) { put32(p, x.first); put32(p + 4, x.second); p += 8; }
+        };
+        uint8_t g_ds = 0, g_s0 = 0, g_s1 = 0;
+        auto go = [&](uint32_t at) {                      // start at `at`, wait for the interrupt, take its bits
+            wl(DSP, at); uint8_t i = wait_int(600000);
+            g_ds = rb(DSTAT); g_s0 = rb(SIST0); g_s1 = rb(SIST1);
+            return i;
+        };
+        for (int dir = 0; dir < 2; dir++) {                  // 0: WRITE(10) 8 blocks at 0x30, 1: READ(10) 8 blocks at 0x30
+            const char *nm = dir ? "READ" : "WRITE";
+            const uint32_t LEN = 4096;
+            for (uint32_t k = 0; k < LEN; k++) {
+                if (dir == 0) { mem[DATA + k] = (uint8_t)(0x5A ^ k ^ (k >> 7)); img[0][0x30 * 512 + k] = 0; }
+                else { img[0][0x30 * 512 + k] = (uint8_t)(0xA5 ^ k ^ (k >> 5)); mem[DATA + k] = 0xEE; }
+            }
+            mem[MSGOUT] = 0xC0;                                              // IDENTIFY with disconnect privilege
+            uint8_t cdb[10] = {(uint8_t)(dir ? 0x28 : 0x2A), 0, 0, 0, 0, 0x30, 0, 0, 8, 0};
+            memcpy(mem + CMD, cdb, 10);
+            put32(TABLE, LEN); put32(TABLE + 4, DATA);
+            mem[STS] = 0xAA; mem[MSGIN] = 0xAA; mem[MSGIN2] = 0xAA;
+            sd_delay = 40000;                                                // the first block transfer: Main stalled
+            prog(SCRIPT, {
+                {0x41000000, 0},                                             // SELECT ATN 0
+                {0x98000000 | P_MOUT << 24 | 0x30000, 0xE1},                 // INT 0xE1 WHEN NOT MSG_OUT
+                {0x0E000001, MSGOUT},                                        // MOVE 1, msgout, WHEN MSG_OUT
+                {0x0A00000A, CMD},                                           // MOVE 10, cmd, WHEN CMD
+                {0x18000000 | (uint32_t)(dir ? P_DIN : P_DOUT) << 24, 0},    // MOVE FROM table, WHEN data
+                {0x0B000001, STS}, {0x0F000001, MSGIN}, {0x60000040, 0}, {0x48000000, 0}, {0x98080000, 0x600D}});
+            wl(DSA, TABLE);
+            uint8_t i = go(SCRIPT);
+            uint8_t s0 = g_s0;
+            CHECK((i & 2) && (s0 & 0x80), "%s: a phase mismatch in the data phase (istat %02X sist0 %02X dsp %08X)", nm, i, s0, rl(DSP));
+            CHECK((rb(0x0B) & 7) == 7, "%s: the new phase is MESSAGE IN (sbcl %02X)", nm, rb(0x0B));
+            uint32_t rest = rl(DBC) & 0xFFFFFF, rest_a = rl(DNAD);
+            uint32_t want_rest = dir ? LEN : LEN - 2048;                      // the WRITE's first chunk went into the buffer
+            CHECK(rest == want_rest && rest_a == DATA + LEN - want_rest, "%s: residual %u at %08X (want %u at %08X)",
+                  nm, rest, rest_a, want_rest, DATA + LEN - want_rest);
+            // the messages: SAVE DATA POINTER, DISCONNECT
+            prog(S2, {{0x0F000001, MSGIN2}, {0x60000040, 0}, {0x98080000, 0xD1}});
+            i = go(S2);
+            CHECK((i & 1) && rl(DSPS) == 0xD1 && mem[MSGIN2] == 0x02, "%s: SAVE DATA POINTER (msg %02X, dsps %08X)", nm, mem[MSGIN2], rl(DSPS));
+            prog(S2, {{0x0F000001, MSGIN2}, {0x60000040, 0}, {0x48000000, 0}, {0x98080000, 0xD2}});
+            i = go(S2);
+            CHECK((i & 1) && rl(DSPS) == 0xD2 && mem[MSGIN2] == 0x04, "%s: DISCONNECT and the bus free (msg %02X, dsps %08X)", nm, mem[MSGIN2], rl(DSPS));
+            CHECK(!(rb(ISTAT) & 0x08), "%s: ISTAT.CON clear after the disconnect", nm);
+            // another command meanwhile: BUSY
+            {
+                uint8_t st_, m_;
+                uint32_t r = run_cmd(4, {0x12, 0, 0, 0, 36, 0}, P_DIN, 36, &st_, &m_);
+                CHECK(r == 0x600D && st_ == 0x08, "INQUIRY to the CD while a command is disconnected: BUSY (dsps %08X status %02X)", r, st_);
+            }
+            // the driver waits for the reselection, IDENTIFY, the rest of the data, STATUS
+            put32(TABLE2, rest); put32(TABLE2 + 4, rest_a);
+            mem[MSGIN2] = 0xAA; mem[STS] = 0xAA; mem[MSGIN] = 0xAA;
+            rb(0x1A);                                                        // CTEST2: a stale SIGP would take the alternate
+            prog(S2, {
+                {0x50000000, S2 + 0x48},                                     // WAIT RESELECT, alt (absolute) -> INT 0xD3
+                {0x0F000001, MSGIN2}, {0x60000040, 0},                       // IDENTIFY in, CLEAR ACK
+                {0x18000000 | (uint32_t)(dir ? P_DIN : P_DOUT) << 24, 0},    // MOVE FROM table2 (the residual)
+                {0x0B000001, STS}, {0x0F000001, MSGIN}, {0x60000040, 0}, {0x48000000, 0}, {0x98080000, 0x600D},
+                {0x98080000, 0xD3}});
+            wl(DSA, TABLE2);
+            i = go(S2);
+            CHECK((i & 1) && rl(DSPS) == 0x600D, "%s: the command completes after the reselection (istat %02X dsps %08X dsp %08X)", nm, i, rl(DSPS), rl(DSP));
+            CHECK(rb(0x0A) == 0x80, "%s: SSID = VAL | ID 0 (%02X)", nm, rb(0x0A));
+            CHECK(mem[MSGIN2] == 0x80 && mem[STS] == 0 && mem[MSGIN] == 0, "%s: IDENTIFY %02X, status %02X, COMMAND COMPLETE %02X", nm, mem[MSGIN2], mem[STS], mem[MSGIN]);
+            int bad = 0;
+            for (uint32_t k = 0; k < LEN; k++) {
+                uint8_t want = dir ? (uint8_t)(0xA5 ^ k ^ (k >> 5)) : (uint8_t)(0x5A ^ k ^ (k >> 7));
+                uint8_t got = dir ? mem[DATA + k] : img[0][0x30 * 512 + k];
+                if (got != want) bad++;
+            }
+            CHECK(bad == 0, "%s: %d bytes differ after the disconnect", nm, bad);
+            CHECK(sd_delay == 0, "the stalled transfer happened");
+        }
+        // no privilege: a stalled WRITE just waits (the command completes, no mismatch)
+        {
+            sd_delay = 40000;
+            uint8_t st_, m_;
+            uint32_t r = run_cmd(0, {0x2A, 0, 0, 0, 0, 12, 0, 0, 1, 0}, P_DOUT, 512, &st_, &m_);
+            CHECK(r == 0x600D && st_ == 0 && sd_delay == 0, "a stalled WRITE without disconnect privilege waits it out (dsps %08X status %02X)", r, st_);
+        }
+    }
+    printf("disconnect on an hps_io stall, BUSY meanwhile, reselection (WRITE and READ): %s\n", fails ? "see failures" : "ok");
 
     // ================================================================ SRM's own SCRIPTS (pke_script) on the CD
     // the board's "bad SCSI status (b8)" at boot dka400 (2026-11-01): SRM's

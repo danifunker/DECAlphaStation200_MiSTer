@@ -255,6 +255,8 @@ module as200_sys #(
 
     // the 53C810 (device 6, IDSEL AD17, PIRQ3) and the targets on its SCSI bus
     wire        sb_sel, sb_sel_atn, sb_sel_done, sb_sel_fail, sb_bsy, sb_req, sb_ack, sb_ackhold, sb_atn, sb_rst;
+    wire        sb_resel, sb_resel_ok, sb_resel_ack;
+    wire [2:0]  sb_resel_id;
     wire  [2:0] sb_sel_id, sb_phase;
     wire  [7:0] sb_tdata, sb_idata;
     wire [12:0] tgt_st;
@@ -263,6 +265,7 @@ module as200_sys #(
         .sel(sb_sel), .sel_id(sb_sel_id), .sel_atn(sb_sel_atn), .sel_done(sb_sel_done), .sel_fail(sb_sel_fail),
         .bsy(sb_bsy), .req(sb_req), .phase(sb_phase), .tdata(sb_tdata),
         .ack(sb_ack), .idata(sb_idata), .ackhold(sb_ackhold), .atn(sb_atn), .brst(sb_rst),
+        .resel(sb_resel), .resel_id(sb_resel_id), .resel_ok(sb_resel_ok), .resel_ack(sb_resel_ack),
         .img_present(img_present), .img_blocks(img_blocks),
         .sd_lba(sd_lba), .sd_blk_cnt(sd_blk_cnt), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
         .sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din),
@@ -350,6 +353,7 @@ module as200_sys #(
         .sb_sel(sb_sel), .sb_sel_id(sb_sel_id), .sb_sel_atn(sb_sel_atn), .sb_sel_done(sb_sel_done),
         .sb_sel_fail(sb_sel_fail), .sb_bsy(sb_bsy), .sb_req(sb_req), .sb_phase(sb_phase), .sb_tdata(sb_tdata),
         .sb_ack(sb_ack), .sb_idata(sb_idata), .sb_ackhold(sb_ackhold), .sb_atn(sb_atn), .sb_rst(sb_rst),
+        .sb_resel(sb_resel), .sb_resel_id(sb_resel_id), .sb_resel_ok(sb_resel_ok), .sb_resel_ack(sb_resel_ack),
         .tgt_st(tgt_st), .dbg_stb(ndbg_stb), .dbg_tag(ndbg_tag), .dbg_a(ndbg_a), .dbg_b(ndbg_b)
     );
 

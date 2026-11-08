@@ -20,11 +20,15 @@
 //    - the general-purpose timer (STIME1 -> SIST1.GEN);
 //    - a memory move whose source or destination is the chip's own
 //      registers through either BAR (DMODE.SIOM/DIOM selects the space).
-//  Still missing: reselection and target mode, the handshake timer, the
-//  low-level bus mode (SOCL/SBCL driving), loopback (STEST2.SLB), parity.
+//  Still missing: target mode, the handshake timer, the low-level bus mode
+//  (SOCL/SBCL driving), loopback (STEST2.SLB), parity.
 //
 //  The SCSI bus is scsi_targets.v's byte-level one (no arbitration, no
-//  REQ/ACK timing, one target connected at a time).
+//  REQ/ACK timing, one target connected at a time). Reselection (2026-11-08,
+//  docs/design/scsi.md 5): a target that disconnected raises sb_resel with
+//  its ID when sb_resel_ok says the SCRIPTS sit at WAIT RESELECT with the bus
+//  free; the chip answers with sb_resel_ack, SSID = VAL | ID, ISTAT.CON, and
+//  the SCRIPTS go on with the instruction after WAIT RESELECT.
 //
 //============================================================================
 
@@ -74,6 +78,10 @@ module ncr53c810 #(
     output reg         sb_ackhold,
     output reg         sb_atn,
     output reg         sb_rst,
+    input  wire        sb_resel,
+    input  wire  [2:0] sb_resel_id,
+    output reg         sb_resel_ok,
+    output reg         sb_resel_ack,
 
     // the SCRIPTS trace (dbg_trace, OSD Serial port = TGA trace): E3F0t aaaaaaaa bbbbbbbb, t =
     // 1 an instruction (DSP, DCMD|DBC), 2 interrupt bits raised (DSP, {DSTAT, SIST0, SIST1, ISTAT}),
@@ -500,6 +508,9 @@ always @(posedge clk) begin : engine
         end
         if (sb_req) latched_phase <= sb_phase;
         bsy_q <= sb_bsy;
+        // reselection is answered only while the SCRIPTS wait for one with the bus free
+        sb_resel_ok <= est == E_WRESEL && !con && !sel_unres && !sb_bsy && !sb_resel;
+        sb_resel_ack <= 1'b0;
         if (bsy_q && !sb_bsy && est == E_IDLE) con <= 1'b0;
         // the general-purpose timer, one shot from the write of STIME1 (gen_hit: the compare, registered)
         if (gen_on) begin
@@ -772,8 +783,13 @@ always @(posedge clk) begin : engine
                 est <= E_FETCH;
             end
             E_WDISC: if (!sel_unres && !sb_bsy) begin con <= 1'b0; sb_ackhold <= 1'b0; est <= E_FETCH; end
-            E_WRESEL: if (sigp) begin
-                // SIGP: the alternate address (nothing reselects)
+            E_WRESEL: if (sb_resel && sb_resel_ok) begin
+                // a target reselects: connected, SSID holds its ID, the next instruction
+                con <= 1'b1; ssid <= {5'b10000, sb_resel_id}; sb_resel_ack <= 1'b1;
+                sb_ackhold <= 1'b0;
+                est <= E_FETCH;
+            end else if (sigp) begin
+                // SIGP: the alternate address
                 dsp <= jmp_tgt;
                 est <= E_FETCH;
             end
