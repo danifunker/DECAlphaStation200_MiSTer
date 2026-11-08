@@ -1,78 +1,65 @@
 #!/usr/bin/env python3
-"""Decode the SCRIPTS trace (ncr53c810.v's dbg_*, OSD Serial port = TGA trace, 921600 baud on
-/dev/ttyS1): E3F0t lines into readable events.
+"""Decode a board SCRIPTS trace (OSD Serial port = TGA trace, ncr53c810.v's E3F0t lines).
 
-usage: ncrtrace.py LOG [-n LAST] [--no-ins]
-  -n LAST    only the last LAST events
-  --no-ins   leave out the instruction lines (t = 1)
+  ncrtrace.py LOG [--all]      the interrupts (E3F02), host writes (E3F03) and bus changes (E3F04),
+                               with the status bits named; --all also prints the fetches (E3F01)
+
+Lines: E3F01 DSP DCMD|DBC (a fetch); E3F02 DSP {DSTAT, SIST0, SIST1, ISTAT}; E3F03 DSP {be, reg,
+data[15:0]}; E3F04 DSP {sfbr, flags, target state, CDB opcode}: flags = {selecting, con, atn, ackhold, bsy,
+phase[2:0]}. "Dnnnnnnnn" lines are dropped events (the ring overflowed).
 """
 import sys
 
-PHASE = ['DATA_OUT', 'DATA_IN', 'CMD', 'STATUS', 'res4', 'res5', 'MSG_OUT', 'MSG_IN']
-REG = {0x00: 'SCNTL0-3', 0x04: 'SCID/SXFER/SDID/GPREG', 0x08: 'SFBR/SOCL/SSID/SBCL', 0x0C: 'DSTAT/SSTAT',
-       0x10: 'DSA', 0x14: 'ISTAT', 0x18: 'CTEST0-3', 0x1C: 'TEMP', 0x20: 'DFIFO/CTEST4-6', 0x24: 'DBC/DCMD',
-       0x28: 'DNAD', 0x2C: 'DSP', 0x30: 'DSPS', 0x34: 'SCRATCHA', 0x38: 'DMODE/DIEN/DWT/DCNTL', 0x3C: 'ADDER',
-       0x40: 'SIEN/SIST', 0x44: 'SLPAR/MACNTL/GPCNTL', 0x48: 'STIME/RESPID', 0x4C: 'STEST', 0x50: 'SIDL',
-       0x54: 'SODL', 0x58: 'SBDL', 0x5C: 'SCRATCHB'}
+DSTAT = {0x80: 'DFE', 0x40: 'MDPE', 0x20: 'BF', 0x10: 'ABRT', 0x08: 'SSI', 0x04: 'SIR', 0x01: 'IID'}
+SIST0 = {0x80: 'M/A', 0x40: 'CMP', 0x20: 'SEL', 0x10: 'RSL', 0x08: 'SGE', 0x04: 'UDC', 0x02: 'RST', 0x01: 'PAR'}
+SIST1 = {0x04: 'STO', 0x02: 'GEN', 0x01: 'HTH'}
+ISTAT = {0x80: 'ABRT', 0x40: 'SRST', 0x20: 'SIGP', 0x10: 'SEM', 0x08: 'CON', 0x04: 'INTF', 0x02: 'SIP', 0x01: 'DIP'}
+PHASE = ['DOUT', 'DIN', 'CMD', 'STAT', '?4', '?5', 'MOUT', 'MIN']
+REG = {0x00: 'SCNTL0', 0x01: 'SCNTL1', 0x02: 'SCNTL2', 0x03: 'SCNTL3', 0x04: 'SCID', 0x05: 'SXFER', 0x06: 'SDID',
+       0x07: 'GPREG', 0x08: 'SFBR', 0x09: 'SOCL', 0x0A: 'SSID', 0x0B: 'SBCL', 0x0C: 'DSTAT', 0x0D: 'SSTAT0',
+       0x0E: 'SSTAT1', 0x0F: 'SSTAT2', 0x10: 'DSA', 0x14: 'ISTAT', 0x18: 'CTEST0', 0x19: 'CTEST1', 0x1A: 'CTEST2',
+       0x1B: 'CTEST3', 0x1C: 'TEMP', 0x20: 'DFIFO', 0x21: 'CTEST4', 0x22: 'CTEST5', 0x23: 'CTEST6', 0x24: 'DBC',
+       0x27: 'DCMD', 0x28: 'DNAD', 0x2C: 'DSP', 0x30: 'DSPS', 0x34: 'SCRATCHA', 0x38: 'DMODE', 0x39: 'DIEN',
+       0x3A: 'DWT', 0x3B: 'DCNTL', 0x3C: 'ADDER', 0x40: 'SIEN0', 0x41: 'SIEN1', 0x42: 'SIST0', 0x43: 'SIST1',
+       0x44: 'SLPAR', 0x46: 'MACNTL', 0x47: 'GPCNTL', 0x48: 'STIME0', 0x49: 'STIME1', 0x4A: 'RESPID',
+       0x4C: 'STEST0', 0x4D: 'STEST1', 0x4E: 'STEST2', 0x4F: 'STEST3', 0x50: 'SIDL', 0x54: 'SODL', 0x58: 'SBDL',
+       0x5C: 'SCRATCHB'}
 
 
-def ins(w):
-    op = w >> 30
-    if op == 0:
-        return 'MOVE%s %d phase %s' % (' table' if w & (1 << 28) else '', w & 0xFFFFFF, PHASE[(w >> 24) & 7])
-    if op == 2:
-        k = ['JUMP', 'CALL', 'RETURN', 'INT', '?', '?', '?', '?'][(w >> 27) & 7]
-        c = '%s%s%s%s' % ('' if w & (1 << 19) else ' NOT', ' WHEN' if w & (1 << 16) else ' IF',
-                          ' ' + PHASE[(w >> 24) & 7] if w & (1 << 17) else '',
-                          ' data %02X mask %02X' % (w & 0xFF, (w >> 8) & 0xFF) if w & (1 << 18) else '')
-        return k + c
-    if op == 3:
-        return 'MEMMOVE/LOADSTORE %08X' % w
-    o = (w >> 27) & 7
-    if o == 0:
-        return 'SELECT%s' % (' ATN' if w & (1 << 24) else '')
-    if o == 1:
-        return 'WAIT DISCONNECT'
-    if o == 2:
-        return 'WAIT RESELECT'
-    if o in (3, 4):
-        b = [n for bit, n in ((3, 'ATN'), (6, 'ACK'), (9, 'TARGET'), (10, 'CARRY')) if w & (1 << bit)]
-        return ('SET ' if o == 3 else 'CLEAR ') + ' '.join(b)
-    return 'REG %08X' % w
-
-
-def bus(v):
-    f = [n for bit, n in ((7, 'selecting'), (6, 'con'), (5, 'atn'), (4, 'ackhold'), (3, 'bsy')) if v & (1 << bit)]
-    return ' '.join(f) + ' ' + PHASE[v & 7]
+def bits(v, names):
+    return '|'.join(n for b, n in names.items() if v & b) or '-'
 
 
 def main():
-    a = sys.argv[1:]
-    noins = '--no-ins' in a
-    last = int(a[a.index('-n') + 1]) if '-n' in a else 0
-    out = []
-    for l in open(a[0], errors='replace'):
-        p = l.split()
-        if l.startswith('D') and len(p) == 1:
-            out.append('--- %d events lost' % int(p[0][1:], 16))
+    import io; sys.stdout = io.TextIOWrapper(sys.stdout.buffer, errors='replace')
+    allf = '--all' in sys.argv
+    n = 0
+    for line in open(sys.argv[1], 'rb'):
+        line = line.decode('latin-1').strip()
+        n += 1
+        if line.startswith('D'):
+            if allf: print('%7d  dropped' % n)
             continue
-        if len(p) != 3 or not p[0].startswith('E3F0'):
-            continue
-        t = int(p[0][4], 16)
-        d = int(p[1], 16)
-        b = int(p[2], 16)
-        if t == 1 and not noins:
-            out.append('%08X  %08X  %s' % (d, b, ins(b)))
-        elif t == 2:
-            out.append('%08X  INT  DSTAT %02X SIST0 %02X SIST1 %X ISTAT %02X' %
-                       (d, b >> 24, (b >> 16) & 255, (b >> 8) & 7, b & 255))
-        elif t == 3:
-            r = ((b >> 20) & 31) * 4
-            out.append('%08X  HOST write %02X %s be %X data %04X' % (d, r, REG.get(r, '?'), b >> 28, b & 0xFFFF))
-        elif t == 4:
-            out.append('%08X  BUS  %s  sfbr %02X target st %d op %02X' %
-                       (d, bus((b >> 16) & 255), b >> 24, (b >> 8) & 31, b & 255))
-    print('\n'.join(out[-last:] if last else out))
+        p = line.split()
+        if len(p) != 3 or not p[0].startswith('E3F0'): continue
+        try: dsp, w = int(p[1], 16), int(p[2], 16)
+        except ValueError: continue
+        t = p[0][4]
+        if t == '1':
+            if allf: print('%7d  fetch %08X  %08X' % (n, dsp, w))
+        elif t == '2':
+            print('%7d  INT   %08X  DSTAT %s  SIST0 %s  SIST1 %s  ISTAT %s' % (
+                n, dsp, bits(w >> 24, DSTAT), bits((w >> 16) & 0xFF, SIST0), bits((w >> 8) & 0xFF, SIST1), bits(w & 0xFF, ISTAT)))
+        elif t == '3':
+            be, reg, data = w >> 24, (w >> 16) & 0xFF, w & 0xFFFF
+            name = REG.get(reg & 0x7C if reg >= 0x10 else reg, '%02X' % reg)
+            print('%7d  write %08X  %s(%02X) be %X = %04X%s' % (n, dsp, name, reg, be, data,
+                  '  ** SCSI RESET' if reg == 0x01 and data & 0x08 else ''))
+        elif t == '4':
+            sfbr, f, st, op = w >> 24, (w >> 16) & 0xFF, (w >> 8) & 0xFF, w & 0xFF
+            fl = ('sel ' if f & 0x80 else '') + ('con ' if f & 0x40 else '') + ('atn ' if f & 0x20 else '') + \
+                 ('ackhold ' if f & 0x10 else '') + ('bsy ' if f & 0x08 else '')
+            print('%7d  bus   %08X  %s%s  target st %02X  cdb %02X  sfbr %02X' % (n, dsp, fl, PHASE[f & 7], st, op, sfbr))
 
 
 if __name__ == '__main__':

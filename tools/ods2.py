@@ -4,6 +4,7 @@
   ods2.py IMAGE ls  [DIR...]            list a directory (default [000000])
   ods2.py IMAGE get [DIR.]NAME OUT      copy a file out (the latest version)
   ods2.py IMAGE cat [DIR.]NAME          to stdout
+  ods2.py --ssh 'ssh -i KEY root@HOST' IMAGE ...   the image is on that host (read there with dd)
 
 DIR is a dotted path, [VMS$COMMON.SYS$LDR]; the file is matched case-insensitively,
 with or without the version. Only the volume's first index file header set (RVN 1,
@@ -17,8 +18,12 @@ BLK = 512
 
 
 class Ods2:
-    def __init__(self, path):
-        self.f = open(path, 'rb')
+    def __init__(self, path, ssh=None):
+        """ssh: a command prefix (list) that runs commands on the host holding the image, e.g.
+        ['ssh', '-i', KEY, 'root@HOST']: blocks are then read there with dd (slow: one round trip a read)"""
+        self.ssh = ssh
+        self.f = None if ssh else open(path, 'rb')
+        self.path = path
         hb = self.rd(1)
         self.cluster = struct.unpack_from('<H', hb, 14)[0]
         self.ibmapvbn = struct.unpack_from('<H', hb, 22)[0]
@@ -28,13 +33,24 @@ class Ods2:
             raise SystemExit('not an ODS-2 home block at LBN 1 (struclev %04x)'
                              % struct.unpack_from('<H', hb, 12)[0])
         self.hdr0 = self.ibmaplbn + self.ibmapsize            # LBN of file header 1
+        self.ixmap = self.retrieval(self.rd(self.hdr0))      # INDEXF.SYS's own extents (headers past
+        self.hdrvbn = self.ibmapvbn + self.ibmapsize         # its first extent live in the later ones)
 
     def rd(self, lbn, n=1):
+        if self.ssh:
+            import subprocess
+            cmd = "dd if='%s' bs=512 skip=%d count=%d 2>/dev/null" % (self.path, lbn, n)
+            return subprocess.run(self.ssh + [cmd], stdout=subprocess.PIPE, check=True).stdout
         self.f.seek(lbn * BLK)
         return self.f.read(n * BLK)
 
     def header(self, fid):
-        h = self.rd(self.hdr0 + fid - 1)
+        vbn = self.hdrvbn + fid - 1                           # 1-based VBN of the header in INDEXF.SYS
+        lbn, left = self.hdr0 + fid - 1, vbn - 1
+        for cnt, start in self.ixmap:
+            if left < cnt: lbn = start + left; break
+            left -= cnt
+        h = self.rd(lbn)
         if struct.unpack_from('<H', h, 8)[0] != fid:
             raise SystemExit('file header %d not where expected' % fid)
         return h
@@ -111,7 +127,10 @@ def split(spec):
 
 
 def main():
-    v = Ods2(sys.argv[1])
+    ssh = None
+    if sys.argv[1] == '--ssh':                       # --ssh 'ssh -i KEY root@HOST' IMAGE ...
+        ssh = sys.argv[2].split(); del sys.argv[1:3]
+    v = Ods2(sys.argv[1], ssh)
     cmd = sys.argv[2]
     if cmd == 'ls':
         for d in sys.argv[3:] or ['[000000]']:
