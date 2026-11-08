@@ -92,6 +92,20 @@ in `verilator/tb/tb_ncr810.cpp` or the SCSI bench, refit. Likely suspects from 6
 SENSE(6) page 3F / page 0 with DBD clear (the block descriptor), READ CAPACITY on a CD, INQUIRY's
 version/ANSI bytes, or a UNIT ATTENTION that is never cleared.
 
+**Resolved on 2026-11-08 (see gaps.md's OpenVMS row for the full story).** The loop is TUR, INQUIRY,
+READ CAPACITY, MODE SENSE page 1 twice and page 1 changeable, all GOOD. 6.2's DKDRIVER (pulled off the
+CD with `tools/ods2.py`, read with `tools/alphadis.py`, then a retire trace of it: `scratch/simruns/
+v62t_win.txt`, DKDRIVER at FFFFFFFF80230000, its mode-parameter routine at +A5C0, extract +C0D0,
+compare +C728) checks mode parameter fields against DEC's wanted values and requires a differing one
+to be changeable: page 1 byte 2 wants TB, PER and DTE set (ours 0, nothing changeable) and the
+header's device-specific byte 0 (ours 0x80). Fixes `1dd6c4e`, `84789fd` (a mode page store: MODE
+SELECTed pages come back as current, all bytes changeable), `d65633c` (device-specific 0 on the CD).
+Two things that were *not* it, proven with DKDRIVER patched in ISO copies run from the 5e9
+checkpoint (`scratch/isos/vms62_inqff.iso`, `vms62_rrd45.iso`): the 53C810's phase-mismatch
+(underrun) handling and the device table. If a later build still loops: trace again (`--trace FILE
+--trace-from N` on a restore, then `grep ' 2000de14'` finds the routine, `awk` the PC range) and look
+at which field's compare (OTS routine at FFFFFFFF80017180, called from +C78C) differs.
+
 ### 2b. History of the diagnosis (for reference)
 
 Board, three runs, identical (before the fix): after "Installing required known files...":
