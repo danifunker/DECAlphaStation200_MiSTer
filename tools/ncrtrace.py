@@ -15,6 +15,10 @@ SIST0 = {0x80: 'M/A', 0x40: 'CMP', 0x20: 'SEL', 0x10: 'RSL', 0x08: 'SGE', 0x04: 
 SIST1 = {0x04: 'STO', 0x02: 'GEN', 0x01: 'HTH'}
 ISTAT = {0x80: 'ABRT', 0x40: 'SRST', 0x20: 'SIGP', 0x10: 'SEM', 0x08: 'CON', 0x04: 'INTF', 0x02: 'SIP', 0x01: 'DIP'}
 PHASE = ['DOUT', 'DIN', 'CMD', 'STAT', '?4', '?5', 'MOUT', 'MIN']
+# scsi_targets.v's states (the trace carries them in hex)
+TGT = {0: 'FREE', 1: 'MOUT', 2: 'MIN', 3: 'CMD', 4: 'EXEC', 5: 'DIN', 6: 'DOUT', 7: 'FETCH', 8: 'STORE', 9: 'STAT',
+       10: 'DONE', 11: 'DISC', 12: 'TOC', 13: 'TOCW', 14: 'TOCCP', 15: 'TOCFK', 16: 'TRK', 17: 'PRE1', 18: 'PRE2',
+       19: 'DLEN', 20: 'PLAY', 21: 'DMSG', 22: 'RSEL', 23: 'RMSG'}
 REG = {0x00: 'SCNTL0', 0x01: 'SCNTL1', 0x02: 'SCNTL2', 0x03: 'SCNTL3', 0x04: 'SCID', 0x05: 'SXFER', 0x06: 'SDID',
        0x07: 'GPREG', 0x08: 'SFBR', 0x09: 'SOCL', 0x0A: 'SSID', 0x0B: 'SBCL', 0x0C: 'DSTAT', 0x0D: 'SSTAT0',
        0x0E: 'SSTAT1', 0x0F: 'SSTAT2', 0x10: 'DSA', 0x14: 'ISTAT', 0x18: 'CTEST0', 0x19: 'CTEST1', 0x1A: 'CTEST2',
@@ -59,7 +63,7 @@ def main():
             sfbr, f, st, op = w >> 24, (w >> 16) & 0xFF, (w >> 8) & 0xFF, w & 0xFF
             fl = ('sel ' if f & 0x80 else '') + ('con ' if f & 0x40 else '') + ('atn ' if f & 0x20 else '') + \
                  ('ackhold ' if f & 0x10 else '') + ('bsy ' if f & 0x08 else '')
-            print('%7d  bus   %08X  %s%s  target st %02X  cdb %02X  sfbr %02X' % (n, dsp, fl, PHASE[f & 7], st, op, sfbr))
+            print('%7d  bus   %08X  %s%s  target st %02X %-5s cdb %02X  sfbr %02X' % (n, dsp, fl, PHASE[f & 7], st, TGT.get(st, '?'), op, sfbr))
 
 
 if __name__ == '__main__':

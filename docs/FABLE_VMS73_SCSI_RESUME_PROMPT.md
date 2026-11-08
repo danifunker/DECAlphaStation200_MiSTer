@@ -71,12 +71,15 @@ section 5, `tb_ncr810`'s WRITE/READ disconnect cases pass), fit `20261108a` (-1.
 36.6k ALMs, 87 %) on both boards, loaded on .143; the fast system sim on this RTL still finds every
 device in SRM's `show device`.
 
-Verification (running 2026-11-08 from ~15:05): the OpenVMS 8.4 install onto `VMS84_4GB.img` with
+Verification (2026-11-08 15:05-16:12): the OpenVMS 8.4 install onto `VMS84_4GB.img` with
 `scratch/tracerot84.sh` (pieces `scratch/inst84_trace_N.log`), `scratch/stallmon_start.sh` and
-`scratch/watch.sh 24 w84_` (a screenshot every 5 min, `scratch/w84_N.png`). After 20 min: 10 % done,
-no MOUNTVER, no Main block >= 300 ms (`/tmp/stall.log` on .143), no bus reset, no disconnect in the
-trace (none needed: Main never stalled). VMS's IDENTIFY is `C0`, so the core's disconnect path is
-armed if a stall ever comes.
+`scratch/watch.sh 24 w84_` ran to completion: no Main block >= 300 ms, no bus reset, no MOUNTVER on
+DKA0, one on DKA400 (recovered). gaps.md's SCSI row has the analysis: reselection works with VMS on
+the board; the CD event is VMS sending a second CD command while the first was disconnected (BUSY
+x3 -> offline), and disconnects had become frequent because the writer thread's continuous sync
+writes put every hps_io read 100 ms+ behind them at the card. `4cfa040` raises the threshold to 1 s
+(bench extended: second-chunk stall, same-target BUSY, the CD); its fit is the next board build.
+Reading traces: `tools/ncrtrace.py` prints the target state in hex and now names it.
 
 ## 4. Board helpers (in `scratch/`, not in git; Git Bash unless noted)
 
