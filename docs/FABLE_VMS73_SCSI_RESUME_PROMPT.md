@@ -80,7 +80,9 @@ x3 -> offline), and disconnects had become frequent because the writer thread's 
 writes put every hps_io read 100 ms+ behind them at the card. `4cfa040` raises the threshold to 1 s
 (bench extended: second-chunk stall, same-target BUSY, the CD); its fit is `_20261108b.rbf` on both
 boards (36.7k ALMs, 88 %; -2.225 ns on the 100 MHz clock, worse than the usual -1.3..-1.9: watch it),
-loaded on .143 at 16:55 for the 8.4 second-boot try.
+loaded on .143 at 16:55 for the 8.4 second-boot try. Superseded the same evening by `_20261108c.rbf`
+(`3a74a68`: + the F31-prefetch fix for 8.4's first boot, gaps.md CPU table; -2.019 ns, 88 %), on both
+boards, loaded on .143.
 Reading traces: `tools/ncrtrace.py` prints the target state in hex and now names it.
 
 ## 4. Board helpers (in `scratch/`, not in git; Git Bash unless noted)
