@@ -392,9 +392,9 @@ This fixes "bad SCSI status (b8)" at `boot dka400` (board build 13, 2026-11-01).
 
 ## 4. Known gaps
 
-- **Disks never disconnect**: there is no reselection, so WAIT RESELECT only leaves on SIGP and
-  SCID.RRE is ignored. That is legal SCSI behaviour, and SRM handles it: an IDENTIFY with the
-  disconnect privilege only permits a disconnect.
+- **Disconnects only on an hps_io stall** (section 5): a target that is not waiting for a block
+  transfer never disconnects, which is legal SCSI behaviour; SCID.RRE is ignored (reselection is
+  always answered when the SCRIPTS wait for it).
 - **No target mode, no low-level mode** (SCNTL0.START, SOCL/SBCL driving the bus), **no loopback**
   (STEST2.SLB), **no parity**, **no handshake-to-handshake timer**, and **no DMA FIFO** (DFIFO = DBC,
   CTEST6 does not push).
@@ -410,3 +410,51 @@ This fixes "bad SCSI status (b8)" at `boot dka400` (board build 13, 2026-11-01).
   full TOC).
 - **`cd_change` and the audio outputs** must be wired through `as200_sys` and the top (`img_mounted[2]`
   and the mixer).
+
+## 5. Disconnect and reselection (2026-11-08)
+
+Why: Main writes a disk image's 64 KB runs synchronously to the exFAT `sync` mount, and the card
+stalls for seconds now and then; the target used to hold DATA OUT (state T_STORE, REQ low) until
+the block transfer was acked, and OpenVMS's port driver aborts a command that sits about 3 s in a
+data phase and resets the bus (`gaps.md`, the SCSI table and the OpenVMS row: six `MOUNTVER,
+DKA0: is offline` in one 7.3 install). Real disks disconnect while they seek or wait for media.
+
+The target side (`scsi_targets.v`):
+
+- the IDENTIFY's bit 6 (disconnect privilege) is kept per connection (`disc_priv`); without it a
+  stall just waits, as before (SRM's pke IDENTIFY has no privilege: SRM is untouched);
+- `stall_cnt` counts the cycles a data phase waits for hps_io: T_STORE (a WRITE's chunk sent to
+  Main), or T_DIN with the chunk's fetch still in flight; at `DISC_CYCLES` (100 ms at 100 MHz;
+  Main's normal flushes take at most ~70 ms) with the privilege the target saves the command
+  (`sv_dev`, `sv_lun`, `sv_st` = the state to resume) and goes to T_DMSG: MESSAGE IN SAVE DATA
+  POINTER (02), then DISCONNECT (04), then the bus is free (`disc_pend`);
+- while a command is disconnected the module answers any selection, and after the IDENTIFY and
+  the CDB returns BUSY (08): the buffer and the pointer registers belong to the disconnected
+  command (one state machine for the three devices);
+- in T_FREE with `disc_pend`, once the block transfer is done (`!sd_busy`) and the initiator says
+  `resel_ok`, the target asserts BSY and `resel` with its ID (T_RSEL); on `resel_ack` it sends the
+  IDENTIFY (MESSAGE IN 80 | LUN) and resumes: T_STORE (the next chunk, DATA OUT) or T_DIN (the
+  fetched chunk, DATA IN). If `resel_ok` drops before the ack (the SCRIPTS left WAIT RESELECT in
+  that cycle) it lets go and retries.
+
+The chip side (`ncr53c810.v`):
+
+- `sb_resel_ok` = the SCRIPTS are at WAIT RESELECT, not connected, no selection pending, the bus
+  free: the model's arbitration (a target only reselects then, so the chip never has to raise RSL
+  for a reselection it was not waiting for);
+- WAIT RESELECT leaves on `sb_resel` (as well as on SIGP): ISTAT.CON, SSID = VAL | the target's
+  ID, `sb_resel_ack` for one cycle, then the instruction after WAIT RESELECT (the drivers read SSID,
+  take the IDENTIFY and restore the saved data pointer: OpenVMS PKC at 01001334.., `scratch/simruns/
+  vms_scripts.txt`);
+- the phase mismatch in the data move (REQ with MESSAGE IN) already gave the drivers their
+  residual: DBC and DNAD count the bytes actually moved on this byte-level bus, DFIFO reads DBC's
+  low 7 bits (an empty DMA FIFO), so the usual `DBC + ((DFIFO - DBC) & 7F)` is exact.
+
+Bench: `tb_ncr810` "disconnect on an hps_io stall": a WRITE(10) and a READ(10) of 8 blocks with
+the first block transfer delayed 40000 clocks (`DISC_CYCLES` 5000 in the bench): the mismatch, the
+residual (2048 left of the WRITE: its first chunk was already in the buffer; 4096 of the READ), the
+two messages, ISTAT.CON clear, an INQUIRY to the CD answered BUSY meanwhile, WAIT RESELECT taken by
+the reselection with SSID 80, the rest of the data, GOOD, the data compared; and a stalled WRITE
+without the privilege waiting it out. The Main side has its own fix (a writer thread,
+`support/decalpha/decalpha_disk.cpp`, branch `decalpha-writer`): both together, neither alone, is
+the intent.
