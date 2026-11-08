@@ -15,9 +15,9 @@ Every SRM OS on the list now boots from its CD to its installer on the current c
 | OS | CD boots to | Installed? | Disk image |
 |---|---|---|---|
 | NetBSD 10.2 | sysinst | **yes** (2026-11-06), boots from `dka0` to `login:` | `NETBSD_2GB.img` (+ `.installed-20261106.img.bak`) |
-| OpenVMS 7.3 | installation menu (options 1-8) | no | `VMS73_2GB.img` on .143, blank, 2026-11-06 |
+| OpenVMS 7.3 | installation menu (options 1-8) | **yes** (2026-11-08), boots from `dka0`, SYSTEM login, copy checksums equal | `VMS73_2GB.img` (+ `.installed-20261108.img.bak`) |
 | OpenVMS 8.4 | installation menu (options 1-9) | no | to create: `VMS84_4GB.img` |
-| OpenVMS 6.2 | installation menu (options 1-5) | no | to create: `VMS62_2GB.img` |
+| OpenVMS 6.2 | installation menu (options 1-5) | **yes** (2026-11-08), boots from `dka0`, SYSTEM login | `VMS62_2GB.img` (+ `.installed-20261108.img.bak`, `VMS62_scratch.img` spare) |
 | Tru64 UNIX 4.0G | not tried on the current core | no | to create: `TRU64_2GB.img` (4 GB if the base system won't fit) |
 | FreeBSD 4.6 | not tried on the current core | no | to create: `FREEBSD_2GB.img` |
 
@@ -27,7 +27,7 @@ Alpha.iso`, `OpenVMS 6.2 Alpha.iso`, `Tru64 UNIX 4.0G.iso` + Associated Products
 (`WIN2K_2GB.img`) are installed and are the user's; `NT4TSE_2GB.img` is the Terminal Server image to
 re-check later (its last state was a hang at the kernel banner, from before several CPU fixes).
 
-The work is **the installs themselves**, in this order: OpenVMS 7.3, 8.4, 6.2, Tru64, FreeBSD, and for
+The work is **the installs themselves**, in this order: OpenVMS 8.4, Tru64, FreeBSD (7.3 and 6.2 are done; expect `MOUNTVER ... is offline` messages during heavy writes until the hps_io stall is fixed, `docs/FABLE_VMS73_SCSI_RESUME_PROMPT.md`: they recover), and for
 each the rest of the ladder: boot from disk, log in, the disk (a copy and a checksum), the network
 (EWA0: DHCP, ping the router), graphics (`set console graphics` where the OS has a TGA driver: NetBSD
 and Tru64 do, OpenVMS has DECwindows on the ZLXp-E, FreeBSD 4.6 has none). `docs/gaps.md`'s OS table
