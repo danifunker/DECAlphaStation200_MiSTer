@@ -37,6 +37,11 @@ variables; the live `AS200.nvr` now has `boot_osflags` and `kbd_hardware_type=PC
 
 ### 2a. A spurious IRQ 15 blocks every slave-8259 interrupt (X on Tru64; likely the SCSI hangs too)
 
+**Fixed 2026-11-09 (`ca8ac64`, board `_20261109e`): X runs on Tru64 4.0G (CDE login on the TGA). The mechanism
+was close to the guess below but simpler: the master held IR2 until the acknowledge, so a slave request that went
+away before it was answered with the slave's IRQ15 vector and master ISR2 set; real masters give their default
+IRQ7 with no ISR bit. `make -C verilator tb_isa_pic`. Details: gaps.md, the 8259 row.**
+
 Tru64 4.0G: multi-user boot reaches "The system is ready", then dtlogin starts the X server ("Starting
 Desktop Login on display :0"). Nothing is ever drawn: Display = Graphics still shows SRM's old text, and
 the TGA trace on ttyS1 records **0 bytes** in 15 s. From then on the serial console takes no input and
