@@ -28,8 +28,10 @@
 // 4096 events before it are still sent.
 module dbg_trace #(
     parameter CLK_HZ = 100000000,
-    parameter [31:0] RT_LO0 = 32'h7FE96B00, RT_HI0 = 32'h7FE96B60,   // OpenVMS 7.3's installer ACCVIO (gaps.md)
-    parameter [31:0] RT_LO1 = 32'h0004A708, RT_HI1 = 32'h0004AC58,
+    // the PAL's UNALIGN fixup: PAL_TEMP2 read (its bit 46 = DATFX decides silent or SCB 0x280) and the branch,
+    // the load and the store variants (the SRM P0 boot failure, gaps.md)
+    parameter [31:0] RT_LO0 = 32'h000092C8, RT_HI0 = 32'h000092E0,
+    parameter [31:0] RT_LO1 = 32'h0000D2C8, RT_HI1 = 32'h0000D308,
     parameter [31:0] WATCH = 32'h00029A92
 ) (
     input  wire        clk,
@@ -88,7 +90,7 @@ module dbg_trace #(
                       ent_off == 14'h24C0 || ent_off == 14'h2500 || ent_off == 14'h3740 || ent_off == 14'h3480 ||
                       ent_off == 14'h2300 || ent_off == 14'h2B80 || ent_off == 14'h25C0 || ent_off == 14'h2440 ||
                       ent_off == 14'h2100 || ent_off == 14'h20C0;
-    wire        rt_in = rt && !rt_pal && rt_pc[63:32] == 32'd0 &&
+    wire        rt_in = rt && rt_pc[63:32] == 32'd0 &&       // PAL-mode retires included (the windows may sit in the PAL)
                         ((rt_pc[31:0] >= RT_LO0 && rt_pc[31:0] < RT_HI0) || (rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1));
     wire        mw_lo = mw && mw_we && mw_be[3:0] != 4'd0 && mw_data[31:0] == WATCH;
     wire        mw_hi = mw && mw_we && mw_be[7:4] != 4'd0 && mw_data[63:32] == WATCH;
