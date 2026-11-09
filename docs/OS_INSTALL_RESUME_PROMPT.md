@@ -31,7 +31,7 @@ kept. Image md5s are equal on the board and in the copy.
 |---|---|---|
 | `C:\temp\VMS62_2GB_20261108.zip` | `VMS62_2GB.img` (`a6191d114003ab2ff5508da1c52f90a1`) | 66,277,366 bytes, `ca23109a1bcbd40fb339a672ea334939` |
 | `C:\temp\VMS73_2GB_20261108.zip` | `VMS73_2GB.img` (`04f09b5a5ec2f72308710dc80a1351ef`) | 231,326,475 bytes, `72f6d2ae775721cee8ba9ddcf873378b` |
-| `C:\temp\VMS84_4GB_20261108.zip` | pending: a clean board-side copy after a clean 8.4 shutdown (8.4 was running and writing when the first copy was made, so that copy was not used) | not yet made |
+| `C:\temp\VMS84_4GB_20261108.zip` | `VMS84_4GB.img` (`d9a6c64707e5f35d2c1a45e08f1134c2`), taken after the first boot and a clean shutdown at 19:13 (a copy made while 8.4 was running and writing was discarded) | 228,000,814 bytes, `dbf467abddcea28d8a3b4b49a19f0980` |
 
 All the ISOs are in `/media/fat/games/DECAlphaStation200/` on .143 (`OpenVMS 7.3 Alpha.iso`, `OpenVMS 8.4
 Alpha.iso`, `OpenVMS 6.2 Alpha.iso`, `Tru64 UNIX 4.0G.iso` + Associated Products 1/2 + Documentation,
