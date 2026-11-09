@@ -115,6 +115,7 @@ wire         forced_scandoubler;
 wire   [1:0] buttons;
 wire [127:0] status;
 wire  [10:0] ps2_key;
+reg   [10:0] ps2_key_sio;              // the keyboard as the 8242 sees it (see kbd_tga)
 wire  [24:0] ps2_mouse;
 wire  [64:0] rtc;
 wire  [15:0] sdram_sz;
@@ -418,7 +419,7 @@ as200_sys machine
 	.fd_lba(fd_lba), .fd_blk_cnt(fd_blk_cnt), .fd_rd(fd_rd), .fd_wr(fd_wr), .fd_ack(sd_ack[3]),
 	.fd_buff_din(fd_buff_din), .fd_led(fd_led),
 
-	.ps2_key(ps2_key),
+	.ps2_key(ps2_key_sio),
 	.ps2_mouse(ps2_mouse),
 	.rtc(rtc),
 	.year_ovr_en(cfg[15:14] == 2'd1),      // OSD TOY year: 1999
@@ -499,6 +500,12 @@ ddr3_arb ddr3_arb
 // while it is the TGA the guest reads the keyboard through the 8242 alone. (NT's kernel debugger
 // on COM1 takes a received 'b' as a break-in: every 'b' typed in NT stopped the machine.)
 assign kbd_tga = status[4:3] == 2'd0 && tga_on;
+// Each keystroke reaches exactly one device: the 8242 while the picture is the TGA, COM1 otherwise.
+// With both fed at once (before 2026-11-09) SRM's keyboard driver delivered the 8242 copy of a typed
+// boot command too, waking the shell's wait on its child dozens of times while the bootstrap's first
+// console open restarted the drivers: the "SRM P0" boot failure (gaps.md). The 8242's copy of
+// ps2_key only follows the keyboard while kbd_tga, so no toggle reaches it otherwise.
+always @(posedge clk_sys) if (kbd_tga) ps2_key_sio <= ps2_key;
 ps2_ascii ps2_ascii
 (
 	.clk(clk_sys),
