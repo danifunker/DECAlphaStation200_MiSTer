@@ -21,6 +21,18 @@ Every SRM OS on the list now boots from its CD to its installer on the current c
 | Tru64 UNIX 4.0G | not tried on the current core | no | to create: `TRU64_2GB.img` (4 GB if the base system won't fit) |
 | FreeBSD 4.6 | not tried on the current core | no | to create: `FREEBSD_2GB.img` |
 
+**Backups (ZIPs), 2026-11-08**, on the Windows machine. Each ZIP holds the image, `AS200.nvr` and
+`README.txt`. The NVR is a copy of the board's `AS200.nvr` (8192 bytes, md5 `c759873ca71f37d71f8dd8c99bc3cd9b`,
+SRM `bootdef_dev` dka0). The README gives the OSD settings (128 MB, Console SRM, Display Serial console),
+the boot command, the licence state (no PAKs) and the core build, and says where the SYSTEM password is
+kept. Image md5s are equal on the board and in the copy.
+
+| ZIP | Image (md5) | ZIP size, md5 |
+|---|---|---|
+| `C:\temp\VMS62_2GB_20261108.zip` | `VMS62_2GB.img` (`a6191d114003ab2ff5508da1c52f90a1`) | 66,277,366 bytes, `ca23109a1bcbd40fb339a672ea334939` |
+| `C:\temp\VMS73_2GB_20261108.zip` | `VMS73_2GB.img` (`04f09b5a5ec2f72308710dc80a1351ef`) | 231,326,475 bytes, `72f6d2ae775721cee8ba9ddcf873378b` |
+| `C:\temp\VMS84_4GB_20261108.zip` | pending: a clean board-side copy after a clean 8.4 shutdown (8.4 was running and writing when the first copy was made, so that copy was not used) | not yet made |
+
 All the ISOs are in `/media/fat/games/DECAlphaStation200/` on .143 (`OpenVMS 7.3 Alpha.iso`, `OpenVMS 8.4
 Alpha.iso`, `OpenVMS 6.2 Alpha.iso`, `Tru64 UNIX 4.0G.iso` + Associated Products 1/2 + Documentation,
 `FreeBSD4.6-RELEASE_Alpha-disc1.iso`/`disc2`). 91 GB free there. NT 4.0 (`NT4_2GB.img`) and Windows 2000
