@@ -116,9 +116,9 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   redirect loss and the lock flag (CPU), interrupt vs ITB-miss priority (every new NT process died at
   kernel32!BaseProcessStart), TGA modes 05/25, RTC register B at power-up. `tools/ntkd.py` is a
   minimal NT kernel debugger client over the MiSTer UART (see its header).
-- **Fits from a worktree** while agents edit the tree: `git worktree add --detach
-  ../DECAlphaStation200_fit HEAD` (refresh with `git -C ../DECAlphaStation200_fit checkout --detach
-  <commit>`), fit there; the .rbf is in its `output_files/`.
+- **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
+  the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
+  queue or chain fits: look at a fit's result before deciding the next build.
 
 **`docs/gaps.md` is the list of missing hardware and features (user, 2026-11-01): keep it current
 when a gap is found or closed.**
