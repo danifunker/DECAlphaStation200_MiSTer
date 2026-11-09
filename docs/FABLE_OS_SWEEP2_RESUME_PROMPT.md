@@ -13,13 +13,23 @@ OS and a list of what is wrong for you; the user's main interest is **whether X 
 |---|---|---|---|---|---|
 | FreeBSD 4.6-RELEASE | **yes** (sysinstall Express, `FREEBSD_2GB.img`) | yes (with the SRM retries, and Network = None, see 2b) | `cp -R`+`diff -r`, md5 equal | `dhclient de0` **panics** the kernel (2c) | not testable: no XFree86 on the two CDs, no TGA driver in 4.6/alpha |
 | Tru64 (Digital UNIX) 4.0G | **yes** (Custom, mandatory subsets incl. CDE, `TRU64_40G_2GB.img`) | yes (SRM retries) | `cp -r`+`diff -r`, cksum equal | not configured | **no**: starting the X server wedges the machine (2a) |
-| Tru64 5.1B-4 | see section 4 | | | | |
+| Tru64 5.1B-4 | **yes** (U.S. English, mandatory subsets incl. CDE, UFS default layout, `TRU64_51B_4GB.img`; 42/42 subsets 02:52–03:23, kernel build, its own reboot) | first boot to multi-user, then **wedged at the X start** ("Printer service started", evmpost/smsd errors, then nothing); later boots failed in SRM | not done | not configured | **no** (same wedge as 4.0G, 2a) |
 | NetBSD 10.2 | (2026-11-06) | yes (SRM retries) | — | DHCP 192.168.99.142, ping 3/3 | **server runs, nothing drawn** (2f) |
 
 ZIPs in `C:\temp` (each: image + `AS200.nvr` + `README.txt` with the OSD settings, boot command and
 known problems; passwords are in `scratch/os_credentials.txt`, never in a ZIP):
-`FREEBSD_2GB_20261108.zip`, `TRU64_40G_2GB_20261109.zip`, `NETBSD_2GB_20261109.zip` (section 4 lists
-the md5s). On the board: `FREEBSD_2GB.installed-20261108.img.bak`,
+
+| ZIP | Image md5 | ZIP size, md5 |
+|---|---|---|
+| `FREEBSD_2GB_20261108.zip` | `70bb96706488de0d088a45e30c94f0f0` | 103,621,272, `21bd1e0c97b43c3b5f7243160b969dab` |
+| `TRU64_40G_2GB_20261109.zip` | `d4b580b4f90c2f4cda885c6bc15eb846` | 125,004,425, `50c6a2eb422ac281fc9c21d986ab82e3` |
+| `NETBSD_2GB_20261109.zip` (as installed 2026-11-06, before the X sets) | `e12cdf497801ad9c47fed9b501fb3544` | 81,948,176, `d8124cf1fb846385c4c8914ba2f383a5` |
+
+Tru64 5.1B-4 has no ZIP (no verified login): the board has `TRU64_51B_4GB.img` and the copy
+`TRU64_51B_4GB.installed-20261109.img.bak`, taken after it was halted from the OSD while wedged at
+the X start. To finish it: boot single user (`boot dka0 -fl s` right after an OSD Apply and reset,
+with `scratch/bootcrash.sh`), `/sbin/bcheckrc`, `mv /sbin/rc3.d/S95xlogin /sbin/rc3.d/off.S95xlogin`,
+then multi-user, root login (password in `os_credentials.txt`), disk test, clean shutdown, ZIP. On the board: `FREEBSD_2GB.installed-20261108.img.bak`,
 `TRU64_40G_2GB.installed-20261109.img.bak`, `AS200_pretru64.nvr` (the NVRAM before Tru64 wrote its
 variables; the live `AS200.nvr` now has `boot_osflags` and `kbd_hardware_type=PCXAL` too).
 
@@ -64,6 +74,10 @@ without setting ISR[2]); re-test X on Tru64 4.0G (re-enable dtlogin: rename
   `sym_soft_reset` writes CABRT and polls ISTAT for DIP (with DSTAT.ABRT) for 1M reads. Implement the
   abort (stop SCRIPTS, DSTAT.ABRT, DIP; also when SCRIPTS are idle) with a `tb_ncr810` case.
 - The root cause of the lost reselection is probably 2a (a lost IRQ 11): check that first.
+- Seen on both Tru64s: `boot dka0 -fl s` right after an **OSD Halt** fails this way at the very first
+  probe of target 0, every time; after an OSD Apply and reset the probe is fine. So the halt leaves
+  the chip or the target mid-transfer, and neither SRM's init, nor the OS's chip reset, nor the SCSI
+  bus reset brings target 0 back: check what SCNTL1.RST / ISTAT.SRST do to `scsi_targets.v`.
 - Also: "sym0: PCI BUS clock seems too high: 69440 KHz" (sym times the SCSI clock with the general
   purpose timer; the model's timer rate is off by ~1.7x, so sym may derive wrong sync periods).
 
@@ -135,7 +149,9 @@ file (`AS200.nvr` picked up `console graphics`; it was set back to `serial`).
 - `scratch/bootretry.sh "CMD" N`: waits for an idle `>>>` (screen still + `scratch/atprompt.py` matches
   `scratch/prompt_tpl.png`), types, and decides booted/failed. Typing at the idle prompt is what fails
   most: prefer `scratch/bootdouble.sh`.
-- `scratch/bootdouble.sh "CMD" 22`: the workaround of 2d.
+- `scratch/bootdouble.sh "CMD" 22`: the workaround of 2d. `scratch/bootcrash.sh "CMD"` does the same
+  but types the second command when the screen starts moving after a still spell (the crash can come
+  later than 22 s). Neither helped on the last Tru64 5.1B-4 boots (8 failures in a row at 04:40).
 - `scratch/scrdiff.py`, `scratch/atprompt.py`: screenshot comparison (the capture is lossless).
 - `scratch/putiso.sh SRC NAME`: scp a file into the board's games directory (from WSL).
 - `scratch/sweep2_notes.md`: the raw notes this document came from.
