@@ -93,6 +93,12 @@ handler: pc 0).
 
 ### 2d. SRM boot failure (P0): a workaround and a lead
 
+**Fixed 2026-11-09 (`e83766b`, board `_20261109d`): every MiSTer keystroke reached both COM1 (ps2_ascii) and
+the 8242, and SRM's keyboard driver delivered the second copy too, waking the shell's wait on its boot child
+47 times while the bootstrap's cb_open restarted the drivers; now a keystroke reaches one device only.
+10 of 10 keyboard-typed boots pass. `scratch/bootdouble.sh`/`bootcrash.sh` are no longer needed. Details:
+gaps.md, the P0 row.** The text below is the state before the fix.
+
 Unchanged in nature (gaps.md P0 row), but much more frequent tonight: about 9 of 10 boots typed at an
 idle `>>>` failed (halt 5 PC 180000020 mostly; also PC 0, PC 200135e0, "kernel stack not valid halt"
 PC 111300 / 1010e420, "Can't open file /boot/loader", "can't open osf_boot", "cb_open: failed",
