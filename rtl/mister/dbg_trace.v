@@ -14,7 +14,7 @@
 // sel = 3, the CPU exceptions: the same lines without the frequent entries (ITB/DTB misses,
 //   interrupts, and the CALL_PALs NT makes thousands of times a second: 06 08 09 0E 0F 1C 1E 3F,
 //   86 83 AB, and those of SRM's idle loop and scheduler), so arithmetic, unaligned, opcode and access faults, gentrap, bugcheck and reboot
-//   all get through the UART; and a line per instruction retired outside PAL mode in the PC windows
+//   all get through the UART; and a line per instruction retired (PAL mode included) in the PC windows
 //   RT_LO0..RT_HI0 and RT_LO1..RT_HI1 (default SRM's semaphore init 71418 and fopen):
 //   E3Cnn pppppppp vvvvvvvv   PC, the result's low half (a store's data); nn = 20 + register if it wrote one
 //   and a line per PAL write of PS (every REI and CHMx; the mode VMS runs in next):
