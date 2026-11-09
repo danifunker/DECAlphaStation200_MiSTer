@@ -212,6 +212,15 @@ tb_sio: obj_tb_sio/Vsio82378
 
 .PHONY: tb_sio
 
+# the 8259 pair alone (rtl/sio/isa_pic.v; verilator/tb/tb_isa_pic.cpp): the cascade's corner cases
+obj_tb_isa_pic/Visa_pic: $(RTL)/sio/isa_pic.v tb/tb_isa_pic.cpp
+	$(TB_V) --top-module isa_pic -Wno-BLKSEQ -Wno-PINCONNECTEMPTY --Mdir obj_tb_isa_pic $^
+
+tb_isa_pic: obj_tb_isa_pic/Visa_pic
+	obj_tb_isa_pic/Visa_pic
+
+.PHONY: tb_isa_pic
+
 # the floppy controller (rtl/sio/isa_fdc.v, isa_fdc_img.v) inside the SIO, its image on a model of
 # hps_io's slot 3 (verilator/tb/tb_fdc.cpp; docs/design/floppy.md); the drive 100 times a real one's speed
 obj_tb_fdc/Vsio82378: $(SIO_RTL) tb/tb_fdc.cpp

@@ -19,8 +19,13 @@
 // remain high until after the falling edge of the first INTA"). DEC's DROM
 // floppy loader relies on it: it polls IRR bit 6 for each FDC command with
 // the line masked and never acknowledged (docs/design/floppy.md 5). The
-// master's IRQ2 (the slave's INT, which this model's pipeline holds low for two
-// clocks after each access to the slave) keeps the latch until the acknowledge.
+// master's IRQ2 is the slave's INT and follows the same rule: a slave request
+// that goes away before the acknowledge (a level line whose driver cleared the
+// condition) drops the master's IR2, and the acknowledge then returns the
+// master's default IRQ7 and sets no ISR bit, as on real 8259s. (Until
+// 2026-11-09 the master held IR2 until the acknowledge and answered with the
+// slave's IRQ15 vector while setting its own ISR2: Tru64's "stray interrupt
+// vector 0x8f0" when X started, after which no slave interrupt got through.)
 // The lines are active high here (a PCI PIRQ routed by the 82378 arrives
 // inverted, as the level the 8259 sees).
 //
@@ -52,29 +57,32 @@ module isa_pic (
 
     wire [7:0] m_dout, s_dout, m_elcr, s_elcr;
     wire [3:0] m_pend, s_pend;
-    wire [7:0] m_vec, s_vec;
+    wire [7:0] m_vec, m_vec7, s_vec;
     wire       s_int;
 
-    // the acknowledge: the master's highest request; through IRQ2 the slave's
-    wire m_none = m_pend[3];
-    wire via_s  = !m_none && m_pend[2:0] == 3'd2;
-    wire ack_m  = iack && !m_none;
-    wire ack_s  = iack && via_s && !s_pend[3];
-    assign iack_vec = via_s ? s_vec : m_vec;
+    // the acknowledge: the master's highest request; through IRQ2 the slave's. The master
+    // resolving IR2 while the slave has nothing (its request went away, or it is re-resolving
+    // after an access) is the master's default IRQ7: no ISR bit on either chip
+    wire m_none  = m_pend[3];
+    wire via_s   = !m_none && m_pend[2:0] == 3'd2;
+    wire s_empty = via_s && s_pend[3];
+    wire ack_m   = iack && !m_none && !s_empty;
+    wire ack_s   = iack && via_s && !s_pend[3];
+    assign iack_vec = s_empty ? m_vec7 : via_s ? s_vec : m_vec;
 
     isa_pic_chip master (
         .clk(clk), .rst(rst),
         .wr(io_wr && !elcr && !slave), .rd(io_rd && !elcr && !slave), .a0(a0), .din(io_din), .dout(m_dout),
-        .elcr_wr(io_wr && elcr && !slave), .elcr_mask(8'hF8), .elcr_q(m_elcr), .hold(8'h04),
+        .elcr_wr(io_wr && elcr && !slave), .elcr_mask(8'hF8), .elcr_q(m_elcr),
         .line({irq[7:3], s_int, irq[1:0]}), .int_o(intr), .pend_o(m_pend),
-        .ack(ack_m), .vec(m_vec)
+        .ack(ack_m), .vec(m_vec), .vec7(m_vec7)
     );
     isa_pic_chip slave_pic (
         .clk(clk), .rst(rst),
         .wr(io_wr && !elcr && slave), .rd(io_rd && !elcr && slave), .a0(a0), .din(io_din), .dout(s_dout),
-        .elcr_wr(io_wr && elcr && slave), .elcr_mask(8'hDE), .elcr_q(s_elcr), .hold(8'h00),   // IRQ8 and 13 edge only
+        .elcr_wr(io_wr && elcr && slave), .elcr_mask(8'hDE), .elcr_q(s_elcr),   // IRQ8 and 13 edge only
         .line(irq[15:8]), .int_o(s_int), .pend_o(s_pend),
-        .ack(ack_s), .vec(s_vec)
+        .ack(ack_s), .vec(s_vec), .vec7()
     );
 
     assign io_dout = elcr ? (slave ? s_elcr : m_elcr) : (slave ? s_dout : m_dout);
@@ -92,12 +100,12 @@ module isa_pic_chip (
     input  wire       elcr_wr,
     input  wire [7:0] elcr_mask,      // the lines that may be level-sensitive
     output wire [7:0] elcr_q,
-    input  wire [7:0] hold,           // edge lines whose latch holds until the acknowledge, whatever the line does
     input  wire [7:0] line,
     output wire       int_o,
     output wire [3:0] pend_o,         // the request to raise INT for; bit 3: none
     input  wire       ack,            // acknowledge pend_o
-    output wire [7:0] vec             // {ICW2[7:3], the line acknowledged, 7 if none}
+    output wire [7:0] vec,            // {ICW2[7:3], the line acknowledged, 7 if none}
+    output wire [7:0] vec7            // {ICW2[7:3], 7}: the default vector
 );
     // the highest-priority bit of v, priorities rotated so that line `lowest` is the
     // lowest; bit 3 set: none
@@ -123,9 +131,11 @@ module isa_pic_chip (
     // highest unmasked request (hr_q) and the highest in service (hs_q), stage 2 registers
     // the request to raise INT for (pend_q), which drives INT, the acknowledge, the poll
     // and the vector. A request reaches INT three clocks after its line rises. After any
-    // write, acknowledge or poll the pipeline holds stale values for two clocks: INT is
-    // held low and an acknowledge in that window gets the spurious vector (as an 8259
-    // whose request went away), so nothing acts on a stale resolution.
+    // write, acknowledge or poll the pipeline holds stale values for two clocks: an
+    // acknowledge or poll in that window gets the default vector (as an 8259 whose request
+    // went away), so nothing acts on a stale resolution. INT itself keeps following the
+    // registered resolution (it does not dip on a write: the master's IR2 is the slave's INT,
+    // and a dip there would latch a phantom cascade request or drop a real one).
     reg  [3:0] hr_q, hs_q, eoi_q, pend_q;
     reg  [1:0] stale;
     wire [2:0] dr = hr_q[2:0] - lowest - 3'd1;
@@ -135,9 +145,10 @@ module isa_pic_chip (
                         (!hs_q[3] && dr >= ds) ? 4'h8 : hr_q;
     wire [3:0] pend = stale != 2'd0 ? 4'h8 : pend_q;
     assign pend_o = pend;
-    assign int_o  = !pend[3];
+    assign int_o  = !pend_q[3];
     wire [2:0] ack_n = pend[3] ? 3'd7 : pend[2:0];
     assign vec    = {vbase, ack_n};
+    assign vec7   = {vbase, 3'd7};
     wire [3:0] eoi_n = eoi_q;                          // the highest in service, registered
     wire [7:0] lvl   = elcr | {8{ltim}};
     assign elcr_q = elcr;
@@ -164,7 +175,7 @@ module isa_pic_chip (
         last <= line;
         // requests: a level line follows its input; an edge line latches a rising edge,
         // and drops with the line
-        irr <= (lvl & line) | (~lvl & (line | hold) & (irr | (line & ~last)));
+        irr <= (lvl & line) | (~lvl & line & (irr | (line & ~last)));
 
         if (icw1) begin
             ltim <= din[3]; single <= din[1]; need_icw4 <= din[0];
