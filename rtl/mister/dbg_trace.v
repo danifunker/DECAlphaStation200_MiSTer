@@ -83,11 +83,16 @@ module dbg_trace #(
     reg  [31:0] lost;
     reg         push;
     reg  [79:0] pv;
-    // For the SRM P0 study only the native-mode TB misses are left out: interrupts, PAL-mode DTB misses (09E0) and
-    // SRM's own CALL_PALs are kept, since the ring freezes at the halt (below) and the UART then drains the 4096
-    // events before it. (The usual exclusions were NT's hot CALL_PALs 2180 2200 2240 2380 23C0 2700 2780 2FC0 3180
-    // 30C0 3AC0 and SRM's idle loop and scheduler 24C0 2500 3740 3480 2300 2B80 25C0 2440 2100 20C0.)
-    wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0;
+    // Left out of the exceptions trace: the native TB misses, NT's hot CALL_PALs and SRM's idle loop and
+    // scheduler (with them in, SRM's idle prompt floods the ring and nothing before a crash survives).
+    // Interrupts (00E0) and PAL-mode DTB misses (09E0) are kept for the SRM P0 study.
+    wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0 ||
+                      ent_off == 14'h2180 || ent_off == 14'h2200 || ent_off == 14'h2240 || ent_off == 14'h2380 ||
+                      ent_off == 14'h23C0 || ent_off == 14'h2700 || ent_off == 14'h2780 || ent_off == 14'h2FC0 ||
+                      ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0 ||
+                      ent_off == 14'h24C0 || ent_off == 14'h2500 || ent_off == 14'h3740 || ent_off == 14'h3480 ||
+                      ent_off == 14'h2300 || ent_off == 14'h2B80 || ent_off == 14'h25C0 || ent_off == 14'h2440 ||
+                      ent_off == 14'h2100 || ent_off == 14'h20C0;
     wire        rt_in = rt && rt_pc[63:32] == 32'd0 &&       // PAL-mode retires included (the windows may sit in the PAL)
                         ((rt_pc[31:0] >= RT_LO0 && rt_pc[31:0] < RT_HI0) || (rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1));
     wire        mw_lo = mw && mw_we && mw_be[3:0] != 4'd0 && mw_data[31:0] == WATCH;
@@ -96,7 +101,9 @@ module dbg_trace #(
     // before it survive whatever the machine does next; the next change of sel thaws it
     // (earlier: at a D_FAULT whose PC is in window 0: ent && ent_off == 14'h01E0 && ent_xpc in window 0)
     reg         frozen;
-    wire        freeze = sel == 2'd3 && rt && rt_pc[63:32] == 32'd0 && rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1;
+    // ... or at a CALL_PAL HALT (2000): SRM's other P0 failure runs into a HALT at PC 180000020
+    wire        freeze = sel == 2'd3 && ((rt && rt_pc[63:32] == 32'd0 && rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1) ||
+                                         (ent && ent_off == 14'h2000));
     always @* begin
         push = 1'b0; pv = 80'd0;
         if (frozen) ;
