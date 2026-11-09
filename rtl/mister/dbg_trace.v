@@ -28,10 +28,11 @@
 // 4096 events before it are still sent.
 module dbg_trace #(
     parameter CLK_HZ = 100000000,
-    // the PAL's UNALIGN fixup: PAL_TEMP2 read (its bit 46 = DATFX decides silent or SCB 0x280) and the branch,
-    // the load and the store variants (the SRM P0 boot failure, gaps.md)
-    parameter [31:0] RT_LO0 = 32'h000092C8, RT_HI0 = 32'h000092E0,
-    parameter [31:0] RT_LO1 = 32'h0000D2C8, RT_HI1 = 32'h0000D308,
+    // the SRM P0 boot failure (gaps.md): window 0 = the PAL's dispatch of a fault taken inside the PAL (8300: which
+    // PAL PC faulted), window 1 = the PAL's kernel-stack check and "kernel stack not valid" halt (84C0..85B4);
+    // the ring freezes at a retire in window 1, so the 4096 events before the halt survive SRM's restart
+    parameter [31:0] RT_LO0 = 32'h00008300, RT_HI0 = 32'h00008360,
+    parameter [31:0] RT_LO1 = 32'h000084C0, RT_HI1 = 32'h00008560,
     parameter [31:0] WATCH = 32'h00029A92
 ) (
     input  wire        clk,
@@ -82,22 +83,20 @@ module dbg_trace #(
     reg  [31:0] lost;
     reg         push;
     reg  [79:0] pv;
-    wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0 || ent_off == 14'h09E0 ||   // interrupts (00E0) are kept: the SRM P0 halt follows one
-                      ent_off == 14'h2180 || ent_off == 14'h2200 || ent_off == 14'h2240 || ent_off == 14'h2380 ||
-                      ent_off == 14'h23C0 || ent_off == 14'h2700 || ent_off == 14'h2780 || ent_off == 14'h2FC0 ||
-                      ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0 ||
-                      // SRM's idle loop and scheduler
-                      ent_off == 14'h24C0 || ent_off == 14'h2500 || ent_off == 14'h3740 || ent_off == 14'h3480 ||
-                      ent_off == 14'h2300 || ent_off == 14'h2B80 || ent_off == 14'h25C0 || ent_off == 14'h2440 ||
-                      ent_off == 14'h2100 || ent_off == 14'h20C0;
+    // For the SRM P0 study only the native-mode TB misses are left out: interrupts, PAL-mode DTB misses (09E0) and
+    // SRM's own CALL_PALs are kept, since the ring freezes at the halt (below) and the UART then drains the 4096
+    // events before it. (The usual exclusions were NT's hot CALL_PALs 2180 2200 2240 2380 23C0 2700 2780 2FC0 3180
+    // 30C0 3AC0 and SRM's idle loop and scheduler 24C0 2500 3740 3480 2300 2B80 25C0 2440 2100 20C0.)
+    wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0;
     wire        rt_in = rt && rt_pc[63:32] == 32'd0 &&       // PAL-mode retires included (the windows may sit in the PAL)
                         ((rt_pc[31:0] >= RT_LO0 && rt_pc[31:0] < RT_HI0) || (rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1));
     wire        mw_lo = mw && mw_we && mw_be[3:0] != 4'd0 && mw_data[31:0] == WATCH;
     wire        mw_hi = mw && mw_we && mw_be[7:4] != 4'd0 && mw_data[63:32] == WATCH;
-    // the ring freezes at a D_FAULT whose PC is in window 0 (the fault under study), so the events
+    // the ring freezes at a retire in window 1 (the PAL's halt path under study), so the events
     // before it survive whatever the machine does next; the next change of sel thaws it
+    // (earlier: at a D_FAULT whose PC is in window 0: ent && ent_off == 14'h01E0 && ent_xpc in window 0)
     reg         frozen;
-    wire        freeze = sel == 2'd3 && ent && ent_off == 14'h01E0 && ent_xpc >= RT_LO0 && ent_xpc < RT_HI0;
+    wire        freeze = sel == 2'd3 && rt && rt_pc[63:32] == 32'd0 && rt_pc[31:0] >= RT_LO1 && rt_pc[31:0] < RT_HI1;
     always @* begin
         push = 1'b0; pv = 80'd0;
         if (frozen) ;
