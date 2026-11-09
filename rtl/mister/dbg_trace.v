@@ -82,7 +82,7 @@ module dbg_trace #(
     reg  [31:0] lost;
     reg         push;
     reg  [79:0] pv;
-    wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0 || ent_off == 14'h09E0 || ent_off == 14'h00E0 ||
+    wire        hot = ent_off == 14'h03E0 || ent_off == 14'h08E0 || ent_off == 14'h09E0 ||   // interrupts (00E0) are kept: the SRM P0 halt follows one
                       ent_off == 14'h2180 || ent_off == 14'h2200 || ent_off == 14'h2240 || ent_off == 14'h2380 ||
                       ent_off == 14'h23C0 || ent_off == 14'h2700 || ent_off == 14'h2780 || ent_off == 14'h2FC0 ||
                       ent_off == 14'h3180 || ent_off == 14'h30C0 || ent_off == 14'h3AC0 ||
