@@ -1,5 +1,9 @@
 # Resume prompt (2026-11-01)
 
+> **2026-11-10:** the current state is `CLAUDE.md` (State) and `docs/PLAN_20261109.md` (Status); the board builds are
+> `_20261109i` (commit `f842543`, tag `release-20261110`). Development runs on the Windows machine (WSL for Verilator and
+> ssh, Quartus 17.0 in-tree, one fit at a time); the Linux-box/Mac notes below are history.
+
 > Development stayed on the Linux box (m900) after all (user). The Mac setup below is ready for
 > later: dani-dev.local has the repo clone and `scratch/` but no Homebrew/Verilator yet.
 
