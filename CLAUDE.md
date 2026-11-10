@@ -116,6 +116,11 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   redirect loss and the lock flag (CPU), interrupt vs ITB-miss priority (every new NT process died at
   kernel32!BaseProcessStart), TGA modes 05/25, RTC register B at power-up. `tools/ntkd.py` is a
   minimal NT kernel debugger client over the MiSTer UART (see its header).
+- **2026-11-09/10: the 21030 pixel mask is a simple / opaque-stipple parameter only** (manual 4.4.21): applying it to
+  transparent stipples and to copies produced NT 4.0's status-bar fragments and the edges of cancelled menus
+  (`32bbcff`, `f842543`; board builds `_20261109h`, `_20261109i`). The P0 SRM boot failure (keyboard reaching COM1 and
+  the 8242 at once), the 8259 cascade and the TGA line engine were fixed the same day (`docs/gaps.md`, `docs/PLAN_20261109.md`).
+  `tools/tgareplay.py` + `scratch/tgacap_*.sh` (lossless TGA traces with VRAM dumps) are the way to chase drawing bugs.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
