@@ -112,7 +112,7 @@ fill are 05 and 25 (Linux tgafb; NT's tga.dll draws text in 05); 03 and 23 are a
 | 0D block stipple | as 03 with block colours, no rop, no pixel mask |
 | 2D block fill | `D<10:0> + 1` pixels from `(A & ~3) + D<17:16>`, block colours, data register stipple, plane mask, no rop |
 | 21 / 25 (23) opaque / transparent fill | as 2D with FG/BG (opaque) or FG where the stipple is set, rop |
-| 07 copy | the first write reads 32 bytes from `A & ~3` less the pixel shift (its mask ignored). The second writes them at `A2 & ~3` where D<i> and the pixel mask allow, rop, plane mask. Right to left (negative shift): the block is [A2&~7 - 24, A2\|7] and the mask lanes are permuted as section 3 (038) says |
+| 07 copy | the first write reads 32 bytes from `A & ~3` less the pixel shift (its mask ignored). The second writes them at `A2 & ~3` where D<i> allows (the pixel mask is not a copy-mode parameter, 4.4.21: until 2026-11-10 it was applied, and NT 4.0's stale caret mask 05C = 4 left the edge spans of a closed menu, done with copy pairs, menu-coloured while the COPY64 middle was restored; `scratch/replay6/nt2`), rop, plane mask. Right to left (negative shift): the block is [A2&~7 - 24, A2\|7] and the mask lanes are permuted as section 3 (038) says |
 | 1F DMA write copy | reads `D<31:16> + 1` quadwords from `A & ~7` and drops the first (the shifter primer). The rest go to host memory at 098 as longword DMA writes |
 | 17 / 37 DMA read copy | `D<31:16> + 1` longwords from host memory at 098 are written from `A & ~3` with rop and plane mask. Edge masks: left1 D<3:0> (first), left2 D<7:4> (second, if 3 or more), right1 D<11:8> (last). right2 (the residue) is not modelled |
 

@@ -341,7 +341,6 @@ module tga #(
     // address order a 1-7 pixel column at the right edge stayed stale after vertical moves)
     wire [31:0] cp_ln  = {c_d[7:0], c_d[15:8], c_d[23:16], c_d[31:24]};
     wire [31:0] cp_msk = !pshift[3] ? c_d : c_off[2] ? {cp_ln[27:0], cp_ln[31:28]} : cp_ln;
-    wire [31:0] px_ln  = {pxm[7:0], pxm[15:8], pxm[23:16], pxm[31:24]};
     wire  [7:0] m8 = mode[7:0];
     // transparent is mode bit 2 (21030: 05 transparent stipple, 25 transparent fill, as 0D/2D block;
     // Linux tgafb's values, and what NT's tga.dll draws its text with); 03/23 are kept as the same
@@ -557,13 +556,15 @@ module tga #(
                     sr_n <= (cp_src[20:3] == cp_blk[20:3] + 18'd1 && cp_src[2:0] == 3'd0) ? 5'd6 : 5'd5;
                     est <= E_SRD;
                 end else begin
-                    // copy, destination: the 32 pixels the data selects (and the pixel mask)
+                    // copy, destination: the 32 pixels the data (Mask Destination) selects. The pixel
+                    // mask is not a copy-mode parameter (4.4.21, 6.2.8): NT 4.0 restores the screen
+                    // under a closed menu with copies while its caret's persistent mask 05C = 4 is
+                    // in force; masked, the region's edge spans (copy pairs) stayed menu-coloured
                     copy_flag <= 1'b0; cb_w <= 3'd0;
                     g_q <= cp_blk[20:3]; g_n <= cp_blk[2] ? 10'd5 : 10'd4;
                     g_bef <= 8'hFF; g_bel <= 8'hFF;
                     g_st <= {8'd0, cp_msk} << {cp_blk[2], 2'b00};
-                    g_pw <= {8'd0, pshift[3] ? (c_off[2] ? {px_ln[27:0], px_ln[31:28]} : px_ln) : pxm} << {cp_blk[2], 2'b00};
-                    g_use_pw <= 1'b1; g_use_st <= 1'b1; g_rop_en <= 1'b1; g_dsel <= D_CPY;
+                    g_use_pw <= 1'b0; g_use_st <= 1'b1; g_rop_en <= 1'b1; g_dsel <= D_CPY;
                     g_fs <= cp_p0[2:0] - cp_blk[2:0];
                     g_m1 <= cp_p0[2:0] < cp_blk[2:0];
                     s_prev <= 64'd0;

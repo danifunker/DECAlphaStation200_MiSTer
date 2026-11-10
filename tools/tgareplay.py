@@ -22,6 +22,7 @@ ap.add_argument('--list', action='store_true'); ap.add_argument('--diff-png')
 ap.add_argument('--who', action='append', default=[])
 ap.add_argument('--height', type=int, default=600)
 ap.add_argument('--ideal', action='store_true', help='check a pure window move against the before dump')
+ap.add_argument('--out', help='write the replayed VRAM to this file')
 a = ap.parse_args()
 
 vram = bytearray(open(a.before, 'rb').read())
@@ -188,9 +189,12 @@ for ln, line in enumerate(lines):
         elif off == 0x54 and st['mode'] in (0x2D, 0x21, 0x25):
             fill(st['gadr'] & 0x1FFFFF, (d & 0x7FF) + 1, ln)
         continue
-    if line[0] != 'W':
+    if line[0] != 'W' or len(line) < 21:     # (a capture's last line can be cut short)
         continue
-    mode = int(line[1:3], 16); be = int(line[4], 16); off = int(line[6:12], 16); d = int(line[13:21], 16)
+    try:
+        mode = int(line[1:3], 16); be = int(line[4], 16); off = int(line[6:12], 16); d = int(line[13:21], 16)
+    except ValueError:
+        print('line %d: malformed, skipped: %r' % (ln, line)); continue
     m = pxm(); pxm_done()
     if mode in (0x01, 0x05, 0x03):
         base = off & ~3
@@ -244,7 +248,7 @@ for ln, line in enumerate(lines):
             for k in range(32):
                 o = (k + 8 - (off & 7)) & 31          # the in-order bit; the lanes as tga.v
                 bit = (o if o < 8 else o + 16 if o < 16 else o if o < 24 else o - 16) if bwd else k
-                if d >> bit & 1 and m >> bit & 1:
+                if d >> bit & 1:                       # no pixel mask in copy mode (4.4.21)
                     write_px(blk + k, cp_src[k], ln); px.add(blk + k)
             copy_ops.append((blk - cp_from + sh(), px))
     elif mode in (0x02, 0x06):
@@ -259,6 +263,8 @@ for ln, line in enumerate(lines):
             warned.add(mode); print('line %d: mode %04x taken as simple' % (ln, mode))
 
 print('%d copy ops, %d pixel writes' % (nop, nwrites))
+if a.out:
+    open(a.out, 'wb').write(vram)
 if a.ideal and a.after:
     # a pure window move: every destination pixel of the copies should hold the source pixel
     # from the before dump, offset by the move. The move is the commonest (destination - source

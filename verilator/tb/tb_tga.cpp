@@ -521,7 +521,9 @@ int main(int argc, char **argv) {
         fb_wr(s, ms); os_done();
         CHECK(reg_rd(0x30) == 0x900007, "copy flag after the source: %08x", reg_rd(0x30));
         fb_wr(d, md);
-        for (int k = 0; k < 32; k++) if ((md >> k & 1) && (r_pxm >> k & 1)) put(d + k, src[k], true);
+        // the pixel mask is not a copy-mode parameter (4.4.21): a stale 05C = 4 left by NT's caret
+        // used to keep the edge spans of a closed menu menu-coloured (2026-11-10)
+        for (int k = 0; k < 32; k++) if (md >> k & 1) put(d + k, src[k], true);
         os_done();
         wait_idle();
     }
