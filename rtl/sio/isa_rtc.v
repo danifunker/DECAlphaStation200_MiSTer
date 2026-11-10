@@ -4,7 +4,8 @@
 //
 // The time and calendar, the alarm, registers A-D, the update-in-progress
 // flag, the periodic, alarm and update-ended interrupts, and 114 bytes of
-// CMOS RAM (0Eh-7Fh). On the AlphaStation the interrupt output does not go
+// CMOS RAM (0Eh-7Fh), kept with the NVRAM image through the cm_* port (the
+// battery-backed part of the real chip). On the AlphaStation the interrupt output does not go
 // to the 8259 (ISA IRQ8 is not connected) but straight to CPU IRQ4: the
 // interval timer of every Alpha OS (HARDWARE.md 3), and what DROM's
 // "Interrupts test" checks through HIRR.
@@ -41,8 +42,17 @@ module isa_rtc #(
     input  wire [64:0] rtc,           // hps_io
     input  wire        year_ovr_en,
     input  wire  [6:0] year_ovr,      // binary 0-99
-    input  wire        console_arc    // CMOS 3Fh at reset: 1 = ARC, 0 = SRM (the DROM's flash loader
-                                      // reads it; the CMOS is lost on every core load, so the OSD sets it)
+    // CMOS 3Fh selects the console the DROM's flash loader starts (1 = ARC, anything else SRM);
+    // SRM's os_type and ARC's "switch to OpenVMS or Digital UNIX console" write it. OSD Console:
+    // 0 NVRAM file = the value kept with the NVRAM image (rtl/mister/nvsave.v block 16), so those
+    // switches stick per file; 1 SRM and 2 ARC override what 3Fh reads, the kept value unchanged.
+    input  wire  [1:0] console_mode,
+    // the CMOS's save port (rtl/mister/nvsave.v): 3Fh here is the kept value, not the override
+    input  wire  [6:0] cm_addr,
+    input  wire        cm_we,
+    input  wire  [7:0] cm_wdata,
+    output wire  [7:0] cm_rdata,
+    output reg         cm_dirty       // a pulse on every guest write of the CMOS (0Eh-7Fh)
 );
     // ---------------------------------------------------------------- 32,768 Hz
     localparam [63:0] INC64 = (64'd32768 << 32) / CLK_HZ;
@@ -66,6 +76,11 @@ module isa_rtc #(
     reg [7:0] reg_b;
     reg [2:0] flags;                    // PF, AF, UF
     reg [7:0] cram [0:127];             // 0E-7F used
+    reg [7:0] nv3f;                     // 3Fh as kept with the NVRAM image (0 without one: SRM)
+    reg       arc_year;                 // the ARC year base, fixed at reset (and when the image loads)
+
+    // 3Fh as the guest reads it: the kept value, or the OSD's override
+    wire [7:0] eff3f = console_mode == 2'd1 ? 8'h00 : console_mode == 2'd2 ? 8'h01 : nv3f;
 
     wire bin = reg_b[2];
     wire h24 = reg_b[1];
@@ -155,7 +170,7 @@ module isa_rtc #(
         v_mon  <= show({3'd0, month}, bin);
         // ARC and NT count the two-digit year from 1980, SRM from 1900/2000: with the ARC console
         // the register reads 20 more (2026: 46) and a write stores 20 less
-        v_year <= show(console_arc ? (year >= 7'd80 ? year - 7'd80 : year + 7'd20) : year, bin);
+        v_year <= show(arc_year ? (year >= 7'd80 ? year - 7'd80 : year + 7'd20) : year, bin);
     end
 
     reg [7:0] rd71;
@@ -175,18 +190,32 @@ module isa_rtc #(
         7'h0B: rd71 = reg_b;
         7'h0C: rd71 = {irq, flags[2], flags[1], flags[0], 4'd0};
         7'h0D: rd71 = 8'h80;                                    // VRT: the battery is good
+        7'h3F: rd71 = eff3f;
         default: rd71 = cram[index];
         endcase
     end
     assign io_dout = io_addr[0] ? rd71 : {1'b0, index};
+    assign cm_rdata = cm_addr == 7'h3F ? nv3f : cram[cm_addr];
 
     wire data_w = io_wr && io_addr[0];
     wire [6:0] tk  = take(io_din, bin);              // a byte written, as register B reads it
     wire [6:0] b_sec = from_bcd(rtc[7:0]),   b_min = from_bcd(rtc[15:8]),  b_hour = from_bcd(rtc[23:16]);
     wire [6:0] b_date = from_bcd(rtc[31:24]), b_mon = from_bcd(rtc[39:32]), b_year = from_bcd(rtc[47:40]);
+    // the CMOS: guest writes (a firmware console switch writes 3Fh), and the image's load
     always @(posedge clk) begin
-        if (rst) cram[7'h3F] <= {7'd0, console_arc};
-        else if (data_w && index >= 7'h0E) cram[index] <= io_din;
+        cm_dirty <= 1'b0;
+        if (cm_we) begin
+            cram[cm_addr] <= cm_wdata;
+            if (cm_addr == 7'h3F) begin
+                nv3f <= cm_wdata;
+                if (console_mode == 2'd0) arc_year <= cm_wdata == 8'h01;
+            end
+        end else if (data_w && index >= 7'h0E) begin
+            cram[index] <= io_din;
+            if (index == 7'h3F) nv3f <= io_din;     // the year base follows at the next reset
+            cm_dirty <= 1'b1;
+        end
+        if (rst) arc_year <= eff3f == 8'h01;
     end
 
     always @(posedge clk) begin
@@ -233,7 +262,7 @@ module isa_rtc #(
             7'h06: dow   <= io_din[2:0];
             7'h07: date  <= tk[4:0];
             7'h08: month <= tk[3:0];
-            7'h09: year  <= console_arc ? (tk >= 7'd20 ? tk - 7'd20 : tk + 7'd80) : tk;
+            7'h09: year  <= arc_year ? (tk >= 7'd20 ? tk - 7'd20 : tk + 7'd80) : tk;
             7'h0A: begin
                 reg_a <= io_din[6:0];
                 if (io_din[6:4] != 3'b010) div <= 15'd0;            // the divider held in reset
@@ -267,6 +296,7 @@ module isa_rtc #(
     integer i;
     initial begin
         for (i = 0; i < 128; i = i + 1) cram[i] = 8'h00;
+        nv3f = 8'h00; arc_year = 1'b0; cm_dirty = 1'b0;
         sec = 6'd0; min = 6'd0; hour = 5'd12; date = 5'd1; month = 4'd1; year = 7'd26; dow = 3'd5;
         // register B: binary, 24 hour, what ARC, NT's HAL (0x46) and the BSDs use (BCD here
         // made ARC read 14:45 as 20:69 after a core load)

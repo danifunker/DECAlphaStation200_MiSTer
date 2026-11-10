@@ -81,7 +81,7 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 1. System sim with `d8eeffe` (CHIP_ID, interrupts): a new LED-2E checkpoint, then run into SRM and
    watch COM1. SRM's next needs: TOY/8259 interrupts end to end, the FPU, its device probes.
 2. A board build with the latest RTL; close timing at 100 MHz (re-group the failing paths).
-3. SCSI targets on hps_io (`rtl/scsi/scsi_targets.v`), CMOS save (TOY 3Fh: SRM/ARC), the 28F020
+3. SCSI targets on hps_io (`rtl/scsi/scsi_targets.v`), the 28F020
    command set, the FPU (T2), branch prediction and block bus transfers, TGA.
 
 - **2026-11-01: SRM V7.0 runs and prints on COM1 in the system simulation** (after the FP

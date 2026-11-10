@@ -18,7 +18,7 @@
 //     --type STR       type STR into COM1 (\n = Return), one character every
 //                      2 ms of machine time, starting --type-at cycles in
 //                      (default: at once); more --type options queue up
-//     --arc            the OSD Console = ARC (TOY CMOS 3Fh at reset)
+//     --arc            the OSD Console = ARC (overrides TOY CMOS 3Fh; default: SRM)
 //     --flash-wp       J6 flash write disabled (the flashROMs ignore writes)
 //     --nvram FILE     load the 8 KB flashbus NVRAM (the board's AS200.nvr) at the start
 //     --cd-ua          pulse cd_change at the start (the CD's Unit Attention, as after the board's mount)
@@ -168,7 +168,7 @@ int main(int argc, char **argv) {
     t->sd_ack = 0; t->sd_buff_wr = 0; t->cd_change = 0;
     t->nvb_addr = 0; t->nvb_we = 0; t->nvb_wdata = 0;
     int sd_slot = -1, sd_dir = 0, sd_pos = 0, sd_len = 0; uint32_t sd_lba_q = 0;
-    t->ps2_key = 0; t->ps2_mouse = 0; t->console_arc = arc; t->flash_wp = flash_wp; t->halt = 0;
+    t->ps2_key = 0; t->ps2_mouse = 0; t->console_mode = arc ? 2 : 1; t->cm_addr = 0; t->cm_we = 0; t->cm_wdata = 0; t->flash_wp = flash_wp; t->halt = 0;
     t->fd_mounted = 0; t->fd_readonly = 0; t->fd_size = 0; t->fd_ack = 0;
     t->vr_ack = 0; t->vr_rvalid = 0; t->vr_rdata = 0; t->sc_ack = 0; t->sc_rvalid = 0; t->sc_rdata = 0; t->clk_pix = 0;
     t->enet_mac = 0x08002BA50200ull; t->enet_link_up = 1; t->nb_ack = 0; t->nb_rdata = 0; t->year_ovr_en = 0; t->year_ovr = 0;

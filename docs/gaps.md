@@ -36,7 +36,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 |---|---|---|---|
 | The original SROM (XC1765D at E23) | open | P4 | Not dumped anywhere; our replacement runs. Drop-in as a bitstream |
 | SROM J1 mini-console, serial progress output, beep codes, flash fallback | open | P4 | srom.md S7 |
-| Console choice SRM/ARC (TOY CMOS byte 3Fh) | **done** 2026-11-01 | P2 | OSD P1 "Console: SRM/ARC" presets 3Fh at reset; the rest of the CMOS is still volatile |
+| Console choice SRM/ARC (TOY CMOS byte 3Fh) | **done** 2026-11-10 | P2 | OSD P1 "Console: NVRAM file/SRM/ARC" (default NVRAM file): 3Fh comes from the CMOS kept in the NVRAM image, so the firmware's own switch (SRM `set os_type`, ARC's "Switch to OpenVMS or Digital UNIX console") sticks across resets and core loads; SRM and ARC are overrides that never reach the file (2026-11-01: SRM/ARC preset only) |
 | ARC 4.59 as a flash option | open | P4 | Update image only; chip check bytes unknown |
 
 ## 21071 core logic (`rtl/apecs/apecs.v`, `docs/design/pci.md`)
@@ -67,7 +67,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
 | Flashbus NVRAM persistence (SRM env vars, ISA table) | partial | P2 | `rtl/mister/nvsave.v` on OSD slot SC4 (8 KB file): load on mount, save 2 s after a change (2026-11-01); board test pending |
-| TOY CMOS persistence (beyond 3Fh) | open | P3 | |
+| TOY CMOS persistence | **done** 2026-11-10 | P3 | CMOS 0Eh-7Fh in block 16 of an 8,704-byte NVRAM image (`rtl/mister/nvsave.v`, marker "CMOS"); an 8 KB image keeps no CMOS; `make -C verilator tb_cmos`; board test pending |
 | COM1 receive overruns under sustained input (FreeBSD 4.6: "sio0: silo overflow") | open | P3 | Seen 2026-11-09 on .92 (`_20261109e`) with OSD Serial port = COM1, feeding a 27 KB uuencoded file into FreeBSD 4.6's `uudecode` at 9600 baud from the MiSTer UART (`/dev/ttyS1`, 62-character lines, 0.08 s and then 0.2 s pause per line): characters lost twice, `sio0: 1 more silo overflow (total 3)` on the console, two different bad checksums. A 9 KB file got through the same way once. A 16550A at 9600 needs the RX interrupt serviced within ~16 ms of the FIFO trigger; not known yet whether the core's 16550 (`rtl/sio/ns16550.v`: FIFO depth, trigger level, IIR/LSR timing) or the guest (busy CPU, 100 MHz) drops them. Bench: `make -C verilator tb_sio` with back-to-back RX bytes against the FIFO trigger and LSR.OE. Workaround: move files on an ISO (CD-ROM slot) |
 | ~~Floppy controller (82077AA in the PC87332), drive A on an image~~ | **done** 2026-11-01 | P3 | `rtl/sio/isa_fdc.v`, `isa_fdc_img.v` (`floppy.md`): every 82077AA command, DMA and non-DMA, media change, write protect, 720K-2.88M; `tb_fdc` (172 checks) and DROM V1.7's J2 floppy loader in `tb_sio_drom_floppy`. In the machine (`b57521b`, OSD slot 3); SRM lists dva0 on the board (build 16); not yet read from an image there |
 | ~~DMA window 1 at PCI 1 GB from the SROM (DROM floppy boot)~~ | **done** 2026-11-01 | P3 | The SROM opens window 1 (PCI 4000.0000 + 1 GB -> PA 0) (`b57521b`) |

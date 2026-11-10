@@ -212,6 +212,16 @@ tb_sio: obj_tb_sio/Vsio82378
 
 .PHONY: tb_sio
 
+# the TOY CMOS kept with the NVRAM image and the OSD Console modes (rtl/sio/isa_rtc.v,
+# rtl/mister/nvsave.v; verilator/tb/tb_cmos.cpp)
+obj_tb_cmos/Vtb_cmos_top: tb/tb_cmos_top.v $(RTL)/sio/isa_rtc.v $(RTL)/mister/nvsave.v tb/tb_cmos.cpp
+	$(TB_V) --top-module tb_cmos_top -Wno-BLKSEQ --Mdir obj_tb_cmos $^
+
+tb_cmos: obj_tb_cmos/Vtb_cmos_top
+	obj_tb_cmos/Vtb_cmos_top
+
+.PHONY: tb_cmos
+
 # the 8259 pair alone (rtl/sio/isa_pic.v; verilator/tb/tb_isa_pic.cpp): the cascade's corner cases
 obj_tb_isa_pic/Visa_pic: $(RTL)/sio/isa_pic.v tb/tb_isa_pic.cpp
 	$(TB_V) --top-module isa_pic -Wno-BLKSEQ -Wno-PINCONNECTEMPTY --Mdir obj_tb_isa_pic $^

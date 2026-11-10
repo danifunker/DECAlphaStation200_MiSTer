@@ -215,7 +215,8 @@ as in TI Table 8-4. The beep itself is 8254 counter 2: port 61h = 03h, 43h = B6h
 7. **After POST** (flash loader, 0x43e3c):
    - Read **CMOS byte 3Fh**: 1 means boot the **ARC** console (flash offset 80000h), anything else
      means **SRM** (offset 0).
-   - So the TOY's CMOS also selects the console (SRM's `os_type`). See the gaps.
+   - So the TOY's CMOS also selects the console (SRM's `os_type`). The OSD's Console (NVRAM file,
+     SRM, ARC) decides what 3Fh reads: the kept byte, 0 or 1 (`console_mode`).
 
 The 8259s, PIRQ routing and IACK are not touched by the DROM: they are SRM's and the OSes'.
 
@@ -261,9 +262,10 @@ core uses V1.7.
    !other_claim`, `pirq_n = {~scsi_irq, 1, 1, 1}` (PIRQ3 = 53C810), `intr/nmi/toy_irq/kbrst` on
    `irq_h[2..5]`, and the SIO's `dm_*` port on the DMA arbiter. These files belong to another
    session.
-2. **CMOS is not persistent**: its contents survive a core reset, but not a core load. Byte 3Fh
-   (SRM/ARC console) therefore falls back to SRM on every load. This needs a save path (like
-   `IBMRS6K7248_nvsave`) or an OSD console option that presets 3Fh at reset.
+2. ~~CMOS is not persistent~~ (2026-11-10): the CMOS (00h-7Fh) is kept in block 16 of the NVRAM
+   image (an 8,704-byte file; `rtl/mister/nvsave.v` through `isa_rtc`'s `cm_*` port, saved 2 s
+   after a guest write). OSD Console = NVRAM file (the default) reads 3Fh as kept; SRM and ARC
+   override the read only (and the ARC year mapping), the guest's writes still go to the file.
 3. **TOY epoch**: the MiSTer's two-digit year goes in as is. Which year base SRM, ARC/NT and the
    OSes assume (1900/2000 vs ARC's 1980) has not been checked. `year_ovr` gives the OSD full
    control.

@@ -126,7 +126,12 @@ module as200_sys #(
     input  wire [64:0] rtc,
     input  wire        year_ovr_en,
     input  wire  [6:0] year_ovr,
-    input  wire        console_arc,     // OSD: boot the ARC console (TOY CMOS 3Fh = 1)
+    input  wire  [1:0] console_mode,    // OSD Console: 0 NVRAM file, 1 SRM, 2 ARC (TOY CMOS 3Fh, rtl/sio/isa_rtc.v)
+    input  wire  [6:0] cm_addr,         // the TOY CMOS's save port (rtl/mister/nvsave.v)
+    input  wire        cm_we,
+    input  wire  [7:0] cm_wdata,
+    output wire  [7:0] cm_rdata,
+    output wire        cm_dirty,
     output wire        speaker,
     // audio (signed 16-bit, a new pair each aud_tgl toggle, 48 kHz)
     output wire [15:0] aud_l,
@@ -384,7 +389,8 @@ module as200_sys #(
         .com2_txd(com2_txd), .com2_rxd(com2_rxd), .com2_rts_n(), .com2_dtr_n(),
         .com2_cts_n(1'b0), .com2_dsr_n(1'b0), .com2_ri_n(1'b1), .com2_dcd_n(1'b0),
         .ps2_key(ps2_key), .ps2_mouse(ps2_mouse), .rtc(rtc),
-        .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_arc(console_arc), .lpt_data(),
+        .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_mode(console_mode),
+        .cm_addr(cm_addr), .cm_we(cm_we), .cm_wdata(cm_wdata), .cm_rdata(cm_rdata), .cm_dirty(cm_dirty), .lpt_data(),
         .fd_mounted(fd_mounted), .fd_readonly(fd_readonly), .fd_size(fd_size),
         .fd_lba(fd_lba), .fd_blk_cnt(fd_blk_cnt), .fd_rd(fd_rd), .fd_wr(fd_wr), .fd_ack(fd_ack),
         .fd_buff_addr(sd_buff_addr), .fd_buff_dout(sd_buff_dout), .fd_buff_wr(sd_buff_wr),

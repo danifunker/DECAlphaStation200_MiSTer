@@ -118,7 +118,12 @@ module sio82378 #(
     input  wire [64:0] rtc,
     input  wire        year_ovr_en,
     input  wire  [6:0] year_ovr,
-    input  wire        console_arc,     // the TOY's CMOS 3Fh at reset (rtl/sio/isa_rtc.v)
+    input  wire  [1:0] console_mode,    // OSD Console: 0 NVRAM file, 1 SRM, 2 ARC (rtl/sio/isa_rtc.v)
+    input  wire  [6:0] cm_addr,         // the TOY CMOS's save port (rtl/mister/nvsave.v)
+    input  wire        cm_we,
+    input  wire  [7:0] cm_wdata,
+    output wire  [7:0] cm_rdata,
+    output wire        cm_dirty,
 
     // the floppy drive A:'s image: hps_io block device slot 3 (rtl/sio/isa_fdc_img.v)
     input  wire        fd_mounted,      // img_mounted[3]
@@ -409,7 +414,8 @@ module sio82378 #(
         .clk(clk), .rst(rst),
         .io_addr(a), .io_rd(io_rd && s_rtc), .io_wr(io_wr && s_rtc), .io_din(io_din), .io_dout(q_rtc),
         .irq(toy_int),
-        .rtc(rtc), .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_arc(console_arc)
+        .rtc(rtc), .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_mode(console_mode),
+        .cm_addr(cm_addr), .cm_we(cm_we), .cm_wdata(cm_wdata), .cm_rdata(cm_rdata), .cm_dirty(cm_dirty)
     );
 
     isa_superio #(.CLK_HZ(CLK_HZ), .FD_SPEED(FD_SPEED)) superio (
