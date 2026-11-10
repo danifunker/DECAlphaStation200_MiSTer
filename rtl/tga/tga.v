@@ -467,7 +467,7 @@ module tga #(
                 8'h0C: begin mode <= c_d[15:0]; copy_flag <= 1'b0; end
                 8'h0D: rop <= c_d[11:0];
                 8'h0E: pshift <= c_d[3:0];
-                8'h0F: gadr <= c_d;
+                8'h0F: begin gadr <= c_d; l_a <= c_d[20:0]; end           // 03C: the engine's address too (a continue starts there)
                 8'h14: deep <= c_d;
                 8'h15: if (m_fill) begin fill_start(gadr[20:0], {1'b0, c_d[10:0]} + 12'd1); est <= E_GEN; end
                 8'h17: begin pxm <= c_d; os_v <= 1'b0; end

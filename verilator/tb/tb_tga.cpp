@@ -472,11 +472,20 @@ int main(int argc, char **argv) {
                 reg_wr(0x3C, a); set_data(pat0);
                 reg_wr(0x120 + 4 * oct, (uint32_t)dy << 16 | dx);
                 seglen = first;
-            } else {
+            } else if (i & 4) {
                 reg_wr(0x100 + 4 * oct, (uint32_t)dy << 16 | dx);          // set up, no drawing
                 int len = first; if (len == 16) len = 0;
                 reg_wr(0x48, (uint32_t)((e << 15) & 0xFFFF8000) | len);     // GB3R: the same error and length
                 fb_wr(a & ~3u, (a & 3) << 16 | pat0);                        // draws from a
+                seglen = first;
+            } else {
+                // as Tru64's X server: the slope-no-go register, THEN the address register, GB3R,
+                // and the first segment by a continue (no frame buffer write)
+                reg_wr(0x100 + 4 * oct, (uint32_t)dy << 16 | dx);
+                reg_wr(0x3C, a);
+                int len = first; if (len == 16) len = 0;
+                reg_wr(0x48, (uint32_t)((e << 15) & 0xFFFF8000) | len);
+                reg_wr(0x4C, pat0);
                 seglen = first;
             }
             while (drawn < total) {

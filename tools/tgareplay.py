@@ -157,7 +157,7 @@ for ln, line in enumerate(lines):
         elif off == 0x30: st['mode'] = d & 0xFFFF; copy_flag = False
         elif off == 0x34: st['rop'] = d & 0xFFF
         elif off == 0x38: st['pshift'] = d & 0xF
-        elif off == 0x3C: st['gadr'] = d
+        elif off == 0x3C: st['gadr'] = d; st['la'] = d & 0x1FFFFF   # the engine's address (a continue starts here)
         elif off == 0x9C: st['lw'] = d & 0xFFFF
         elif off == 0x48:
             e = d >> 15; st['le'] = e - 0x20000 if e & 0x10000 else e; st['llen'] = d & 15
