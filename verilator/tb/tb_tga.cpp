@@ -437,32 +437,55 @@ int main(int argc, char **argv) {
     reg_wr(0x38, 0);
     wait_idle(); compare("COPY64 with pixel shift (NT)");
 
-    // lines (modes 02/06) as NT's tga.dll draws them: width 09C, address 03C, pattern 080,
-    // slope register 120 + 4 octant = |dy|<<16 | |dx| (draws <= 16 pixels), continue 04C
+    // lines (modes 02/06), the 21030's Bresenham engine (manual 6.2.12). The reference below is the
+    // manual's set-up and step: the error in half units, errinc per octant (X), a slope write draws
+    // (major + cap ends) mod 16 pixels (0 = 16), each continue 16 more. Two mechanisms are driven:
+    // NT's (a slope register 120 + 4 octant = |dy|<<16 | |dx| draws; address 03C, pattern 080,
+    // continue 04C) and Tru64 X's (a slope-no-go register 100 + 4 octant sets up, GB3R 048 sets the
+    // length and the initial error, a frame buffer write in the line mode draws from its address
+    // with data<17:16> the address's low bits and data<15:0> the mask, continues 04C)
     {
         const uint32_t W = 640, base = 0x60000;
         reg_wr(0x9C, W);
-        for (int i = 0; i < 48; i++) {
+        for (int i = 0; i < 96; i++) {
+            bool std = i >= 48;                     // the frame buffer write mechanism
             int mode = i & 1 ? 0x06 : 0x02;
+            int cap = (i & 2) ? 1 : 0;              // GMOR<15>: the last pixel drawn by a slope write
             set_fg(rng()); set_bg(rng()); set_rop(i % 5 == 4 ? 6 : 3);
             int oct = rng() % 8;
-            int maj = 1 + rng() % 60, mnr = i < 16 ? 0 : rng() % (maj + 1);
+            int maj = 1 + rng() % 60, mnr = i % 16 < 8 ? 0 : rng() % (maj + 1);
             int dx = oct & 4 ? maj : mnr, dy = oct & 4 ? mnr : maj;
             uint32_t a = base + (100 + rng() % 200) * W + 100 + rng() % 400;
             uint32_t pat0 = i % 3 ? 0xFFFF : rng() & 0xFFFF;
-            set_mode(mode); reg_wr(0x3C, a); set_data(pat0);
-            reg_wr(0x120 + 4 * oct, (uint32_t)dy << 16 | dx);
-            // the reference: e = 2 minor - major; step major, and minor when e > 0
-            int e = 2 * mnr - maj, left = maj; uint32_t p = a, pat = pat0; int seg = 0;
-            while (left > 0) {
-                if (seg == 16) { pat = rng() & 0xFFFF; if (i % 3) pat = 0xFFFF; reg_wr(0x4C, pat); seg = 0; }
+            // the manual's set-up (X environment: GMOR<13> clear)
+            bool xmaj = oct & 4, majp = xmaj ? (oct & 2) : (oct & 1), minp = xmaj ? (oct & 1) : (oct & 2);
+            int errinc = xmaj ? ((oct & 1) ? 1 : 0) : ((oct & 2) ? 0 : 1);
+            int ai1 = (xmaj ? 1 : (int)W) * (majp ? 1 : -1);
+            int ai2 = (xmaj ? (int)W : 1) * (minp ? 1 : -1) + ai1;
+            int e = (2 * mnr - maj - 1 + errinc) >> 1;      // arithmetic shift
+            int ei1 = mnr, ei2 = maj - mnr;
+            int total = maj + cap;                      // pixels the software wants drawn
+            int first = (maj + cap) & 15; if (first == 0) first = 16;
+            set_mode(mode | cap << 15);
+            uint32_t p = a, pat = pat0; int drawn = 0, seg = 0, seglen = 0;
+            if (!std) {
+                reg_wr(0x3C, a); set_data(pat0);
+                reg_wr(0x120 + 4 * oct, (uint32_t)dy << 16 | dx);
+                seglen = first;
+            } else {
+                reg_wr(0x100 + 4 * oct, (uint32_t)dy << 16 | dx);          // set up, no drawing
+                int len = first; if (len == 16) len = 0;
+                reg_wr(0x48, (uint32_t)((e << 15) & 0xFFFF8000) | len);     // GB3R: the same error and length
+                fb_wr(a & ~3u, (a & 3) << 16 | pat0);                        // draws from a
+                seglen = first;
+            }
+            while (drawn < total) {
+                if (seg == seglen) { pat = rng() & 0xFFFF; if (i % 3) pat = 0xFFFF; reg_wr(0x4C, pat); seg = 0; seglen = 16; }
                 int bit = pat >> seg & 1;
                 if (mode == 0x02) put(p, bit ? fgb(p) : bgb(p), true);
                 else if (bit) put(p, fgb(p), true);
-                int sx = oct & 2 ? 1 : -1; int sy = oct & 1 ? (int)W : -(int)W;
-                if (e > 0) { p += sx + sy; e += 2 * mnr - 2 * maj; }
-                else { p += oct & 4 ? sx : sy; e += 2 * mnr; }
-                left--; seg++;
+                if (e < 0) { p += ai1; e += ei1; } else { p += ai2; e -= ei2; }
+                drawn++; seg++;
             }
             wait_idle();
         }

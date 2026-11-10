@@ -346,20 +346,41 @@ module tga #(
     // transparent is mode bit 2 (21030: 05 transparent stipple, 25 transparent fill, as 0D/2D block;
     // Linux tgafb's values, and what NT's tga.dll draws its text with); 03/23 are kept as the same
     wire        m_fill = m8 == 8'h2D || m8 == 8'h21 || m8 == 8'h23 || m8 == 8'h25;
-    // lines (02 opaque, 06 transparent): a write to slope register 100-11C (set up) or 120-13C (set
-    // up and draw) starts a Bresenham line at the address register 03C. Octant = register<2:0>:
-    // <2> x major, <1> +x, <0> +y; the value is |dy|<<16 | |dx|, the length max(|dx|,|dy|) pixels
-    // (the end point not drawn). Each draw takes up to 16 pixels from a pattern (bit i = pixel i):
-    // the data register 080 for the first, the value written to 04C (continue) for the next ones.
-    // Line width (the y step) is 09C. Worked out from NT 4.0 tga.dll's register stream.
+    // lines (02 opaque, 06 transparent): the 21030's Bresenham engine (manual 4.4.10-4.4.13, 6.2.12).
+    // A write to a slope register 120-13C sets the engine up from |dy|<<16 | |dx| and the octant
+    // (register<2:0>: <2> x major, <1> +x, <0> +y) and draws (major + cap ends GMOR<15>) mod 16 pixels
+    // from the address register 03C with the data register 080 as the mask (bit i = pixel i); a
+    // slope-no-go register 100-11C only sets it up. A frame buffer write in a line mode draws Length
+    // pixels from its address (data<17:16> the address's low bits, data<15:0> the mask); the continue
+    // register 04C draws the next Length pixels with its data as the mask. Length is GB3R<3:0> (048,
+    // 0 = 16, also sets the initial error <31:15>), set by the slope writes and 0 after a segment. The
+    // error is in the manual's unit (half the classic one): a step is along the major axis alone while
+    // the error is negative, else along both. NT's tga.dll uses the slope registers; Tru64's X server
+    // the slope-no-go registers, GB3R and frame buffer writes (until 2026-11-09 those writes were taken
+    // as simple writes, which left 2-3 garbage pixels at every segment start: CDE's stale lines).
     wire        m_line = m8 == 8'h02 || m8 == 8'h06;
     reg  [20:0] l_a;
-    reg  [12:0] l_w;
-    reg  signed [17:0] l_e, l_i1, l_i2;     // error, its increments (minor step / no minor step)
-    reg  [15:0] l_left, l_pat;
-    reg   [4:0] l_seg;
-    reg   [2:0] l_oct;
+    reg  [12:0] l_w;                        // 09C: the bitmap width (the y step)
+    reg  signed [17:0] l_e, l_ei1, l_ei2;   // error, error increments 1 (major step) and 2 (major and minor)
+    reg  signed [20:0] l_ai1, l_ai2;        // address increments 1 and 2
+    reg  [15:0] l_pat;
+    reg   [4:0] l_seg;                      // pixels left in the segment being drawn
+    reg   [3:0] l_len;                      // Length (0 = 16)
     reg         l_tr;
+    // the set-up from a slope (c_idx 48-4F) or slope-no-go (40-47) write: c_d = |dy|<<16 | |dx|
+    wire        ls_xmaj = c_idx[2];
+    wire [15:0] ls_dmaj = ls_xmaj ? c_d[15:0] : c_d[31:16];
+    wire [15:0] ls_dmin = ls_xmaj ? c_d[31:16] : c_d[15:0];
+    wire        ls_majp = ls_xmaj ? c_idx[1] : c_idx[0];        // the major axis steps +
+    wire        ls_minp = ls_xmaj ? c_idx[0] : c_idx[1];
+    wire        ls_errinc = mode[13] ? ls_majp : (ls_xmaj ? c_idx[0] : !c_idx[1]);   // Win32 / X
+    wire signed [20:0] ls_amaj = ls_xmaj ? 21'sd1 : $signed({8'd0, l_w});
+    wire signed [20:0] ls_amin = ls_xmaj ? $signed({8'd0, l_w}) : 21'sd1;
+    wire signed [20:0] ls_ai1 = ls_majp ? ls_amaj : -ls_amaj;
+    wire signed [20:0] ls_ai2 = (ls_minp ? ls_amin : -ls_amin) + ls_ai1;
+    wire signed [17:0] ls_e0 = ($signed({1'b0, ls_dmin, 1'b0}) - $signed({2'b0, ls_dmaj}) - 18'sd1 + $signed({17'd0, ls_errinc})) >>> 1;
+    wire  [3:0] ls_len = ls_dmaj[3:0] + {3'd0, mode[15]};
+    wire  [4:0] l_len16 = l_len == 4'd0 ? 5'd16 : {1'b0, l_len};
 
     // source reads
     reg  [17:0] sr_q;
@@ -459,30 +480,20 @@ module tga #(
                 8'h1F: begin sisr_st <= sisr_st & ~c_d[4:0]; sisr_en <= c_d[20:16]; end
                 8'h20: datar <= c_d;
                 8'h27: l_w <= c_d[12:0];
-                8'h13: if (l_left != 16'd0) begin                 // 04C: continue the line
-                    l_pat <= c_d[15:0]; l_seg <= l_left > 16'd16 ? 5'd16 : l_left[4:0]; est <= E_LINE;
+                8'h12: begin l_e <= $signed(c_d[31:15]); l_len <= c_d[3:0]; end   // 048: GB3R, initial error and Length
+                8'h13: begin                                                      // 04C: continue the line
+                    l_pat <= c_d[15:0]; l_seg <= l_len16; est <= E_LINE;
                 end
                 8'h40, 8'h41, 8'h42, 8'h43, 8'h44, 8'h45, 8'h46, 8'h47,
                 8'h48, 8'h49, 8'h4A, 8'h4B, 8'h4C, 8'h4D, 8'h4E, 8'h4F: if (m_line) begin
-                    l_oct <= c_idx[2:0]; l_a <= gadr[20:0]; l_tr <= m8[2];
-                    // major/minor from the octant: e = 2 minor - major
-                    if (c_idx[2]) begin
-                        l_left <= c_d[15:0];
-                        l_e  <= $signed({1'b0, c_d[31:16], 1'b0}) - $signed({2'b0, c_d[15:0]});
-                        l_i1 <= $signed({1'b0, c_d[31:16], 1'b0}) - $signed({1'b0, c_d[15:0], 1'b0});
-                        l_i2 <= $signed({1'b0, c_d[31:16], 1'b0});
-                    end else begin
-                        l_left <= c_d[31:16];
-                        l_e  <= $signed({1'b0, c_d[15:0], 1'b0}) - $signed({2'b0, c_d[31:16]});
-                        l_i1 <= $signed({1'b0, c_d[15:0], 1'b0}) - $signed({1'b0, c_d[31:16], 1'b0});
-                        l_i2 <= $signed({1'b0, c_d[15:0], 1'b0});
-                    end
+                    // slope-no-go (set up) and slope (set up and draw) registers: the manual's set-up
+                    l_a <= gadr[20:0]; l_tr <= m8[2];
+                    l_e <= ls_e0; l_ei1 <= $signed({2'b0, ls_dmin}); l_ei2 <= $signed({2'b0, ls_dmaj}) - $signed({2'b0, ls_dmin});
+                    l_ai1 <= ls_ai1; l_ai2 <= ls_ai2; l_len <= ls_len;
                     if (c_idx[3]) begin
-                        l_pat <= datar[15:0];
-                        l_seg <= (c_idx[2] ? c_d[15:0] : c_d[31:16]) > 16'd16 ? 5'd16 :
-                                 (c_idx[2] ? c_d[4:0] : c_d[20:16]);
+                        l_pat <= datar[15:0]; l_seg <= ls_len == 4'd0 ? 5'd16 : {1'b0, ls_len};
                         est <= E_LINE;
-                    end else l_seg <= 5'd0;
+                    end
                 end
                 8'h26: gdbr <= c_d;
                 8'h30: epsr <= c_d;
@@ -525,6 +536,12 @@ module tga #(
                     // fill: data<10:0> + 1 pixels from the longword (+ data<17:16>)
                     fill_start({c_off[20:2], 2'b00} + {19'd0, c_d[17:16]}, {1'b0, c_d[10:0]} + 12'd1);
                     est <= E_GEN;
+                end
+                8'h02, 8'h06: begin
+                    // a line segment of Length pixels from this address (data<17:16> its low bits),
+                    // data<15:0> the mask, with the Bresenham engine as set up (manual 6.2.12)
+                    l_tr <= m8[2]; l_a <= {c_off[20:2], c_d[17:16]}; l_pat <= c_d[15:0];
+                    l_seg <= l_len16; est <= E_LINE;
                 end
                 8'h07: if (!copy_flag) begin
                     // copy, source: 32 bytes from the longword less the pixel shift (as COPY64:
@@ -603,10 +620,10 @@ module tga #(
             end
         end
         // ---------------------------------------------------- lines: a pixel at a time
-        E_LINE: if (l_seg == 5'd0 || l_left == 16'd0) begin
-            g_rl <= 1'b0; est <= E_IDLE;
+        E_LINE: if (l_seg == 5'd0) begin
+            g_rl <= 1'b0; l_len <= 4'd0; est <= E_IDLE;           // Length counted down to 0: the next segment is 16
         end else begin
-            l_pat <= l_pat >> 1; l_seg <= l_seg - 5'd1; l_left <= l_left - 16'd1;
+            l_pat <= l_pat >> 1; l_seg <= l_seg - 5'd1;
             if (l_pat[0] || !l_tr) begin
                 g_q <= l_a[20:3]; g_n <= 10'd1; g_first <= 1'b1;
                 g_bef <= 8'h01 << l_a[2:0]; g_bel <= 8'hFF;
@@ -615,14 +632,9 @@ module tga #(
                 g_ret <= 1'b0; g_rl <= 1'b1; g_m1 <= 1'b0; g_fs <= 3'd0;
                 est <= E_GEN;
             end
-            // step: always the major axis, the minor one when the error is positive
-            if (l_e > 0) begin
-                l_e <= l_e + l_i1;
-                l_a <= l_a + (l_oct[1] ? 21'd1 : -21'd1) + (l_oct[0] ? {8'd0, l_w} : -{8'd0, l_w});
-            end else begin
-                l_e <= l_e + l_i2;
-                l_a <= l_a + (l_oct[2] ? (l_oct[1] ? 21'd1 : -21'd1) : (l_oct[0] ? {8'd0, l_w} : -{8'd0, l_w}));
-            end
+            // the Bresenham step (manual 6.2.12): the error negative, the major axis alone; else both
+            if (l_e < 0) begin l_e <= l_e + l_ei1; l_a <= l_a + l_ai1; end
+            else begin l_e <= l_e - l_ei2; l_a <= l_a + l_ai2; end
         end
         E_PRDW: if (vr_rvalid) begin
             vr_req <= 1'b1; vr_we <= 1'b1; vr_be <= p_be;
@@ -736,7 +748,7 @@ module tga #(
             deep <= 32'd0; ccbr <= 32'd0; vhcr <= 32'd0; vvcr <= 32'd0; vvbr <= 9'd0; vvvr <= 32'd0;
             cxyr <= 32'd0; sisr_st <= 5'd0; sisr_en <= 5'd0; datar <= 32'hFFFFFFFF; gdbr <= 32'd0;
             epsr <= 32'd0; gadr <= 32'd0; c64s <= 32'd0; c64d <= 32'd0; bc0 <= 32'd0; bc1 <= 32'd0;
-            g_rl <= 1'b0; l_left <= 16'd0; l_seg <= 5'd0; l_w <= 13'd1024; pv_v <= 1'b0;
+            g_rl <= 1'b0; l_len <= 4'd0; l_seg <= 5'd0; l_w <= 13'd1024; pv_v <= 1'b0;
         end
     end
 

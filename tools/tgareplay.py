@@ -32,7 +32,8 @@ for s in a.who:
     who.add(B + y * W + x)
 
 st = dict(mode=0, rop=3, pshift=0, pm=0xFFFFFFFF, pxm=0xFFFFFFFF, os=False, fg=0, bg=0,
-          c64s=[0] * 4, datar=0, gadr=0, bc0=0, bc1=0)
+          c64s=[0] * 4, datar=0, gadr=0, bc0=0, bc1=0,
+          lw=1024, le=0, lei1=0, lei2=0, lai1=0, lai2=0, llen=0, la=0)   # the Bresenham engine (21030 6.2.12)
 copy_flag = False
 cp_src = None          # copy mode: the source's first byte
 prev = None            # the shifter's residue: (nominal start, length, bytes)
@@ -80,6 +81,42 @@ def write_px(addr, val, line, rop=True):
     nwrites += 1
 
 
+def line_setup(idx, d):
+    """a slope (idx 8-15) or slope-no-go (0-7) register write: the manual's set-up (6.2.12.1)"""
+    oct = idx & 7; xmaj = bool(oct & 4)
+    dx = d & 0xFFFF; dy = d >> 16 & 0xFFFF
+    dmaj, dmin = (dx, dy) if xmaj else (dy, dx)
+    majp = bool(oct & 2) if xmaj else bool(oct & 1)
+    minp = bool(oct & 1) if xmaj else bool(oct & 2)
+    mode = st['mode']
+    errinc = (1 if majp else 0) if mode & 0x2000 else ((1 if oct & 1 else 0) if xmaj else (0 if oct & 2 else 1))
+    amaj = 1 if xmaj else st['lw']; amin = st['lw'] if xmaj else 1
+    st['lai1'] = amaj if majp else -amaj
+    st['lai2'] = (amin if minp else -amin) + st['lai1']
+    st['le'] = (2 * dmin - dmaj - 1 + errinc) >> 1
+    st['lei1'] = dmin; st['lei2'] = dmaj - dmin
+    st['llen'] = (dmaj + (1 if mode & 0x8000 else 0)) & 15
+    st['la'] = st['gadr'] & 0x1FFFFF
+
+
+def line_draw(pat, ln):
+    """draw Length pixels (0 = 16) from the engine's address with the 16-bit mask pat"""
+    n = st['llen'] or 16
+    mode = st['mode'] & 0xFF
+    for i in range(n):
+        p = st['la'] & 0x1FFFFF
+        bit = pat >> i & 1
+        if bit:
+            write_px(p, st['fg'] >> (8 * (p & 3)) & 0xFF, ln)
+        elif mode == 0x02:
+            write_px(p, st['bg'] >> (8 * (p & 3)) & 0xFF, ln)
+        if st['le'] < 0:
+            st['la'] += st['lai1']; st['le'] += st['lei1']
+        else:
+            st['la'] += st['lai2']; st['le'] -= st['lei2']
+    st['llen'] = 0
+
+
 def src_read(ns, length, shift):
     """the source bytes a copy block at nominal [ns, ns+length) takes with the pixel shift:
     byte k comes from ns - shift + k; bytes outside the nominal block come from the previous
@@ -121,6 +158,13 @@ for ln, line in enumerate(lines):
         elif off == 0x34: st['rop'] = d & 0xFFF
         elif off == 0x38: st['pshift'] = d & 0xF
         elif off == 0x3C: st['gadr'] = d
+        elif off == 0x9C: st['lw'] = d & 0xFFFF
+        elif off == 0x48:
+            e = d >> 15; st['le'] = e - 0x20000 if e & 0x10000 else e; st['llen'] = d & 15
+        elif off == 0x4C and st['mode'] & 0xFF in (0x02, 0x06): line_draw(d & 0xFFFF, ln)
+        elif 0x100 <= off < 0x140 and st['mode'] & 0xFF in (0x02, 0x06):
+            line_setup((off - 0x100) >> 2, d)
+            if off >= 0x120: line_draw(st['datar'] & 0xFFFF, ln)
         elif off == 0x5C: st['pxm'] = d; st['os'] = False
         elif off == 0x80: st['datar'] = d
         elif off == 0x140: st['bc0'] = d
@@ -157,6 +201,14 @@ for ln, line in enumerate(lines):
                 write_px(base + i, st['fg'] >> (8 * ((base + i) & 3)) & 0xFF, ln)
             elif mode == 0x01:
                 write_px(base + i, st['bg'] >> (8 * ((base + i) & 3)) & 0xFF, ln)
+    elif mode == 0x0D:
+        # block stipple: 32 pixels from the longword, set bits get block colour 0/1 (pixel & 7), no rop
+        base = off & ~3
+        for i in range(32):
+            if not (m >> i & 1) or not (d >> i & 1):
+                continue
+            p = base + i
+            write_px(p, (st['bc1'] if p & 4 else st['bc0']) >> (8 * (p & 3)) & 0xFF, ln, rop=False)
     elif mode in (0x2D, 0x21, 0x25, 0x23):
         p0 = (off & ~3) + (d >> 16 & 3); n = (d & 0x7FF) + 1
         stip = st['datar']
@@ -195,7 +247,8 @@ for ln, line in enumerate(lines):
                     write_px(blk + k, cp_src[k], ln); px.add(blk + k)
             copy_ops.append((blk - cp_from + sh(), px))
     elif mode in (0x02, 0x06):
-        pass
+        # a line segment from this address (data<17:16> its low bits), data<15:0> the mask
+        st['la'] = (off & ~3) | (d >> 16 & 3); line_draw(d & 0xFFFF, ln)
     else:
         # simple
         for k in range(4):
