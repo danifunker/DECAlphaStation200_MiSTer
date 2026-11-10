@@ -195,17 +195,18 @@ for ln, line in enumerate(lines):
     if mode in (0x01, 0x05, 0x03):
         base = off & ~3
         for i in range(32):
-            if not (m >> i & 1):
+            if mode == 0x01 and not (m >> i & 1):   # the pixel mask: opaque stipple only (4.4.21)
                 continue
             if d >> i & 1:
                 write_px(base + i, st['fg'] >> (8 * ((base + i) & 3)) & 0xFF, ln)
             elif mode == 0x01:
                 write_px(base + i, st['bg'] >> (8 * ((base + i) & 3)) & 0xFF, ln)
     elif mode == 0x0D:
-        # block stipple: 32 pixels from the longword, set bits get block colour 0/1 (pixel & 7), no rop
+        # block stipple: 32 pixels from the longword, set bits get block colour 0/1 (pixel & 7), no rop,
+        # no pixel mask
         base = off & ~3
         for i in range(32):
-            if not (m >> i & 1) or not (d >> i & 1):
+            if not (d >> i & 1):
                 continue
             p = base + i
             write_px(p, (st['bc1'] if p & 4 else st['bc0']) >> (8 * (p & 3)) & 0xFF, ln, rop=False)

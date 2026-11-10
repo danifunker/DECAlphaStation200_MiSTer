@@ -523,11 +523,14 @@ module tga #(
                 g_first <= 1'b1; g_rot <= 1'b0; g_ret <= 1'b0; g_m1 <= 1'b0; g_fs <= 3'd0;
                 case (m8)
                 8'h01, 8'h03, 8'h05, 8'h0D: begin
-                    // stipple: 32 pixels from the longword, bit i = pixel i
+                    // stipple: 32 pixels from the longword, bit i = pixel i. The pixel mask applies to
+                    // the opaque stipple only (4.4.21: opaque stipple, simple and simple-Z; 6.2.4 "the
+                    // Pixel Mask is not specified" for the transparent one): NT 4.0 leaves 05C = 4
+                    // after its caret and draws its status bar text in mode 05 through it
                     g_q <= c_off[20:3]; g_n <= c_off[2] ? 10'd5 : 10'd4;
                     g_bef <= 8'hFF; g_bel <= 8'hFF;
                     g_st <= {8'd0, c_d} << {c_off[2], 2'b00};
-                    g_pw <= {8'd0, pxm} << {c_off[2], 2'b00};
+                    g_pw <= {8'd0, m8 == 8'h01 ? pxm : 32'hFFFFFFFF} << {c_off[2], 2'b00};
                     g_use_pw <= 1'b1; g_use_st <= m8 != 8'h01; g_rop_en <= m8 != 8'h0D;
                     g_dsel <= m8 == 8'h01 ? D_OPQ : m8 == 8'h0D ? D_BC : D_FG;
                     est <= E_GEN;

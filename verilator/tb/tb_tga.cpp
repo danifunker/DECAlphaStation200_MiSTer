@@ -227,7 +227,7 @@ static void ref_fill(uint32_t p0, int n, int mode) {
 static void ref_stip(uint32_t o, uint32_t m, int mode) {
     uint32_t p0 = o & ~3u;
     for (int i = 0; i < 32; i++) {
-        if (!(r_pxm >> i & 1)) continue;
+        if (mode == 0x01 && !(r_pxm >> i & 1)) continue;   // the pixel mask: opaque stipple only (4.4.21)
         uint32_t p = p0 + i; bool bit = m >> i & 1;
         if (mode == 0x01) put(p, bit ? fgb(p) : bgb(p), true);
         else if (mode == 0x03 || mode == 0x05) { if (bit) put(p, fgb(p), true); }
@@ -377,6 +377,17 @@ int main(int argc, char **argv) {
     // text (transparent stipple) after the same
     set_mode(0x05); set_fg(0x0F0F0F0F); set_pxm(0x00000001); set_pxm_os(0xFFFFFFFF);
     for (int l = 0; l < 4; l++) { uint32_t m = rng(); fb_wr(0x3C400 + 1028 * l, m); ref_stip(0x3C400 + 1028 * l, m, 0x05); }
+    // NT's caret leaves the persistent mask 4 (05C) and then draws its status bar text with
+    // transparent stipples and block stipples with no mask write in between: the pixel mask is
+    // an opaque-stipple / simple-mode parameter only (4.4.21, 6.2.4), so they draw every pixel
+    // (2026-11-09: glyph fragments in Notepad++'s status bar after every caret move)
+    set_pxm(0x00000004);
+    for (int l = 0; l < 6; l++) { uint32_t m = rng(); fb_wr(0x3D000 + 800 * l, m); ref_stip(0x3D000 + 800 * l, m, 0x05); }
+    set_mode(0x0D); set_bc(0x3A3A3A3A, 0x5C5C5C5C);
+    for (int l = 0; l < 6; l++) { uint32_t m = rng(); fb_wr(0x3D100 + 800 * l, m); ref_stip(0x3D100 + 800 * l, m, 0x0D); }
+    set_mode(0x01);      // the opaque stipple is masked
+    for (int l = 0; l < 6; l++) { uint32_t m = rng(); fb_wr(0x3D200 + 800 * l, m); ref_stip(0x3D200 + 800 * l, m, 0x01); }
+    set_pxm(0xFFFFFFFF);
     set_mode(0); wait_idle();
     CHECK(reg_rd(0x5C) == 0xFFFFFFFF && reg_rd(0x2C) == 0xFFFFFFFF, "GPXR after the one-shot: %08x %08x", reg_rd(0x5C), reg_rd(0x2C));
     CHECK(reg_rd(0x30) >> 23 & 1, "GMOR<23> GPXR state: persistent");
