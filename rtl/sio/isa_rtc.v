@@ -49,7 +49,8 @@ module isa_rtc #(
     input  wire  [1:0] console_mode,
     // CMOS 17h is SRM's console variable (1 graphics, 0 serial; `set console` writes it, found in
     // simulation). OSD SRM console: 0 Graphics and 1 Serial override what 17h reads, 2 NVRAM file =
-    // the value kept with the image; the guest's writes are kept either way, as with 3Fh.
+    // the value kept with the image; the guest's writes are kept either way, as with 3Fh (SRM
+    // writes 17h back at every start, so the image follows an override after one boot).
     input  wire  [1:0] srm_con_mode,
     // the CMOS's save port (rtl/mister/nvsave.v): 3Fh and 17h here are the kept values, not the overrides
     input  wire  [6:0] cm_addr,

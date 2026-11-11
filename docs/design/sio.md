@@ -270,7 +270,8 @@ core uses V1.7.
    after a guest write). OSD Console = NVRAM file (the default) reads 3Fh as kept; SRM and ARC
    override the read only (and the ARC year mapping), the guest's writes still go to the file.
    OSD SRM console (2026-11-11) does the same for 17h: Graphics (the default) and Serial override
-   what 17h reads at reset, NVRAM file reads it as `set console` left it in the image.
+   what 17h reads at reset, NVRAM file reads it as `set console` left it in the image. SRM writes
+   17h back at every start (board, `_20261111a`), so the image follows an override after one boot.
 3. **TOY epoch**: the MiSTer's two-digit year goes in as is. Which year base SRM, ARC/NT and the
    OSes assume (1900/2000 vs ARC's 1980) has not been checked. `year_ovr` gives the OSD full
    control.
