@@ -5,7 +5,10 @@
 //   - a guest write of 3Fh (a firmware console switch) is saved 2 s later into block 16 with the
 //     marker, the NVRAM blocks unchanged, and an override never ends up in the file;
 //   - an 8 KB image is read and saved as 16 blocks (no CMOS, 3Fh reads 0: SRM);
-//   - a padded image (block 16 all zeros) loads no CMOS but gets one at the next save.
+//   - a padded image (block 16 all zeros) loads no CMOS but gets one at the next save;
+//   - 17h (SRM's console variable, 1 graphics, 0 serial) under the OSD SRM console (0 Graphics,
+//     1 Serial, 2 NVRAM file): reads the override in 0 and 1, the kept value in 2; `set console`
+//     under an override is kept and saved, the override never reaches the file.
 // hps_io is played here: a request is acknowledged, then each byte k of the transfer has
 // sd_buff_addr = k; on a read (file to core) sd_buff_dout/sd_buff_wr carry it, on a write (core
 // to file) sd_buff_din is taken after the clock edge that presented the address (the NVRAM's
@@ -56,7 +59,8 @@ static int save_wait() {   // let the 2 s quiet time pass and serve the save
     for (int i = 0; i < 3000; i++) { tick(); if (t->sd_wr) return serve(); }
     return 0;
 }
-static void reset(int mode) { t->console_mode = mode; t->rst = 1; wait(3); t->rst = 0; wait(3); }
+static int srm = 2;   // the OSD SRM console for the next reset (2 NVRAM file: 17h as kept)
+static void reset(int mode) { t->console_mode = mode; t->srm_con_mode = srm; t->rst = 1; wait(3); t->rst = 0; wait(3); }
 static bool marker_at(int o) { return file[o] == 'C' && file[o + 1] == 'M' && file[o + 2] == 'O' && file[o + 3] == 'S'; }
 
 int main(int argc, char **argv) {
@@ -117,6 +121,27 @@ int main(int argc, char **argv) {
     cmos_w(0x3F, 0x01); CHECK(save_wait() == 2, "saved");
     CHECK(marker_at(8192) && file[8192 + 128 + 0x3F] == 0x01, "padded image gets the marker and 3Fh 1");
     CHECK(file[100] == 0x22, "NVRAM of the padded image kept");
+
+    // SRM's console variable, 17h: an image that keeps 17h = 1 (graphics), 3Fh = 0
+    file.assign(8704, 0); for (int i = 0; i < 8192; i++) file[i] = 0x33;
+    file[8192] = 'C'; file[8193] = 'M'; file[8194] = 'O'; file[8195] = 'S'; file[8192 + 128 + 0x17] = 0x01;
+    srm = 2; delete t; t = new Vtb_cmos_top; reset(0); mount();
+    CHECK(cmos(0x17) == 0x01, "SRM console NVRAM file: 17h from the image = 1 (graphics), got %02x", cmos(0x17));
+    srm = 1; reset(0); CHECK(cmos(0x17) == 0x00, "SRM console Serial: 17h reads 0, got %02x", cmos(0x17));
+    srm = 0; reset(0); CHECK(cmos(0x17) == 0x01, "SRM console Graphics: 17h reads 1, got %02x", cmos(0x17));
+    CHECK(save_wait() == 0, "an SRM console override alone saves nothing");
+    // `set console serial` under the Graphics override: kept and saved, still reads 1
+    cmos_w(0x17, 0x00);
+    CHECK(cmos(0x17) == 0x01, "Graphics override still reads 1 after a guest 0");
+    CHECK(save_wait() == 2, "the guest's 17h write is saved");
+    CHECK(file[8192 + 128 + 0x17] == 0x00, "the file keeps the guest's 0, not the override, got %02x", file[8192 + 128 + 0x17]);
+    srm = 2; reset(0); CHECK(cmos(0x17) == 0x00, "NVRAM file again: 17h reads the kept 0, got %02x", cmos(0x17));
+    // an 8 KB image: nothing kept, 17h 0 (serial) in NVRAM file mode, the Graphics default reads 1
+    file.assign(8192, 0x44);
+    srm = 2; delete t; t = new Vtb_cmos_top; reset(0); mount();
+    CHECK(cmos(0x17) == 0x00, "8 KB image, NVRAM file: 17h 0 (serial)");
+    srm = 0; reset(0); CHECK(cmos(0x17) == 0x01, "8 KB image, Graphics: 17h 1");
+    CHECK(cmos(0x3F) == 0x00 && cmos(0x16) == 0x00 && cmos(0x18) == 0x00, "the neighbours of 17h unaffected");
 
     printf("tb_cmos: %d checks, %d failures\n", checks, fails);
     delete t;

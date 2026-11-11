@@ -47,7 +47,11 @@ module isa_rtc #(
     // 0 NVRAM file = the value kept with the NVRAM image (rtl/mister/nvsave.v block 16), so those
     // switches stick per file; 1 SRM and 2 ARC override what 3Fh reads, the kept value unchanged.
     input  wire  [1:0] console_mode,
-    // the CMOS's save port (rtl/mister/nvsave.v): 3Fh here is the kept value, not the override
+    // CMOS 17h is SRM's console variable (1 graphics, 0 serial; `set console` writes it, found in
+    // simulation). OSD SRM console: 0 Graphics and 1 Serial override what 17h reads, 2 NVRAM file =
+    // the value kept with the image; the guest's writes are kept either way, as with 3Fh.
+    input  wire  [1:0] srm_con_mode,
+    // the CMOS's save port (rtl/mister/nvsave.v): 3Fh and 17h here are the kept values, not the overrides
     input  wire  [6:0] cm_addr,
     input  wire        cm_we,
     input  wire  [7:0] cm_wdata,
@@ -81,6 +85,8 @@ module isa_rtc #(
 
     // 3Fh as the guest reads it: the kept value, or the OSD's override
     wire [7:0] eff3f = console_mode == 2'd1 ? 8'h00 : console_mode == 2'd2 ? 8'h01 : nv3f;
+    // 17h as the guest reads it: the OSD's override, or the kept value
+    wire [7:0] eff17 = srm_con_mode == 2'd0 ? 8'h01 : srm_con_mode == 2'd1 ? 8'h00 : cram[7'h17];
 
     wire bin = reg_b[2];
     wire h24 = reg_b[1];
@@ -190,6 +196,7 @@ module isa_rtc #(
         7'h0B: rd71 = reg_b;
         7'h0C: rd71 = {irq, flags[2], flags[1], flags[0], 4'd0};
         7'h0D: rd71 = 8'h80;                                    // VRT: the battery is good
+        7'h17: rd71 = eff17;
         7'h3F: rd71 = eff3f;
         default: rd71 = cram[index];
         endcase

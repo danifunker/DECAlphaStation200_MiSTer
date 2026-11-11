@@ -248,7 +248,10 @@ core uses V1.7.
   - The model answers all of this. `tb_sio` checks the self test, the interface test, the keyboard
     reset, the set 3 selection and query, and keys in set 3.
 - **TOY**: the OS clock interrupt is the periodic interrupt on CPU IRQ4. CMOS 3Fh is the console
-  selection.
+  selection. CMOS 17h is SRM's `console` variable: 01 graphics, 00 serial (found 2026-11-11 by
+  watching the CMOS in the system simulator while SRM ran `set console graphics` and `set console
+  serial`; no other byte changes, so no checksum covers it). The flash NVRAM's environment has no
+  `console` entry.
 - **8259 + IACK**: SRM's PALcode and the OSes read the vector through the 21071's
   interrupt-acknowledge space (1.B000.0000, PC64 guide 4.1.5), so `pt_cmd == 3`. PIRQ routing
   (60h-63h) is programmed by the console and the OSes (Linux `sys_sio.c`).
@@ -266,6 +269,8 @@ core uses V1.7.
    image (an 8,704-byte file; `rtl/mister/nvsave.v` through `isa_rtc`'s `cm_*` port, saved 2 s
    after a guest write). OSD Console = NVRAM file (the default) reads 3Fh as kept; SRM and ARC
    override the read only (and the ARC year mapping), the guest's writes still go to the file.
+   OSD SRM console (2026-11-11) does the same for 17h: Graphics (the default) and Serial override
+   what 17h reads at reset, NVRAM file reads it as `set console` left it in the image.
 3. **TOY epoch**: the MiSTer's two-digit year goes in as is. Which year base SRM, ARC/NT and the
    OSes assume (1900/2000 vs ARC's 1980) has not been checked. `year_ovr` gives the OSD full
    control.

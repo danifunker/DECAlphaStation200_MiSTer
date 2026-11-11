@@ -6,6 +6,7 @@ module tb_cmos_top (
     input  wire        clk,
     input  wire        rst,
     input  wire  [1:0] console_mode,
+    input  wire  [1:0] srm_con_mode,
 
     // the guest's TOY ports
     input  wire [15:0] io_addr,
@@ -54,7 +55,7 @@ module tb_cmos_top (
         .clk(clk), .rst(rst),
         .io_addr(io_addr), .io_rd(io_rd), .io_wr(io_wr), .io_din(io_din), .io_dout(io_dout),
         .irq(),
-        .rtc(65'd0), .year_ovr_en(1'b0), .year_ovr(7'd0), .console_mode(console_mode),
+        .rtc(65'd0), .year_ovr_en(1'b0), .year_ovr(7'd0), .console_mode(console_mode), .srm_con_mode(srm_con_mode),
         .cm_addr(cm_addr), .cm_we(cm_we), .cm_wdata(cm_wdata), .cm_rdata(cm_rdata), .cm_dirty(cm_dirty)
     );
 

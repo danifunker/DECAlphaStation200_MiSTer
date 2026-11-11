@@ -19,6 +19,8 @@
 //                      2 ms of machine time, starting --type-at cycles in
 //                      (default: at once); more --type options queue up
 //     --arc            the OSD Console = ARC (overrides TOY CMOS 3Fh; default: SRM)
+//     --srm-console N  the OSD SRM console: 0 Graphics, 1 Serial (override TOY CMOS 17h),
+//                      2 NVRAM file (default: the CMOS as loaded, 0 = serial without --nvram's CMOS)
 //     --flash-wp       J6 flash write disabled (the flashROMs ignore writes)
 //     --nvram FILE     load the 8 KB flashbus NVRAM (the board's AS200.nvr) at the start
 //     --cd-ua          pulse cd_change at the start (the CD's Unit Attention, as after the board's mount)
@@ -89,6 +91,7 @@ int main(int argc, char **argv) {
     std::string ckpt = "../scratch/sys.ckpt", restore, typed;
     uint64_t type_at = 0, key_at = 0, vram_every = 0;
     bool arc = false, flash_wp = false, cd_ua = false;
+    int srm_con = 2;
     uint64_t save_every = 0;
     std::string keys, vram_file = "../scratch/vram.bin", nvram_file;
     std::vector<uint8_t> img[3];
@@ -118,6 +121,7 @@ int main(int argc, char **argv) {
         }
         else if (a == "--type-at") type_at = strtoull(next(), 0, 0);
         else if (a == "--arc") arc = true;
+        else if (a == "--srm-console") srm_con = atoi(next());
         else if (a == "--flash-wp") flash_wp = true;
         else if (a == "--cd-ua") cd_ua = true;
         else if (a == "--nvram") nvram_file = next();
@@ -168,7 +172,7 @@ int main(int argc, char **argv) {
     t->sd_ack = 0; t->sd_buff_wr = 0; t->cd_change = 0;
     t->nvb_addr = 0; t->nvb_we = 0; t->nvb_wdata = 0;
     int sd_slot = -1, sd_dir = 0, sd_pos = 0, sd_len = 0; uint32_t sd_lba_q = 0;
-    t->ps2_key = 0; t->ps2_mouse = 0; t->console_mode = arc ? 2 : 1; t->cm_addr = 0; t->cm_we = 0; t->cm_wdata = 0; t->flash_wp = flash_wp; t->halt = 0;
+    t->ps2_key = 0; t->ps2_mouse = 0; t->console_mode = arc ? 2 : 1; t->srm_con_mode = srm_con; t->cm_addr = 0; t->cm_we = 0; t->cm_wdata = 0; t->flash_wp = flash_wp; t->halt = 0;
     t->fd_mounted = 0; t->fd_readonly = 0; t->fd_size = 0; t->fd_ack = 0;
     t->vr_ack = 0; t->vr_rvalid = 0; t->vr_rdata = 0; t->sc_ack = 0; t->sc_rvalid = 0; t->sc_rdata = 0; t->clk_pix = 0;
     t->enet_mac = 0x08002BA50200ull; t->enet_link_up = 1; t->nb_ack = 0; t->nb_rdata = 0; t->year_ovr_en = 0; t->year_ovr = 0;

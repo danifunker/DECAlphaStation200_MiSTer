@@ -127,6 +127,7 @@ module as200_sys #(
     input  wire        year_ovr_en,
     input  wire  [6:0] year_ovr,
     input  wire  [1:0] console_mode,    // OSD Console: 0 NVRAM file, 1 SRM, 2 ARC (TOY CMOS 3Fh, rtl/sio/isa_rtc.v)
+    input  wire  [1:0] srm_con_mode,    // OSD SRM console: 0 Graphics, 1 Serial, 2 NVRAM file (TOY CMOS 17h)
     input  wire  [6:0] cm_addr,         // the TOY CMOS's save port (rtl/mister/nvsave.v)
     input  wire        cm_we,
     input  wire  [7:0] cm_wdata,
@@ -389,7 +390,7 @@ module as200_sys #(
         .com2_txd(com2_txd), .com2_rxd(com2_rxd), .com2_rts_n(), .com2_dtr_n(),
         .com2_cts_n(1'b0), .com2_dsr_n(1'b0), .com2_ri_n(1'b1), .com2_dcd_n(1'b0),
         .ps2_key(ps2_key), .ps2_mouse(ps2_mouse), .rtc(rtc),
-        .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_mode(console_mode),
+        .year_ovr_en(year_ovr_en), .year_ovr(year_ovr), .console_mode(console_mode), .srm_con_mode(srm_con_mode),
         .cm_addr(cm_addr), .cm_we(cm_we), .cm_wdata(cm_wdata), .cm_rdata(cm_rdata), .cm_dirty(cm_dirty), .lpt_data(),
         .fd_mounted(fd_mounted), .fd_readonly(fd_readonly), .fd_size(fd_size),
         .fd_lba(fd_lba), .fd_blk_cnt(fd_blk_cnt), .fd_rd(fd_rd), .fd_wr(fd_wr), .fd_ack(fd_ack),
