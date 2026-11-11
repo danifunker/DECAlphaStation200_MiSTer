@@ -77,6 +77,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | Parallel port EPP/ECP, interrupt | open | P4 | |
 | ISA memory cycles, 16-bit I/O cycles, port 92h, IRQ13 | open | P4 | sio.md 5 |
 | ~~Keyboard into both COM1 and the 8242 with Display = Serial console~~ | **done 2026-11-09** (`e83766b`: a keystroke reaches the 8242 only while the TGA is the picture, COM1 otherwise; this was the SRM P0 boot failure, OS table) | P4 | OpenVMS 6.2 (2026-11-08): each keystroke also lands on the 8242, which VMS runs as terminal `_OPA2:` (type unknown), so every typed line logs a 'Local interactive login failure ... %LOGIN-F-CMDINPUT' there; SRM's `scancode 0xfa/0xaa not supported on PCXAL` is probably the same path. Route the PS/2 keyboard to COM1 only while the console is serial? |
+| OpenVMS 8.4 on the TGA console: `ERROR: scancode 0x8c not supported on PCXAL` | open (found 2026-11-11) | P3 | Printed twice while the user typed a SYSTEM password at the 8.4 graphics console login (OPA0 via the 8242, `_20261111a` on .143); that login failed. 0x8c is not a set-3 code the model sends for a plain letter/digit, so some key (or the break/ACK sequence) reaches VMS's PCXAL driver as a byte it rejects, and the key is lost. Same family as the SRM `0xfa/0xaa not supported on PCXAL` lines (OpenVMS row). Not yet reproduced key by key |
 
 ## Flashbus (`rtl/mister/fbrom.v`)
 
