@@ -82,8 +82,8 @@ D-fills (37 %: 30 cycles a line).
 Tests: `make -C verilator wbstress` (`tests/cpu/wb_stress.py`: 3500 random STQ/STL/LDQ over 64 KB
 with the generator's own copy of the memory as the reference; six seeds, each with instant memory,
 the board's latencies and two random-delay runs), `tb_sdram` (random line writes with random masks
-against a reference), `tb_apecs`, `t3-fpld`, `t3-rwc`, `t3-prefetch`, and the system simulation
-into SRM.
+against a reference), `tb_apecs`, `t3-fpld`, `t3-rwc`, `t3-prefetch`. Not run: the T0 suites (`cputest-pipe`, they
+need the alpha cross compiler, which the Windows machine's WSL does not have).
 
 ## 4. Next, by the numbers
 

@@ -61,7 +61,9 @@ being written in W the same cycle gets the old value from the RAM, so W is a for
   FLUSH_IC/FLUSH_IC_ASM and loaded from the SROM at reset (cpu.md 1.4).
 - **D-cache**: 8 KB direct-mapped, 32-byte lines, write-through, read-allocate (the 21064's),
   invalidated by DMA (the 21071's dInvReq), D-cache enable in ABOX_CTL.
-- **Write buffer**: 4 entries of 32 bytes with longword masks and merging (the 21064's).
+- **Write buffer**: 4 entries of 32 bytes with byte masks and merging (the 21064's number); an
+  entry leaves as one line write (`mem_wmask`, `mem_wline`), I/O writes as single quadwords in
+  program order (`cpu-perf.md` section 3).
 - **Board cache** (the 21064's external "Bcache"; the AS200 has 512 KB): a BRAM-backed L2 between
   the BIU and the 21071 model, size set by the BRAM budget (128-256 KB), because SDRAM latency at
   100 MHz is ~10 cycles a miss. Invisible to software except through BIU_CTL diagnostics.
