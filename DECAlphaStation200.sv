@@ -106,9 +106,11 @@ localparam CONF_STR = {
 	"P5O[13],J6 flash write,Enabled,Disabled;",
 	"P5O[15:14],TOY year,From RTC,1999;",
 	"P5O[24],CPU state line,Off,On;",
+`ifndef AS200_NODEBUG
 	"P5O[28:27],Serial port,COM1,TGA trace,CPU trace,CPU exceptions;",
 	"P5O[26],Video debug,Off,On;",
 	"P5O[25],TGA trace throttle,Off,On;",
+`endif
 	"P5-;",
 	"P5SC4,NVR,NVRAM image;",
 
@@ -323,8 +325,9 @@ wire       aud_tgl;
 
 wire        d_req, d_we, d_ack, d_line;
 wire [26:3] d_addr;
-wire  [7:0] d_be;
-wire [63:0] d_wdata, d_rdata;
+wire [31:0] d_be;
+wire [255:0] d_wdata;
+wire [63:0] d_rdata;
 wire        f_req, f_we, f_ack;
 wire [20:0] f_addr;
 wire  [7:0] f_wdata, f_rdata;
@@ -357,7 +360,17 @@ wire [31:0] tdbg_rd;
 wire [319:0] tdbg_st;
 wire        com1_txd, trace_txd, trace_full;
 wire [31:0] uart_speed;
+// AS200_NODEBUG (a VERILOG_MACRO in the QSF) builds the core without the UART traces
+// (dbg_trace) and the video debug overlay (dbg_overlay) and without their OSD lines: about
+// 1000 LUTs and 33 M10Ks back for the CPU work. The CPU state line stays.
+`ifdef AS200_NODEBUG
+assign UART_TXD = com1_txd;
+assign trace_txd = 1'b1;
+assign trace_full = 1'b0;
+wire [1:0] dbg_sel = 2'd0;
+`else
 // the MiSTer UART: COM1, or the TGA trace (OSD P5 Serial port)
+wire [1:0] dbg_sel = status[28:27];
 assign UART_TXD = status[28:27] != 2'd0 ? trace_txd : com1_txd;
 dbg_trace #(.CLK_HZ(100000000)) dbg_trace
 (
@@ -366,12 +379,13 @@ dbg_trace #(.CLK_HZ(100000000)) dbg_trace
 	.psw(dbg_psw), .psv(dbg_psv),
 	.ent(dbg_ent), .ent_xpc(dbg_exc_addr[31:0]), .ent_off(dbg_ent_off), .ent_pc(dbg_ent_off == 14'h01E0 ? dbg_ent_ir : dbg_exc_addr[31:0]),   // D_FAULT: the instruction
 	.rt(dbg_retire), .rt_pal(dbg_pal), .rt_pc(dbg_pc), .rt_wr(dbg_rwr), .rt_num(dbg_rnum), .rt_val(dbg_rval[31:0]), .rt_mwr(dbg_mwr), .rt_mval(dbg_mval[31:0]),
-	.mw(d_req && d_ack), .mw_we(d_we), .mw_addr(d_addr), .mw_be(d_be), .mw_data(d_wdata), .mw_dma(dbg_dm_req),
+	.mw(d_req && d_ack), .mw_we(d_we), .mw_addr(d_addr), .mw_be(d_be[7:0]), .mw_data(d_wdata[63:0]), .mw_dma(dbg_dm_req),
 	.ne(ndbg_stb), .ne_tag(ndbg_tag), .ne_a(ndbg_a), .ne_b(ndbg_b),
 	.ent_va(dbg_ent_off == 14'h0060 ? dbg_ent_ir :                      // an arithmetic trap's line: the instruction, not VA
 	        dbg_ent_off == 14'h01E0 ? {1'b0, dbg_mm_csr, 5'd0, dbg_dtb_pr} : dbg_va[31:0]),   // D_FAULT: MM_CSR, the DTB's protection
 	.txd(trace_txd), .full(trace_full)
 );
+`endif
 wire  [5:0] dbg_irqh;
 as200_sys machine
 (
@@ -444,7 +458,7 @@ as200_sys machine
 	.ndbg_stb(ndbg_stb), .ndbg_tag(ndbg_tag), .ndbg_a(ndbg_a), .ndbg_b(ndbg_b),
 	.dbg_ent(dbg_ent), .dbg_ent_off(dbg_ent_off), .dbg_ent_ir(dbg_ent_ir), .dbg_exc_addr(dbg_exc_addr), .dbg_va(dbg_va), .dbg_mm_csr(dbg_mm_csr), .dbg_dtb_pr(dbg_dtb_pr), .dbg_psw(dbg_psw), .dbg_psv(dbg_psv),
 	.tdbg_rq(tdbg_rq), .tdbg_rw(tdbg_rw), .tdbg_ri(tdbg_ri), .tdbg_rd(tdbg_rd), .tdbg_fw(tdbg_fw), .tdbg_fa(tdbg_fa), .tdbg_fd(tdbg_fd), .tdbg_fbe(tdbg_fbe), .tdbg_mode(tdbg_mode), .tdbg_st(tdbg_st),
-	.tdbg_stall(status[25] && status[28:27] == 2'd1 && trace_full)
+	.tdbg_stall(status[25] && dbg_sel == 2'd1 && trace_full)
 );
 
 // audio into the audio clock (rtl/audio/audio_cdc.v)
@@ -588,6 +602,9 @@ tga_vsel tga_vsel
 wire       sel_hs, sel_vs, sel_de, sel_hb, sel_vb;
 wire [7:0] sel_r, sel_g, sel_b;
 
+`ifdef AS200_NODEBUG
+assign {vid_hs, vid_vs, vid_de, vid_hb, vid_vb, vid_r, vid_g, vid_b} = {sel_hs, sel_vs, sel_de, sel_hb, sel_vb, sel_r, sel_g, sel_b};
+`else
 // the video debug overlay (OSD P5 Video debug): the TGA's drawing state and the CPU's
 reg  [31:0] tdbg_fcnt, tdbg_rcnt, tdbg_ldat;
 reg   [7:0] tdbg_lreg;
@@ -609,6 +626,7 @@ dbg_overlay dbg_overlay
 	.hs_i(sel_hs), .vs_i(sel_vs), .de_i(sel_de), .hb_i(sel_hb), .vb_i(sel_vb), .r_i(sel_r), .g_i(sel_g), .b_i(sel_b),
 	.hs(vid_hs), .vs(vid_vs), .de(vid_de), .hblank(vid_hb), .vblank(vid_vb), .r(vid_r), .g(vid_g), .b(vid_b)
 );
+`endif
 assign CE_PIXEL  = vid_ce;
 assign VGA_HS = vid_hs;
 assign VGA_VS = vid_vs;
