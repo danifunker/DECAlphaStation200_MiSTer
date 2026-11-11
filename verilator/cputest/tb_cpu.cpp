@@ -93,6 +93,7 @@ int main(int argc, char **argv) {
     uint32_t rs = getenv("MEMSEED") ? (uint32_t)atoi(getenv("MEMSEED")) : 1u;
     auto rng = [&rs]() { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; return rs; };
     int mdelay = 0;
+    uint64_t sd_free = 0;
     const bool board = getenv("BOARD") != nullptr;
 #ifdef CPU_PERF
     enum { P_RETIRE, P_SWEEP, P_DFILL, P_DFILL_WB, P_WBFULL, P_DSETTLE, P_MUL, P_FPU, P_HAZ, P_SER, P_IFILL, P_BUBBLE, P_N };
@@ -116,7 +117,20 @@ int main(int argc, char **argv) {
         // memory: answer a request on the cycle after it appears
         c->mem_ack = 0;
         if (board && !c->mem_req) pend = false;
-        if (c->mem_req && !pend) { pend = true; mdelay = board ? (c->mem_we ? 10 : 11) : memdelay ? (int)(rng() % (memdelay + 1)) : 0; }
+        if (c->mem_req && !pend && board) {
+            // apecs + sdram_ctl as the board has them: the SDRAM takes a request when it is free; a
+            // write is acknowledged at once and keeps the SDRAM busy 4 cycles a quadword + 7, a read
+            // gives its first quadword after 11 cycles (line beats 4 apart) and is busy 25 (17: quadword)
+            uint64_t e = cyc + 1 > sd_free ? cyc + 1 : sd_free;
+            int nq = 1;
+#ifdef CPU_PIPE
+            if (c->mem_we && c->mem_line) { nq = 0; for (int k = 0; k < 4; k++) if (c->mem_wmask >> (8 * k) & 0xFF) nq++; }
+#endif
+            pend = true;
+            mdelay = (int)(e - cyc) + (c->mem_we ? 1 : 10);
+            sd_free = e + (c->mem_we ? 4 * nq + 7 : c->mem_line ? 25 : 17);
+        }
+        else if (c->mem_req && !pend) { pend = true; mdelay = memdelay ? (int)(rng() % (memdelay + 1)) : 0; }
         else if (c->mem_req && pend && mdelay > 0) mdelay--;
         else if (c->mem_req && pend) {
             uint64_t a = (uint64_t)c->mem_addr << 3;
@@ -132,13 +146,26 @@ int main(int argc, char **argv) {
             uint64_t q; memcpy(&q, &mem[a], 8);
             if (memlog) fprintf(stderr, "mem %s%s %#" PRIx64 " at %" PRIu64 "\n", c->mem_we ? "W" : "R", c->mem_line ? " line" : "", a, cyc);
             if (c->mem_we) {
-                uint64_t w = c->mem_wdata, m = 0;
-                for (int b = 0; b < 8; b++) if (c->mem_be >> b & 1) m |= 0xFFull << (8 * b);
-                q = (q & ~m) | (w & m);
-                memcpy(&mem[a], &q, 8);
-                if (a == 0x700000) irq = false;
-                if (a == tohost) {
-                    uint64_t r1, r2; memcpy(&r1, &mem[a + 8], 8); memcpy(&r2, &mem[a + 16], 8);
+                // a quadword with mem_be, or (the pipelined core's memory writes) a line with 32 enables
+                uint32_t wm = c->mem_be; bool hit_irq = a == 0x700000, hit_th = a == tohost;
+#ifdef CPU_PIPE
+                if (c->mem_line) {
+                    wm = c->mem_wmask;
+                    for (int b = 0; b < 32; b++)
+                        if (wm >> b & 1) mem[a + b] = (uint8_t)(c->mem_wline[b >> 2] >> (8 * (b & 3)));
+                    hit_irq = (a == (0x700000 & ~31ull)) && (wm >> (0x700000 & 24) & 0xFF);
+                    hit_th = (a == (tohost & ~31ull)) && (wm >> (tohost & 24) & 0xFF);
+                } else
+#endif
+                {
+                    uint64_t w = c->mem_wdata, m = 0;
+                    for (int b = 0; b < 8; b++) if (wm >> b & 1) m |= 0xFFull << (8 * b);
+                    q = (q & ~m) | (w & m);
+                    memcpy(&mem[a], &q, 8);
+                }
+                if (hit_irq) irq = false;
+                if (hit_th) {
+                    uint64_t r1, r2; memcpy(&q, &mem[tohost], 8); memcpy(&r1, &mem[tohost + 8], 8); memcpy(&r2, &mem[tohost + 16], 8);
                     printf("TOHOST %#" PRIx64 " (+8 %#" PRIx64 ", +16 %#" PRIx64 ") after %" PRIu64 " instructions, %" PRIu64 " cycles\n",
                            q, r1, r2, retired, cyc);
                     rc = q == 1 ? 0 : 1;
@@ -148,6 +175,7 @@ int main(int argc, char **argv) {
             c->mem_ack = 1;
             pend = c->mem_line && !c->mem_we && fastline;   // line beats back to back (FASTLINE), as the SDRAM gives them
             if (board && c->mem_line && !c->mem_we) { pend = true; mdelay = 3; }
+            if (board && c->mem_we) pend = true;        // until mem_req falls
 #ifdef CPU_PERF
             if (c->mem_we) n_wr++;
             else if (!c->mem_line) n_unc++;
@@ -158,7 +186,7 @@ int main(int argc, char **argv) {
 #ifdef CPU_PERF
         {
             int k = SIG(isweep) || SIG(dsweep) || SIG(ld_active) ? P_SWEEP :
-                    SIG(m2_need_bus) ? (SIG(wb_v) && SIG(bown) != 1 ? P_DFILL_WB : P_DFILL) :
+                    SIG(m2_need_bus) ? (SIG(wb_ev) && SIG(bown) != 1 ? P_DFILL_WB : P_DFILL) :
                     SIG(m2_need_wb) ? P_WBFULL : SIG(dsettle) ? P_DSETTLE :
                     SIG(x_mul_wait) ? P_MUL : SIG(x_fpu_wait) ? P_FPU :
                     SIG(d_v) && SIG(haz) ? P_HAZ : SIG(d_v) && SIG(ser_wait) ? P_SER :

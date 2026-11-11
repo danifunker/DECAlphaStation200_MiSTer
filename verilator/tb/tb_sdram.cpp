@@ -1,5 +1,5 @@
 // Unit bench for rtl/mister/sdram_ctl.v with verilator/tb/sdram_model.v:
-// random quadword writes (random byte enables) and reads over 128 MB,
+// random line writes (random byte enables) and quadword reads over 128 MB,
 // checked against a C++ copy.
 #include "Vtb_sdram_top.h"
 #include <cstdio>
@@ -20,17 +20,25 @@ int main() {
     for (int i = 0; i < 20000; i++) {
         uint32_t q = (r() % 512) + ((r() % 4) << 21) + (r() & 1 ? (1u << 23) : 0);   // spread over rows, banks, ranks
         bool w = (r() % 3) != 0;
-        uint64_t d = r(); uint8_t be = w ? (uint8_t)(r() | 1) : 0xFF;
-        t.req = 1; t.we = w; t.line = 0; t.addr = q; t.be = be; t.wdata = d;
+        // a write is a line with 32 byte enables: one quadword's (as a single store gives),
+        // or any mix of the four
+        uint64_t d[4] = { r(), r(), r(), r() };
+        uint32_t be = 0xFF;
+        if (w) { be = (r() & 1) ? (uint32_t)(uint8_t)(r() | 1) << 8 * (q & 3) : (uint32_t)r(); }
+        t.req = 1; t.we = w; t.line = 0; t.addr = q; t.be = be;
+        for (int j = 0; j < 4; j++) { t.wdata[2 * j] = (uint32_t)d[j]; t.wdata[2 * j + 1] = (uint32_t)(d[j] >> 32); }
         int k = 0;
         do { tick(); k++; } while (!t.ack && k < 200);
         t.req = 0; tick();
         cycles += k;
         if (!t.ack && k >= 200) { printf("tb_sdram: no ack at %d\n", i); return 1; }
-        uint64_t &m = ref[q];
         if (w) {
-            for (int b = 0; b < 8; b++) if (be >> b & 1) m = (m & ~(0xFFull << 8*b)) | (d & (0xFFull << 8*b));
+            for (int j = 0; j < 4; j++) {
+                uint64_t &m = ref[(q & ~3u) + j];
+                for (int b = 0; b < 8; b++) if (be >> (8 * j + b) & 1) m = (m & ~(0xFFull << 8*b)) | (d[j] & (0xFFull << 8*b));
+            }
         } else {
+            uint64_t m = ref.count(q) ? ref[q] : 0;
             n++;
             if (t.rdata != m && bad++ < 10) printf("q %06x: read %016llx, expected %016llx\n", q,
                 (unsigned long long)t.rdata, (unsigned long long)m);

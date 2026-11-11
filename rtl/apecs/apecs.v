@@ -58,6 +58,8 @@ module apecs (
     input  wire [33:3] c_addr,
     input  wire  [7:0] c_be,
     input  wire [63:0] c_wdata,
+    input  wire [31:0] c_wmask,         // a memory write with c_line: the line at c_addr[33:5] with 32 byte
+    input  wire [255:0] c_wline,        // enables (the CPU's write buffer), not c_be / c_wdata
     output reg         c_ack,
     output reg  [63:0] c_rdata,
 
@@ -66,8 +68,8 @@ module apecs (
     output reg         d_we,
     output reg         d_line,          // a 32-byte line read: 4 quadwords, one d_ack each
     output reg  [26:3] d_addr,
-    output reg   [7:0] d_be,
-    output reg  [63:0] d_wdata,
+    output reg  [31:0] d_be,            // a write is a line (d_addr[26:5]) with 32 byte enables
+    output reg  [255:0] d_wdata,
     input  wire        d_ack,
     input  wire [63:0] d_rdata,
 
@@ -278,13 +280,13 @@ module apecs (
             // ---------------------------------------- DMA first
             if (dmx_miss) begin
                 // read the scatter/gather map entry, then retry the DMA (a TLB hit)
-                d_req <= 1'b1; d_we <= 1'b0; d_addr <= dmx_raw[26:3]; d_be <= 8'hFF; d_line <= 1'b0;
+                d_req <= 1'b1; d_we <= 1'b0; d_addr <= dmx_raw[26:3]; d_be <= 32'hFF; d_line <= 1'b0;
                 sgf_tag <= dm_addr[31:13];
                 st <= S_SGR;
             end else if (dmx[34]) begin
                 d_req <= 1'b1; d_we <= dm_we; d_addr <= dmx[26:3]; d_line <= 1'b0;
-                d_be <= dmx[2] ? {dm_be, 4'd0} : {4'd0, dm_be};
-                d_wdata <= {dm_wdata, dm_wdata};
+                d_be <= {28'd0, dm_be} << {dmx[4:2], 2'b00};
+                d_wdata <= {8{dm_wdata}};
                 dma_lane <= dmx[2];
                 st <= S_DMA;
                 dinv <= dm_we; dinv_idx <= dmx[12:5];
@@ -296,7 +298,8 @@ module apecs (
                 // ---------------------------------------- memory
                 if (bank_hit && isz != 28'd0) begin
                     d_req <= 1'b1; d_we <= c_we; d_addr <= doff[26:3];
-                    d_be <= c_be; d_wdata <= c_wdata;
+                    if (c_line) begin d_be <= c_wmask; d_wdata <= c_wline; end
+                    else begin d_be <= {24'd0, c_be} << {doff[4:3], 3'b000}; d_wdata <= {4{c_wdata}}; end
                     d_line <= c_line && !c_we; d_beats <= 2'd0;
                     st <= S_DRAM;
                 end else begin

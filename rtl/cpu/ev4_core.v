@@ -57,6 +57,8 @@ module ev4_core (
     output reg  [33:3] mem_addr,
     output reg   [7:0] mem_be,
     output reg  [63:0] mem_wdata,
+    output wire [31:0] mem_wmask,       // a write with mem_line: the line at mem_addr[33:5], 32 byte enables
+    output wire [255:0] mem_wline,      // (memory writes always go out this way; I/O writes as quadwords)
     input  wire        mem_ack,
     input  wire [63:0] mem_rdata,
 
@@ -851,11 +853,34 @@ module ev4_core (
     localparam MS_IDLE = 2'd0, MS_WAIT = 2'd1, MS_DONE = 2'd2;
     reg   [1:0] mstate;
     reg  [63:0] m2_ldata;               // data from the bus for this load
-    reg         wb_v; reg [33:3] wb_a; reg [7:0] wb_be; reg [63:0] wb_d;
+    localparam B_NONE = 2'd0, B_DFILL = 2'd1, B_IFILL = 2'd2, B_WB = 2'd3;
+    reg   [1:0] bown;
+    integer wi, wj;
+    // The write buffer: four entries in a ring, each one 32-byte line with byte enables. A memory
+    // store joins the entry of its line, unless that entry is on the bus, and else takes a new one:
+    // the stores of a stack frame or a copy loop leave as one line write. I/O writes never merge:
+    // each is one entry holding its quadword in the low 64 bits, and leaves in program order.
+    reg   [3:0] wb_ev;                  // entry valid
+    reg   [1:0] wb_wp, wb_rp;           // next free entry, oldest entry
+    reg  [33:5] wb_la [0:3];
+    reg   [3:0] wb_io;
+    reg   [1:0] wb_q  [0:3];            // an I/O write's quadword in its line
+    reg  [31:0] wb_m  [0:3];
+    reg [255:0] wb_ld [0:3];
+    wire        wb_any  = |wb_ev;
+    wire        wb_full = &wb_ev;
+    wire        m2_io   = m2_pa[33:32] != 2'd0;
+    wire  [3:0] wb_same = {wb_la[3] == m2_pa[33:5], wb_la[2] == m2_pa[33:5], wb_la[1] == m2_pa[33:5], wb_la[0] == m2_pa[33:5]}
+                          & wb_ev & ~wb_io & ~((bown == B_WB) ? (4'd1 << wb_rp) : 4'd0);
+    wire        wb_join = !m2_io && wb_same != 4'd0;
+    // an I-fill must not read a line the buffer still holds (code copied, then run)
+    wire        wb_ihit = |({wb_la[3] == ifill_line, wb_la[2] == ifill_line, wb_la[1] == ifill_line, wb_la[0] == ifill_line} & wb_ev);
+    assign mem_wmask = wb_m[wb_rp];
+    assign mem_wline = wb_ld[wb_rp];
 
     wire m2_live    = m2_v && m2_exc == E_NONE && !w_redir;
     wire m2_need_bus = m2_live && m2_load && !m2_hit && mstate != MS_DONE;
-    wire m2_need_wb  = m2_live && m2_store && wb_v;     // buffer full (a failing STx_C waits too: timing)
+    wire m2_need_wb  = m2_live && m2_store && wb_full;  // buffer full (a failing STx_C waits too: timing)
     // after a D-fill the line's tag and data land in the RAMs one cycle after the
     // last beat and M1 reads them a cycle later: hold M1 until it has re-read them,
     // or a store behind the load is judged a miss against the old (invalid) tag,
@@ -886,8 +911,6 @@ module ev4_core (
     end
 
     // ================================================================ bus (one transaction at a time)
-    localparam B_NONE = 2'd0, B_DFILL = 2'd1, B_IFILL = 2'd2, B_WB = 2'd3;
-    reg   [1:0] bown;
     reg   [1:0] bbeat;
     reg         bunc;                   // D access is a single uncached quadword
     reg         m2_go;                  // M2's bus need was taken this cycle
@@ -955,7 +978,7 @@ module ev4_core (
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
             fpu_go <= 1'b0; fpu_live <= 1'b0; fpu_fin <= 1'b0; exc_sum_r <= 7'd0; exc_mask <= 64'd0;
-            wb_v <= 1'b0; bown <= B_NONE; mem_req <= 1'b0; dsettle <= 2'd0;
+            wb_ev <= 4'd0; wb_wp <= 2'd0; wb_rp <= 2'd0; bown <= B_NONE; mem_req <= 1'b0; dsettle <= 2'd0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
             // ------------------------------------------------ cache sweeps
@@ -1126,7 +1149,19 @@ module ev4_core (
             // ------------------------------------------------ M2 actions (commit when it advances)
             if (m2_live && !stall_m2) begin
                 if (m2_store && !(m2_stc && !m2_stc_ok)) begin
-                    wb_v <= 1'b1; wb_a <= m2_pa[33:3]; wb_be <= m2_be; wb_d <= m2_wq;
+                    for (wi = 0; wi < 4; wi = wi + 1)
+                        if (wb_join ? wb_same[wi] : wb_wp == wi) begin
+                            if (!wb_join) begin
+                                wb_ev[wi] <= 1'b1; wb_la[wi] <= m2_pa[33:5]; wb_io[wi] <= m2_io; wb_q[wi] <= m2_pa[4:3];
+                                wb_m[wi] <= 32'd0;
+                            end
+                            for (wj = 0; wj < 8; wj = wj + 1)
+                                if (m2_be[wj]) begin
+                                    wb_m[wi][{m2_io ? 2'd0 : m2_pa[4:3], wj[2:0]}] <= 1'b1;
+                                    wb_ld[wi][{m2_io ? 2'd0 : m2_pa[4:3], wj[2:0], 3'd0} +: 8] <= m2_wq[8 * wj +: 8];
+                                end
+                        end
+                    if (!wb_join) wb_wp <= wb_wp + 2'd1;
                     if (m2_hit) begin
                         dc_we <= 1'b1; dc_wa <= m2_pa[12:3]; dc_wd <= m2_wq; dc_wbe <= m2_be;
                         sh0_v <= 1'b1; sh0_a <= m2_pa[33:3]; sh0_d <= m2_wq; sh0_b <= m2_be;
@@ -1291,16 +1326,17 @@ module ev4_core (
             if (dsettle != 2'd0) dsettle <= dsettle - 2'd1;     // (a fill's last beat below sets it again)
             if (bown == B_NONE) begin
                 // D-side (M2) first, after the write buffer; then I-fill; then the buffer
-                if (m2_need_bus && mstate == MS_IDLE && !wb_v) begin
+                if (m2_need_bus && mstate == MS_IDLE && !wb_any) begin
                     bown <= B_DFILL; bbeat <= 2'd0; bunc <= !m2_cachable;
                     mem_req <= 1'b1; mem_we <= 1'b0; mem_istream <= 1'b0; mem_be <= 8'hFF; mem_line <= m2_cachable;
                     mem_addr <= m2_cachable ? {m2_pa[33:5], 2'd0} : m2_pa[33:3];
                     mstate <= MS_WAIT;
                     if (m2_cachable) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_v <= 1'b0; dct_wd <= 21'd0; tagw = 1'b1; end
-                end else if (wb_v && (m2_need_bus || m2_need_wb || fstate != FS_FILL)) begin
+                end else if (wb_any && (m2_need_bus || m2_need_wb || fstate != FS_FILL || ifill_issued || wb_ihit)) begin
                     bown <= B_WB;
-                    mem_req <= 1'b1; mem_we <= 1'b1; mem_istream <= 1'b0; mem_line <= 1'b0;
-                    mem_addr <= wb_a; mem_be <= wb_be; mem_wdata <= wb_d;
+                    mem_req <= 1'b1; mem_we <= 1'b1; mem_istream <= 1'b0; mem_line <= !wb_io[wb_rp];
+                    mem_addr <= {wb_la[wb_rp], wb_io[wb_rp] ? wb_q[wb_rp] : 2'd0};
+                    mem_be <= wb_m[wb_rp][7:0]; mem_wdata <= wb_ld[wb_rp][63:0];
                 end else if (fstate == FS_FILL && !ifill_issued) begin
                     bown <= B_IFILL; bbeat <= 2'd0; ifill_issued <= 1'b1;
                     ict_we <= 1'b1; ict_wa <= ifill_line[12:5]; ict_v <= 1'b0; ict_wd <= 21'd0;
@@ -1309,7 +1345,7 @@ module ev4_core (
                 end
             end else if (mem_ack) begin
                 case (bown)
-                B_WB: begin mem_req <= 1'b0; bown <= B_NONE; wb_v <= 1'b0; end
+                B_WB: begin mem_req <= 1'b0; bown <= B_NONE; wb_ev[wb_rp] <= 1'b0; wb_rp <= wb_rp + 2'd1; end
                 B_IFILL: begin
                     ic_we <= 1'b1; ic_wa <= {ifill_line[12:5], bbeat}; ic_wd <= mem_rdata;
                     if (bbeat == 2'd3) begin

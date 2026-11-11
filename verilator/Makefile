@@ -142,7 +142,19 @@ perf: obj_perf/Vev4_core
 	@mkdir -p $(T0)
 	@for b in $(PERF_BENCH); do 		python3 -I ../tests/cpu/perf_bench.py $$b $(T0)/perf_$$b.bin || exit 1; 		echo "== $$b"; BOARD=1 obj_perf/Vev4_core $(T0)/perf_$$b.bin --max 400000000 || exit 1; 	done
 
-.PHONY: cputest cputest-pipe sromload t3 t3-rwc t3-prefetch perf
+# The write buffer (four line entries that merge) against a model of the memory kept by the
+# generator, tests/cpu/wb_stress.py: instant memory, the board's latencies, random delays
+wbstress: obj_pipe/Vev4_core
+	@mkdir -p $(T0)
+	@for s in 1 2 3 4 5 6; do \
+		python3 -I ../tests/cpu/wb_stress.py $$s $(T0)/wb_stress.bin || exit 1; \
+		obj_pipe/Vev4_core $(T0)/wb_stress.bin --max 20000000 || exit 1; \
+		BOARD=1 obj_pipe/Vev4_core $(T0)/wb_stress.bin --max 20000000 || exit 1; \
+		MEMDELAY=9 MEMSEED=$$s obj_pipe/Vev4_core $(T0)/wb_stress.bin --max 20000000 || exit 1; \
+		IRQRATE=0 MEMDELAY=30 MEMSEED=$$s FASTLINE=1 obj_pipe/Vev4_core $(T0)/wb_stress.bin --max 40000000 || exit 1; \
+	done
+
+.PHONY: cputest cputest-pipe sromload t3 t3-rwc t3-prefetch perf wbstress
 
 # ---------------------------------------------------------------- system simulation
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the

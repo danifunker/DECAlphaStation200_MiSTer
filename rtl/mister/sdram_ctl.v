@@ -1,7 +1,11 @@
 // The MiSTer SDRAM module as the AlphaStation's main memory (CORE_SPEC: 32,
 // 64 or 128 MB), on the 21071 model's DRAM port (rtl/apecs/apecs.v d_*): one
-// 64-bit quadword per request, little-endian (the byte at the lowest address
-// in bits 7:0), byte enables for writes.
+// 64-bit quadword per read request (four for a line read), little-endian (the
+// byte at the lowest address in bits 7:0). A write is a 32-byte line with 32
+// byte enables (the CPU's write buffer merges the stores to a line; rtl/cpu/
+// ev4_core.v): only the quadwords with an enabled byte are written, in one
+// opening of the row, and the request is acknowledged as soon as it is latched
+// (the next request waits for the chip).
 //
 // The chip side follows the user's IBMRS6K7248_sdram.sv (from Sorgelig's
 // MiSTer sdram.sv, hardware-tested at 99 MHz with CAS latency 2): the
@@ -17,8 +21,9 @@
 // Byte offset -> chip (as there): rank off[26], column bit 9 off[25], bank
 // off[24:23], row off[22:10], columns 8-0 off[9:1]. A quadword is four
 // halfwords at columns off[9:3]*4 .. +3: one READ (the burst of 8, sequential
-// from an aligned 4, gives them first) or four single WRITEs. Halfword k of
-// the quadword is bits 16k+15:16k; on the chip DQ[7:0] is the lower address.
+// from an aligned 4, gives them first) or four single WRITEs per quadword.
+// Halfword k of the quadword is bits 16k+15:16k; on the chip DQ[7:0] is the
+// lower address.
 module sdram_ctl #(
     parameter CLK_MHZ = 100
 ) (
@@ -29,9 +34,9 @@ module sdram_ctl #(
     input  wire        req,             // held until ack
     input  wire        we,
     input  wire        line,            // a 32-byte line read: 4 quadwords from addr (line aligned), one ack each
-    input  wire [26:3] addr,
-    input  wire  [7:0] be,
-    input  wire [63:0] wdata,
+    input  wire [26:3] addr,            // a write: the line (addr[4:3] is not used)
+    input  wire [31:0] be,              // a write: byte enables of the line
+    input  wire [255:0] wdata,
     output reg         ack,
     output reg  [63:0] rdata,
 
@@ -78,8 +83,10 @@ module sdram_ctl #(
 
     reg        r_we, r_line;
     reg [26:3] r_a;
-    reg  [7:0] r_be;
-    reg [63:0] r_wd;
+    reg [31:0] r_be;
+    reg [255:0] r_wd;
+    reg  [3:0] r_qv;                    // quadwords of the line still to write
+    wire [1:0] wq = r_qv[0] ? 2'd0 : r_qv[1] ? 2'd1 : r_qv[2] ? 2'd2 : 2'd3;
     reg  [2:0] issued;
     reg  [3:0] beat;                    // halfwords captured (16 for a line)
 
@@ -121,6 +128,8 @@ module sdram_ctl #(
                 chip <= 1'b0; command <= CMD_REFRESH; state <= S_REF;
             end else if (cpu_req) begin
                 r_we <= we; r_line <= line && !we; r_a <= addr; r_be <= be; r_wd <= wdata;
+                r_qv <= {|be[31:24], |be[23:16], |be[15:8], |be[7:0]};
+                if (we) begin ack <= 1'b1; acked <= 1'b1; end   // latched: the requester goes on
                 chip <= addr[26]; SDRAM_BA <= addr[24:23]; SDRAM_A <= addr[22:10];
                 command <= CMD_ACTIVE;
                 state <= S_ACT;
@@ -162,18 +171,18 @@ module sdram_ctl #(
             end
         end
         S_WRITE: begin
-            if (issued < 3'd4) begin : wr
+            if (r_qv != 4'd0) begin : wr
                 reg [1:0] m;
-                m = ~r_be[2*issued[1:0] +: 2];            // {DQMH, DQML}: bytes not enabled
+                m = ~r_be[{wq, issued[1:0], 1'b0} +: 2];  // {DQMH, DQML}: bytes not enabled
                 command <= CMD_WRITE;
                 dq_oe   <= 1'b1;
-                SDRAM_A <= {m, 1'b0, r_a[25], r_a[9:3], issued[1:0]};
+                SDRAM_A <= {m, 1'b0, r_a[25], r_a[9:5], wq, issued[1:0]};
                 dqm     <= m;
-                dq_out  <= r_wd[16*issued[1:0] +: 16];
-                issued  <= issued + 3'd1;
+                dq_out  <= r_wd[{wq, issued[1:0], 4'd0} +: 16];
+                issued  <= {1'b0, issued[1:0] + 2'd1};
+                if (issued[1:0] == 2'd3) r_qv[wq] <= 1'b0;
                 t       <= 16'd0;
             end else if (t == T_WR) begin
-                ack <= 1'b1; acked <= 1'b1;
                 command <= CMD_PRECHARGE; SDRAM_A[10] <= 1'b0; dqm <= 2'b00;
                 t <= 16'd0; state <= S_PRE;
             end

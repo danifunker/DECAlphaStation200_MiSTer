@@ -18,13 +18,12 @@ static void tick() {
     if (t->d_req && !dpend) dpend = true;
     else if (t->d_req && dpend) {
         uint64_t a = (uint64_t)t->d_addr << 3, q;
-        memcpy(&q, &dram[a], 8);
-        if (t->d_we) {
-            uint64_t m = 0;
-            for (int b = 0; b < 8; b++) if (t->d_be >> b & 1) m |= 0xFFull << (8 * b);
-            q = (q & ~m) | (t->d_wdata & m);
-            memcpy(&dram[a], &q, 8);
+        if (t->d_we) {      // a line with 32 byte enables
+            uint64_t la = a & ~31ull;
+            for (int b = 0; b < 32; b++)
+                if (t->d_be >> b & 1) dram[la + b] = (uint8_t)(t->d_wdata[b >> 2] >> (8 * (b & 3)));
         } else dreads++;
+        memcpy(&q, &dram[a], 8);
         t->d_rdata = q; t->d_ack = 1; dpend = false;
     }
     t->clk = 0; t->eval(); t->clk = 1; t->eval();

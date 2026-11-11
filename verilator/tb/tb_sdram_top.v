@@ -7,8 +7,8 @@ module tb_sdram_top (
     input  wire        we,
     input  wire        line,
     input  wire [26:3] addr,
-    input  wire  [7:0] be,
-    input  wire [63:0] wdata,
+    input  wire [31:0] be,
+    input  wire [255:0] wdata,
     output wire        ack,
     output wire [63:0] rdata
 );
