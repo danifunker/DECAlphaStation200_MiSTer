@@ -15,7 +15,7 @@ This file is the authoritative feature set for the core. Change it deliberately 
 | **Main memory** | **OSD option: 32 MB / 64 MB / 128 MB** (default 64 MB) | Bank layout below. 128 MB is the maximum this core supports (the real machine reaches 384 MB) |
 | Flash | 1 MB flashbus image, **default = SRM v7.0-9 + ARC 4.58 as real programmed chips** (archive.org `alpha-station-200-roms`, E13/E19/E33/E46, 2026-11-01): they equal the update-package images byte for byte plus DEC's trailing check bytes, so the check-byte question no longer blocks them | The dumped board's SRM v6.4-1 + ARC 4.49 (`scratch/roms/flash/as200_flash_1MB.bin`) stays as an alternative ROM ARC **4.59** (the last ARC, from Compaq softpaq `fw400v459.zip`, `scratch/roms/flash/arc_v4.59.img`) exists only as an update image: a 4.59 flash option needs its chip check bytes worked out, or a check that nothing reads them |
 | DROM | **V1.7** (`AVANTI_E47_DROM1.7.bin`, 64 KB) | Its speed table knows 100 and 133 MHz (V1.2 stops at 166), and anything below the 133 MHz window is a 4/100: 10000 ps |
-| NVRAM | 8 KB on the flashbus, persisted to SD | Holds console environment variables |
+| NVRAM | 8 KB on the flashbus, persisted to SD | Holds console environment variables. The `.nvr` file (8,704 bytes) also keeps the TOY CMOS (block 16): 3Fh picks the console (ARC/SRM), 17h is SRM's `console` (graphics/serial); OSD Machine > Console and SRM console override them (2026-11-11) |
 | SROM | **The original SROM**: E23, a **Xilinx XC1765D** 64 Kbit serial PROM (PLCC-20; seen on the archive.org board photo). Not dumped anywhere public (searched 2026-11-01). It can be read with a microcontroller clocking CLK with CE active, or a programmer with XC17xx support; the core will load such a bitstream into the I-cache the way the 21064 does. Until one exists: **replacement init code** in the same bitstream format | User, 2026-11-01: bake the original into a file or the core's ROM |
 | PCI-ISA bridge | Intel 82378IB SIO (8259 ×2, 8237 ×2, 8254, NMI, PIRQ routing) | IDSEL AD18 |
 | Super I/O | National PC87332: COM1, COM2, parallel, FDC | |
@@ -49,8 +49,8 @@ TGA2/PowerStorm, S3/VGA cards, more PCI or ISA cards, a second PCI slot device, 
 |---|---|---|
 | SRM console itself | SRM | Over serial first, then TGA |
 | NetBSD/alpha, Linux/alpha | SRM | Open source, so easiest for debugging the core |
-| Digital UNIX 4.0F/4.0G | SRM | Needs correct PCI scatter/gather and IRQ4 timer |
-| OpenVMS 6.2–7.2 | SRM | |
+| Digital UNIX 4.0F/4.0G | SRM | Needs correct PCI scatter/gather and IRQ4 timer. Runs Tru64 4.0G and 5.1B-4 with CDE (2026-11-11) |
+| OpenVMS 6.2–7.2 | SRM | Runs 6.2, 7.3 and 8.4 with DECwindows on the TGA (2026-11-11) |
 | Windows NT 3.51 / 4.0 | ARC 4.49 | TGA driver in the box |
 | Windows 2000 RC1 (2072) | ARC (RC1 asks for the latest firmware, 4.58) | 64–128 MB. Beta 2 checked build for debugging |
 

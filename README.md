@@ -4,16 +4,43 @@ An FPGA core for the MiSTer (DE10-Nano) recreating a **DEC AlphaStation 200 4/10
 21071 "APECS" chipset, a ZLXp-E1 TGA graphics card, NCR 53C810 SCSI, and the 82378 SIO with standard PC peripherals.
 Target OSes: the SRM and ARC consoles, NetBSD/Linux, Digital UNIX 4.0x, OpenVMS, Windows NT 3.51/4.0 and the Windows 2000 RC1 Alpha build.
 
-Status: **initial bring-up.** The MiSTer project (`DECAlphaStation200`), the OSD, COM1 with a bring-up stub in place of the CPU, the
-on-screen serial terminal and a Verilator simulation exist; the 21064 is next. Working notes: `CLAUDE.md`.
+Status (2026-11-11, board build `_20261111a`): **the machine runs its operating systems.** SRM V7.0 and ARC 4.58 come
+up from the real flash images; every installed OS image boots from SCSI, logs in and shuts down:
+
+| OS | Console | Notes |
+|---|---|---|
+| OpenVMS 6.2, 7.3, 8.4 | SRM, TGA | DECwindows Motif (1.2-3, 1.2-6, 1.7) on the TGA; TCP/IP installed. Needs your licence PAKs |
+| Tru64 UNIX 4.0G, 5.1B-4 | SRM, TGA | CDE on the TGA. Runs without PAKs (logs a missing OSF-BASE licence); the C compiler needs OSF-DEV |
+| NetBSD 10.2 | SRM, TGA | Text console. Rejects the TOY clock (`docs/gaps.md`) |
+| FreeBSD 4.6 | SRM, serial | No TGA console driver: set OSD SRM console = Serial |
+| Windows NT 4.0 Workstation, Terminal Server | ARC | |
+| Windows 2000 Server (build 2072) | ARC | Its last shutdown screen is "Writing unsaved data to the disk"; that is normal |
+
+What is missing or known wrong is in `docs/gaps.md`. Working notes: `CLAUDE.md`.
+
+## Using the core
+- **Media (OSD top):** Pri. disk = SCSI ID 0 (`dka0` in SRM), Disk = ID 1, CD-ROM = ID 4 (`dka400`), Floppy, Load ROM.
+  Don't change a disk image while an OS is running.
+- **NVRAM image (Advanced):** an `.nvr` file holds the firmware's settings (SRM's environment, ARC's boot entries) and,
+  at 8,704 bytes, the TOY CMOS as well, so SRM's `set os_type` / `set console` and ARC's console switch survive a core
+  load. `tools/nvr_cmos.py FILE --pad` upgrades an old 8 KB file; `--console srm|arc` and
+  `--srm-console graphics|serial` set the two CMOS bytes directly. `releases/AS200.nvr` is a blank padded file.
+- **Machine > Console:** *NVRAM file* (default) starts the console the NVRAM image asks for; *SRM* and *ARC* force one.
+- **Machine > SRM console:** *Graphics* (default) and *Serial* force SRM's `console` variable; *NVRAM file* uses what
+  `set console` saved. SRM writes its setting back at every start, so after one boot the file follows a forced value.
+- **Video > Display:** which picture the HDMI output shows (the TGA, or COM1 as a text terminal) and where the
+  keyboard types. Switching it is live and does not change the guest's own console setting.
+- Settings marked "Changes pending" take effect at *Apply and reset*.
 
 ## Repository layout
 | Path | Contents |
 |---|---|
 | `DECAlphaStation200.{qpf,qsf,sdc,srf,sv}`, `files.qip` | Quartus project (from Template_MiSTer); `DECAlphaStation200.sv` is the MiSTer `emu` top with the OSD |
 | `sys/` | MiSTer framework, as-is from Template_MiSTer |
-| `rtl/` | The core: `as200.v` (the machine), `sio/` (PC peripherals), `mister/` (board side: terminal, keyboard), `pll*` |
-| `verilator/` | Headless simulation: `make -C verilator smoke` |
+| `rtl/` | The core: `as200_sys.v` (the machine), `cpu/` (the 21064), `apecs/` (21071), `sio/` (82378 and PC peripherals), `scsi/`, `tga/`, `net/` (21040), `audio/`, `mister/` (board side: terminal, keyboard, NVRAM/flash, SDRAM) |
+| `verilator/` | Headless simulation: unit benches (`make -C verilator tb_cmos`, `tb_sio`, ...) and the system model (`verilator/system/tb_sys.cpp`) |
+| `tools/nvr_cmos.py` | Shows or edits an `.nvr` file's TOY CMOS block (console choice, SRM console) |
+| `docs/gaps.md` | What is missing or wrong, and the OS table (what runs, with dates and builds) |
 | `docs/REUSE.md` | What comes from the user's other MiSTer cores (53C810, SIO devices, SDRAM, Main support) |
 | `docs/CORE_SPEC.md` | **The locked hardware configuration** (what the core implements) |
 | `docs/HARDWARE.md` | The real machine: chip list, address map, interrupts, boot flow, memory, video |

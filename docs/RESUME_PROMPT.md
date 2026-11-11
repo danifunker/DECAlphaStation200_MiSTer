@@ -1,5 +1,7 @@
 # Resume prompt (2026-11-01)
 
+> **2026-11-11:** the current state is `CLAUDE.md` (State) and `docs/gaps.md` (the baseline survey row); the board
+> build is `_20261111a` (commit `2516794`: the OSD SRM console option), on .143 and .92 in `_Unstable`.
 > **2026-11-10:** the current state is `CLAUDE.md` (State) and `docs/PLAN_20261109.md` (Status); the board builds are
 > `_20261109i` (commit `f842543`, tag `release-20261110`). Development runs on the Windows machine (WSL for Verilator and
 > ssh, Quartus 17.0 in-tree, one fit at a time); the Linux-box/Mac notes below are history.

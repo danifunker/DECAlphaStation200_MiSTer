@@ -1,5 +1,18 @@
 # Resume prompt: install the operating systems — state on 2026-11-08
 
+> **2026-11-11: the installs are done; this file is history.** Every image below is installed and passed a
+> boot / login / shutdown survey on board build `_20261111a` (`docs/gaps.md`, "Baseline survey 2026-11-11"):
+> OpenVMS 6.2/7.3/8.4 (DECwindows on the TGA, TCP/IP installed, not configured), Tru64 4.0G and 5.1B-4 (CDE),
+> NetBSD 10.2, FreeBSD 4.6 (OSD SRM console = Serial), NT 4.0 WS and TSE, Windows 2000 Server.
+> `WIN2K_2GB.img` is not an installed system (no OS loader on its FAT partition). NVRAM files on .143:
+> `OpenVMS62.nvr` (padded; the three OpenVMS disks), `AS200.nvr` (Tru64, the BSDs, Win2k Server),
+> `WinNT4.nvr` (NT 4.0; its default ARC entry is TSE). Current backups (ZIP, `C:\temp`):
+> `VMS62_2GB_decw_20261111.zip`, `VMS73_2GB_decw_20261111.zip`, `VMS84_4GB_decw_20261111.zip`,
+> `OpenVMS62_nvr_graphics_20261111.zip`, `NVR_143_all_20261111.zip`; Tru64/FreeBSD ZIPs from 2026-11-10.
+> How to drive the guests without a mouse: VMS logs in on COM1 (OSD Display = Serial console; TTB0) for
+> SHUTDOWN; Tru64's CDE login > Options > Session > Failsafe gives an xterm; NT 4.0 TSE shuts down from
+> Ctrl+Alt+Del > Shut Down.
+
 Paste this into a new session (Opus). Read `CLAUDE.md`, then `docs/gaps.md` (the OS table, the TGA and
 SCSI tables, the "SRM boots: the first console open fails" row), then `docs/OPUS_RESUME_PROMPT.md`
 section 1 (the survey plan and the user's rules for images and backups, all still in force).

@@ -121,6 +121,19 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   (`32bbcff`, `f842543`; board builds `_20261109h`, `_20261109i`). The P0 SRM boot failure (keyboard reaching COM1 and
   the 8242 at once), the 8259 cascade and the TGA line engine were fixed the same day (`docs/gaps.md`, `docs/PLAN_20261109.md`).
   `tools/tgareplay.py` + `scratch/tgacap_*.sh` (lossless TGA traces with VRAM dumps) are the way to chase drawing bugs.
+- **2026-11-10/11: the console choice lives in the NVRAM image.** The TOY CMOS (00h-7Fh) is kept in block 16 of an
+  8,704-byte `.nvr` (`rtl/mister/nvsave.v`, marker "CMOS"; an 8 KB file keeps none). CMOS **3Fh** = the console the DROM
+  starts (1 ARC, else SRM): OSD Machine > Console = NVRAM file (default) / SRM / ARC. CMOS **17h** = SRM's `console`
+  variable (01 graphics, 00 serial; found by watching the CMOS in the system simulator): OSD Machine > SRM console =
+  Graphics (default) / Serial / NVRAM file, status 30:29 (`2516794`, board build **`_20261111a`**, -2.062 ns, 37.5k ALMs).
+  Overrides change what the guest reads, never the file; SRM writes 17h back at each start, so the file follows a forced
+  value after one boot. `tools/nvr_cmos.py` pads/sets both; `tb_cmos` (43 checks).
+- **2026-11-11: baseline survey on `_20261111a` (.143, 128 MB):** OpenVMS 6.2/7.3/8.4 (DECwindows on the TGA on all
+  three), Tru64 4.0G and **5.1B-4** (CDE; 5.1B runs fully for the first time), NetBSD 10.2, FreeBSD 4.6 (SRM console
+  Serial), NT 4.0 Workstation and TSE, Windows 2000 Server all boot, log in and shut down (`docs/gaps.md`, the baseline
+  row). Open: NetBSD rejects the TOY ("preposterous TOD clock time") and writes a stale date back; SRM text after a
+  NetBSD halt is garbled. The OpenVMS SYSTEM passwords are the same on all three disks (`scratch/os_credentials.txt`);
+  the Tru64 PAKs are still to be loaded (user). Backups of the OpenVMS disks and NVRAM files are ZIPs in `C:\temp`.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
