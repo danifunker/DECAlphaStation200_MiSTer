@@ -12,6 +12,13 @@
 // Stops when the CPU stores to TOHOST (default PA 0x800000): value 1 = pass
 // (exit 0), anything else is reported and exits 1. --trace writes the retire
 // trace in the alphaemu -T format for diffing against `alphaemu -P -T`.
+//
+// BOARD=1: the memory answers with the MiSTer's latencies (rtl/apecs/apecs.v + rtl/mister/
+// sdram_ctl.v at 100 MHz, counted from the cycle mem_req rises): a quadword write is
+// acknowledged after 12 cycles, a read's first quadword after 13 and a line's next three 4
+// cycles apart (refresh is left out). The plain model answers after 2.
+// CPU_PERF (make perf, a --public-flat-rw build): a cycle breakdown at the end, each cycle
+// without a retirement blamed on the oldest thing holding the pipeline.
 // CPU_TOP selects the core: Vev4_seq (sequential reference) or Vev4_core (pipelined)
 #ifndef CPU_TOP
 #define CPU_TOP Vev4_seq
@@ -20,6 +27,10 @@
 #define STR(x) STR2(x)
 #include STR(CPU_TOP.h)
 #include "verilated.h"
+#ifdef CPU_PERF
+#include "Vev4_core___024root.h"
+#define SIG(n) (c->rootp->ev4_core__DOT__##n)
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -82,6 +93,14 @@ int main(int argc, char **argv) {
     uint32_t rs = getenv("MEMSEED") ? (uint32_t)atoi(getenv("MEMSEED")) : 1u;
     auto rng = [&rs]() { rs ^= rs << 13; rs ^= rs >> 17; rs ^= rs << 5; return rs; };
     int mdelay = 0;
+    const bool board = getenv("BOARD") != nullptr;
+#ifdef CPU_PERF
+    enum { P_RETIRE, P_SWEEP, P_DFILL, P_DFILL_WB, P_WBFULL, P_DSETTLE, P_MUL, P_FPU, P_HAZ, P_SER, P_IFILL, P_BUBBLE, P_N };
+    static const char *pname[P_N] = { "retiring", "cache sweeps", "D-cache fill", "D-fill waits for write buffer",
+        "store waits for write buffer", "settle after D-fill", "multiplier", "FPU", "operand hazard (load-use etc.)",
+        "serialized instruction", "I-cache fill", "bubbles (redirects, other)" };
+    uint64_t pc_[P_N] = {0}, n_xredir = 0, n_wredir = 0, n_wr = 0, n_dfill = 0, n_ifill = 0, n_unc = 0;
+#endif
     // IRQRATE=N (pipelined core): irq_h[0] rises at random, about once every N cycles while
     // low (IRQSEED); a write to PA 0x700000 (rt/t0_pal.h T0_IRQ's handler) drops it
     const int irqrate = getenv("IRQRATE") ? atoi(getenv("IRQRATE")) : 0;
@@ -96,7 +115,8 @@ int main(int argc, char **argv) {
 #endif
         // memory: answer a request on the cycle after it appears
         c->mem_ack = 0;
-        if (c->mem_req && !pend) { pend = true; mdelay = memdelay ? (int)(rng() % (memdelay + 1)) : 0; }
+        if (board && !c->mem_req) pend = false;
+        if (c->mem_req && !pend) { pend = true; mdelay = board ? (c->mem_we ? 10 : 11) : memdelay ? (int)(rng() % (memdelay + 1)) : 0; }
         else if (c->mem_req && pend && mdelay > 0) mdelay--;
         else if (c->mem_req && pend) {
             uint64_t a = (uint64_t)c->mem_addr << 3;
@@ -127,8 +147,29 @@ int main(int argc, char **argv) {
             c->mem_rdata = q;
             c->mem_ack = 1;
             pend = c->mem_line && !c->mem_we && fastline;   // line beats back to back (FASTLINE), as the SDRAM gives them
+            if (board && c->mem_line && !c->mem_we) { pend = true; mdelay = 3; }
+#ifdef CPU_PERF
+            if (c->mem_we) n_wr++;
+            else if (!c->mem_line) n_unc++;
+            else if (SIG(bbeat) == 0) { if (SIG(bown) == 1) n_dfill++; else n_ifill++; }
+#endif
             if (rc != 3) break;     // alphaemu's trace also ends before the TOHOST store
         }
+#ifdef CPU_PERF
+        {
+            int k = SIG(isweep) || SIG(dsweep) || SIG(ld_active) ? P_SWEEP :
+                    SIG(m2_need_bus) ? (SIG(wb_v) && SIG(bown) != 1 ? P_DFILL_WB : P_DFILL) :
+                    SIG(m2_need_wb) ? P_WBFULL : SIG(dsettle) ? P_DSETTLE :
+                    SIG(x_mul_wait) ? P_MUL : SIG(x_fpu_wait) ? P_FPU :
+                    SIG(d_v) && SIG(haz) ? P_HAZ : SIG(d_v) && SIG(ser_wait) ? P_SER :
+                    SIG(fstate) != 0 ? P_IFILL : P_BUBBLE;
+            if (SIG(x_redir)) n_xredir++;
+            if (SIG(w_redir)) n_wredir++;
+            tick(); cyc++;
+            pc_[c->dbg_retire ? P_RETIRE : k]++;
+            goto retired;
+        }
+#endif
         tick();
         cyc++;
     retired:
@@ -146,6 +187,12 @@ int main(int argc, char **argv) {
         }
         if (rc != 3) break;
     }
+#ifdef CPU_PERF
+    printf("%" PRIu64 " cycles, %" PRIu64 " retired: %.3f cycles per instruction\n", cyc, retired, (double)cyc / (retired ? retired : 1));
+    for (int i = 0; i < P_N; i++) if (pc_[i]) printf("  %-34s %10" PRIu64 "  %5.1f%%\n", pname[i], pc_[i], 100.0 * pc_[i] / cyc);
+    printf("  X redirects %" PRIu64 ", W redirects %" PRIu64 ", writes %" PRIu64 ", D-fills %" PRIu64 ", I-fills %" PRIu64 ", uncached reads %" PRIu64 "\n",
+           n_xredir, n_wredir, n_wr, n_dfill, n_ifill, n_unc);
+#endif
     if (irqrate) printf("%" PRIu64 " interrupts raised\n", nirq);
     if (rc == 3) { printf("no TOHOST after %" PRIu64 " cycles (pc %#" PRIx64 ")\n", cyc, (uint64_t)c->dbg_pc); rc = 1; }
     if (tf) fclose(tf);

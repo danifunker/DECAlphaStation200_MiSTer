@@ -131,7 +131,18 @@ t3: obj_pipe/Vev4_core
 	obj_pipe/Vev4_core $(T0)/t3_lock.bin --iosink --trace $(T0)/t3_lock.pipe.trace
 	obj_pipe/Vev4_core $(T0)/t3_intrprio.bin --trace $(T0)/t3_intrprio.pipe.trace
 
-.PHONY: cputest cputest-pipe sromload t3 t3-rwc t3-prefetch
+# The performance bench: the pipelined core with every signal public (cputest/tb_cpu.cpp CPU_PERF
+# reads the stall causes), the memory at the board's latencies (BOARD=1), the microbenchmarks of
+# tests/cpu/perf_bench.py (tools/alphaasm.py). docs/design/cpu-perf.md has the numbers.
+PERF_BENCH = calls memcpy_in memcpy_out branchy loaduse stackmix
+obj_perf/Vev4_core: $(PIPE_RTL) cputest/tb_cpu.cpp
+	$(TB_V) --Mdir obj_perf --top-module ev4_core -Wno-BLKSEQ --public-flat-rw -CFLAGS '-DCPU_TOP=Vev4_core -DCPU_PIPE -DCPU_PERF' $^
+
+perf: obj_perf/Vev4_core
+	@mkdir -p $(T0)
+	@for b in $(PERF_BENCH); do 		python3 -I ../tests/cpu/perf_bench.py $$b $(T0)/perf_$$b.bin || exit 1; 		echo "== $$b"; BOARD=1 obj_perf/Vev4_core $(T0)/perf_$$b.bin --max 400000000 || exit 1; 	done
+
+.PHONY: cputest cputest-pipe sromload t3 t3-rwc t3-prefetch perf
 
 # ---------------------------------------------------------------- system simulation
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the
