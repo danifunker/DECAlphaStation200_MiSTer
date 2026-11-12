@@ -164,7 +164,10 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 - **2026-11-12: XFree86's accelerated `tga` driver** (plan item 5, FreeBSD 5.2.1 only): it draws with the address register 03C
   and the continue register 04C alone; `tga.v` took every 04C as a line continuation. Outside the line modes 04C now does the
   mode's frame buffer operation at 03C (`c18718a` = board build **`_20261112g`**, -1.560 ns, TNS -358, 37.3k ALMs; `tb_tga`
-  section 5b). On both boards' `_Unstable`; X without `Option "NoAccel"` on a board is still to be seen.
+  section 5b). **On .92 X draws with XAA** (xdm, Xfce 4, xterms; x11perf fills 5 to 30 times NoAccel's, text twice), but the
+  engine's copies are 3 to 4 times slower than software ones (`docs/gaps.md`): the 5.2.1 image on .92 runs XAA with
+  `XaaNoScreenToScreenCopy` and `XaaNoOffscreenPixmaps` (`/etc/X11/XF86Config.noaccel`, `.accel`, `.accel2` kept). Its root
+  password is empty (the login still asks: Enter).
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
