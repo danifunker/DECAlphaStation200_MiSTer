@@ -161,6 +161,10 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   (`7002bad` = board build **`_20261112f`**, -2.127 ns, 37.2k ALMs, 505 of 553 M10K). NT ubench On / Off on .143: Dhrystone
   152985 / 131499 lps, Whetstone 52.4 / 49.5 MWIPS. **Dual issue evaluated and not built** (area, timing;
   `docs/design/cpu-perf.md` 7). The NVRAM image's save to the SD card was checked on the board.
+- **2026-11-12: XFree86's accelerated `tga` driver** (plan item 5, FreeBSD 5.2.1 only): it draws with the address register 03C
+  and the continue register 04C alone; `tga.v` took every 04C as a line continuation. Outside the line modes 04C now does the
+  mode's frame buffer operation at 03C (`c18718a` = board build **`_20261112g`**, -1.560 ns, TNS -358, 37.3k ALMs; `tb_tga`
+  section 5b). On both boards' `_Unstable`; X without `Option "NoAccel"` on a board is still to be seen.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
