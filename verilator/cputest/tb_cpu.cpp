@@ -188,7 +188,7 @@ int main(int argc, char **argv) {
             int k = SIG(isweep) || SIG(dsweep) || SIG(ld_active) ? P_SWEEP :
                     SIG(m2_need_bus) ? (SIG(wb_ev) && SIG(bown) != 1 ? P_DFILL_WB : P_DFILL) :
                     SIG(m2_need_wb) ? P_WBFULL : SIG(dsettle) ? P_DSETTLE :
-                    SIG(x_mul_wait) ? P_MUL : SIG(x_fpu_wait) ? P_FPU :
+                    SIG(x_mul_wait) ? P_MUL : SIG(m2_fwait) ? P_FPU :
                     SIG(d_v) && SIG(haz) ? P_HAZ : SIG(d_v) && SIG(ser_wait) ? P_SER :
                     SIG(fstate) != 0 ? P_IFILL : P_BUBBLE;
             if (SIG(x_redir)) n_xredir++;

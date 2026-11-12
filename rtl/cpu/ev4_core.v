@@ -423,7 +423,7 @@ module ev4_core (
             if (!iccsr_fpe) dc_exc = E_FEN;
         end
         6'h15, 6'h16: begin                                               // FP arithmetic (rtl/cpu/ev4_fpu.v)
-            dc_cls = C_SHF; dc_fpu = 1'b1;                                // slow result path; X waits for the FPU
+            dc_cls = C_SHF; dc_fpu = 1'b1;                                // issued to the FPU in X; the result joins in M2
             dc_dst = d_rc; dc_dst_v = 1'b1; dc_ua = fd_rd_fa; dc_ub = 1'b1;
             if (fd_fen || !iccsr_fpe) dc_exc = E_FEN;
             else if (!fd_legal) dc_exc = E_OPCDEC;
@@ -479,8 +479,8 @@ module ev4_core (
     // M1 / M2 registers (declared here for forwarding)
     reg         m1_v;  reg [63:0] m1_pc; reg [31:0] m1_ir; reg [3:0] m1_cls; reg [3:0] m1_exc;
     reg  [63:0] m1_rf, m1_rs, m1_va, m1_sd; reg m1_cmf; reg m1_isf;
-    reg   [5:0] m1_fs, m2_fs, w_fs;      // FPCR flags to OR in (FP arithmetic)
-    reg   [6:0] m1_es, m2_es, w_es;      // EXC_SUM[8:2] of an FP trap
+    reg   [5:0] w_fs;                    // FPCR flags to OR in (FP arithmetic)
+    reg   [6:0] w_es;                    // EXC_SUM[8:2] of an FP trap
     wire [63:0] m1_res = m1_isf ? m1_rf : m1_rs;    // fast and slow results come from separate flops
     reg   [5:0] m1_dst; reg m1_dst_v; reg m1_ldlat;
     reg         m2_v;  reg [63:0] m2_pc; reg [31:0] m2_ir; reg [3:0] m2_cls;
@@ -519,6 +519,31 @@ module ev4_core (
     // the fast result: what the X->X loop forwards
     wire [63:0] fast_res = x_sel_lda ? agen : x_sel_link ? x_link : fa_res;
 
+    // ---------------------------------------------------------------- FP arithmetic in flight
+    // An FP operation (opcodes 15, 16) is issued to the unit in its first cycle in X and moves on
+    // with the pipeline; it waits in M2 for its result and takes it into W (docs/design/fpu.md 4,
+    // pipeline.md). The unit returns results in issue order, which is program order, and may
+    // return one before its operation is in M2 (a stall ahead of it): fq keeps up to three, the
+    // operations X, M1 and M2 can hold. A DIVx occupies the unit: no FP operation leaves D while
+    // one is in X, M1 or M2. w_redir kills the unit and the queue with the pipeline behind W.
+    reg         x_fpu, x_fdiv, x_fpgo, m1_fpu, m1_fdiv, m2_fpu, m2_fdiv;
+    wire        fpu_busy, fpu_done, fpu_trap;
+    wire [63:0] fpu_result;
+    wire  [5:0] fpu_fset;
+    wire  [6:0] fpu_esum;
+    reg   [1:0] fq_n;
+    reg  [77:0] fq0, fq1, fq2;          // {trap, EXC_SUM bits, FPCR bits, result}, fq0 the oldest
+    wire [77:0] fq_in = {fpu_trap, fpu_esum, fpu_fset, fpu_result};
+    wire        f_ok  = fq_n != 2'd0 || fpu_done;       // the result of M2's operation is here
+    wire [77:0] f_hd  = fq_n != 2'd0 ? fq0 : fq_in;
+    wire [63:0] f_res = f_hd[63:0];
+    wire  [5:0] f_fs  = f_hd[69:64];
+    wire  [6:0] f_es  = f_hd[76:70];
+    wire        f_tr  = f_hd[77];
+    wire        m2_fwait = m2_v && m2_fpu && !f_ok;
+    wire        f_pop    = m2_v && m2_fpu && !stall_m2 && !w_redir;
+    wire        fp_hold  = dc_fpu && ((x_v && x_fdiv) || (m1_v && m1_fdiv) || (m2_v && m2_fdiv));
+
     // ---------------------------------------------------------------- hazards and forwarding (D)
     function hit_src;
         input v; input dv; input [5:0] dst; input [5:0] src;
@@ -539,7 +564,8 @@ module ev4_core (
                 end else if (hit_src(m1_v, m1_dst_v, m1_dst, src)) begin
                     if (m1_ldlat) stall = 1'b1; else val = m1_res;
                 end else if (hit_src(m2_v, m2_dst_v, m2_dst, src)) begin
-                    if (m2_ldlat) stall = 1'b1; else val = m2_res;
+                    // an FP result is forwarded from M2 once the unit has returned it
+                    if (m2_fpu ? !f_ok : m2_ldlat) stall = 1'b1; else val = m2_fpu ? f_res : m2_res;
                 end else if (hit_src(w_v, w_dst_v && (w_exc == E_NONE || w_exc == E_ARITH), w_dst, src))
                     val = w_res;
                 else if (hit_src(r_v, 1'b1, r_dst, src))
@@ -562,7 +588,7 @@ module ev4_core (
     reg  ser_pending;
     wire pipe_busy = x_v || m1_v || m2_v || w_v;
     wire ser_wait  = d_v && (ser_pending || (dc_ser && pipe_busy));
-    assign stall_d = stall_x || (d_v && (haz || ser_wait));
+    assign stall_d = stall_x || (d_v && (haz || ser_wait || fp_hold));
 
     // ================================================================ X stage
     // multiplier
@@ -573,23 +599,11 @@ module ev4_core (
                    .busy(mul_busy), .done(mul_done), .res(mul_res), .ovf(mul_ovf), .illegal());
     wire x_mul_wait = x_v && x_cls == C_MUL && x_exc == E_NONE && !mul_fin;
 
-    // the FP arithmetic unit (docs/design/fpu.md 4): X holds the instruction
-    // until done; the result goes on the slow result path
-    reg         x_fpu;
-    reg         fpu_go, fpu_live, fpu_fin;
-    reg  [63:0] fpu_r;
-    reg   [5:0] fpu_fs;
-    reg   [6:0] fpu_es;
-    reg         fpu_tr;
-    wire        fpu_busy, fpu_done, fpu_trap;
-    wire [63:0] fpu_result;
-    wire  [5:0] fpu_fset;
-    wire  [6:0] fpu_esum;
-    ev4_fpu #(.TAG_W(1)) fpu (.clk(clk), .rst(rst), .kill(w_redir), .start(fpu_go), .ir(x_ir), .fa(x_a), .fb(x_b),
+    // the FP arithmetic unit: started in the operation's first cycle in X (x_fpgo, a flop)
+    ev4_fpu #(.TAG_W(1)) fpu (.clk(clk), .rst(rst), .kill(w_redir), .start(x_fpgo), .ir(x_ir), .fa(x_a), .fb(x_b),
         .fpcr_dyn(fpcr_dyn), .tag(1'b0), .busy(fpu_busy), .done(fpu_done), .done_tag(),
         .result(fpu_result), .fpcr_set(fpu_fset), .exc_sum(fpu_esum), .trap(fpu_trap));
-    wire x_fpu_wait = x_v && x_fpu && x_exc == E_NONE && !fpu_fin;
-    assign stall_x = stall_m1 || x_mul_wait || x_fpu_wait;
+    assign stall_x = stall_m1 || x_mul_wait;
 
     // IPR read, in D (HW_MFPR issues serialized, so the state is current)
     reg [63:0] ipr_rd;
@@ -700,7 +714,6 @@ module ev4_core (
 
     reg [63:0] x_slow;
     always @* begin
-        if (x_fpu) x_slow = fpu_r; else
         if (x_fpop) x_slow = fpx_res; else
         case (x_cmov ? C_CMOVX : x_cls)
         C_CMOVX: x_slow = fa_wr ? fa_res : x_c;                // a false CMOV keeps Rc
@@ -713,7 +726,7 @@ module ev4_core (
         endcase
     end
     wire x_isf = (x_cls == C_ALU && !x_cmov && !x_fpop) || x_cls == C_LDA || x_cls == C_BR || x_cls == C_JMP;
-    wire x_ovf = (x_cls == C_ALU && !x_fpop && fa_ovf) || (x_cls == C_MUL && mul_ovf) || (x_fpu && fpu_tr);
+    wire x_ovf = (x_cls == C_ALU && !x_fpop && fa_ovf) || (x_cls == C_MUL && mul_ovf);
 
     // ================================================================ M1
     // D-stream translation of the registered VA
@@ -887,7 +900,7 @@ module ev4_core (
     // skips the D-cache (write-through, no allocate) and leaves the filled line stale
     // (ARC 4.58's FindScsiDevices: stl then ldl of the same longword read 0)
     reg   [1:0] dsettle;
-    assign stall_m2 = m2_need_bus || m2_need_wb || dsettle != 2'd0;
+    assign stall_m2 = m2_need_bus || m2_need_wb || dsettle != 2'd0 || m2_fwait;
     assign stall_m1 = stall_m2;
 
     reg [63:0] m2_lq;
@@ -977,7 +990,7 @@ module ev4_core (
             sl_xmit <= 1'b1;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
-            fpu_go <= 1'b0; fpu_live <= 1'b0; fpu_fin <= 1'b0; exc_sum_r <= 7'd0; exc_mask <= 64'd0;
+            x_fpgo <= 1'b0; fq_n <= 2'd0; exc_sum_r <= 7'd0; exc_mask <= 64'd0;
             wb_ev <= 4'd0; wb_wp <= 2'd0; wb_rp <= 2'd0; bown <= B_NONE; mem_req <= 1'b0; dsettle <= 2'd0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
@@ -1056,12 +1069,13 @@ module ev4_core (
             end
 
             // ------------------------------------------------ D -> X
+            x_fpgo <= 1'b0;
             if (w_redir) x_v <= 1'b0;
             else if (!stall_x) begin
                 x_v <= d_v && !stall_d && !x_redir;
                 if (d_v && !stall_d && !x_redir) begin
                     x_pc <= d_pc; x_ir <= d_ir; x_cls <= dc_cls; x_exc <= dc_exc;
-                    x_dst <= dc_dst; x_dst_v <= dc_dst_v; x_fast <= dc_fast; x_ldlat <= dc_ldlat;
+                    x_dst <= dc_dst; x_dst_v <= dc_dst_v; x_fast <= dc_fast; x_ldlat <= dc_ldlat || dc_fpu;
                     x_ser <= dc_ser;
                     x_a <= loop_a ? fast_res : fwd_a;
                     // a branch takes the loop only from a compare (result 0 or 1), so
@@ -1080,7 +1094,7 @@ module ev4_core (
                     x_sel_lda <= dc_cls == C_LDA;
                     x_sel_link <= dc_cls == C_BR || dc_cls == C_JMP;
                     x_cmov <= d_cmov;
-                    x_fpu <= dc_fpu;
+                    x_fpu <= dc_fpu; x_fdiv <= dc_fpu && fd_div; x_fpgo <= dc_fpu;
                     if (dc_ser) ser_pending <= 1'b1;
                 end
             end
@@ -1092,30 +1106,27 @@ module ev4_core (
             if (mul_done && mul_live) begin mul_fin <= 1'b1; mul_live <= 1'b0; end
             if (x_fire) mul_fin <= 1'b0;
             if (w_redir) begin mul_fin <= 1'b0; mul_live <= 1'b0; end
-            // the FPU
-            fpu_go <= 1'b0;
-            if (x_v && x_fpu && x_exc == E_NONE && !fpu_fin && !fpu_live && !fpu_go && !w_redir) begin
-                fpu_go <= 1'b1; fpu_live <= 1'b1;
-            end
-            if (fpu_done && fpu_live) begin
-                fpu_fin <= 1'b1; fpu_live <= 1'b0;
-                fpu_r <= fpu_result; fpu_fs <= fpu_fset; fpu_es <= fpu_esum; fpu_tr <= fpu_trap;
-            end
-            if (x_fire) fpu_fin <= 1'b0;
-            if (w_redir) begin fpu_fin <= 1'b0; fpu_live <= 1'b0; end
+            // the FPU's results: fq0 leaves with M2's operation, a new one joins behind the others
+            // (taken straight from the unit when the queue is empty)
+            if (f_pop && fq_n != 2'd0) begin fq0 <= fq1; fq1 <= fq2; end
+            if (fpu_done && !(f_pop && fq_n == 2'd0))
+                case (f_pop ? fq_n - 2'd1 : fq_n)
+                2'd0: fq0 <= fq_in;
+                2'd1: fq1 <= fq_in;
+                default: fq2 <= fq_in;
+                endcase
+            if (w_redir) fq_n <= 2'd0;
+            else fq_n <= fq_n + {1'b0, fpu_done} - {1'b0, f_pop};
 
             // ------------------------------------------------ X -> M1
             if (w_redir) m1_v <= 1'b0;
             else if (!stall_m1) begin
-                // an FP op waits in X for the unit as a multiply does for the multiplier: without the
-                // gate a copy of it entered M1 every waiting cycle and retired with the trap state the
-                // previous FP op left (fpu_tr, fpu_es): the first FP instruction after any trapping one
-                // took a bogus ARITH with the old EXC_SUM. NT 4.0 + IE 4.01: win32k's CMPTLT/SU after
-                // IE's user-mode NaN compares, a kernel-mode trap -> STOP 0x3B (2026-11-04, tests/cpu/t3_fpld.py)
-                m1_v <= x_v && !x_mul_wait && !x_fpu_wait;
+                // a multiply waits in X for the multiplier: without the gate a copy of it entered M1
+                // every waiting cycle
+                m1_v <= x_v && !x_mul_wait;
                 m1_pc <= x_pc; m1_ir <= x_ir; m1_cls <= x_cls;
                 m1_exc <= (x_exc == E_NONE && x_ovf) ? E_ARITH : x_exc;
-                m1_fs <= x_fpu ? fpu_fs : 6'd0; m1_es <= (x_fpu && fpu_tr) ? fpu_es : 7'd0;
+                m1_fpu <= x_fpu; m1_fdiv <= x_fdiv;
                 m1_rf <= fast_res; m1_rs <= x_slow; m1_isf <= x_isf; m1_va <= x_va; m1_sd <= x_sdata; m1_cmf <= x_cls == C_ALU && !x_fpop && !fa_wr;
                 m1_dst <= x_dst; m1_dst_v <= x_dst_v; m1_ldlat <= x_ldlat;
             end
@@ -1125,7 +1136,7 @@ module ev4_core (
             else if (!stall_m2) begin
                 m2_v <= m1_v;
                 m2_pc <= m1_pc; m2_ir <= m1_ir; m2_cls <= m1_cls; m2_res <= m1_res;
-                m2_va <= m1_va; m2_sd <= m1_sd; m2_pa <= m1_pa; m2_cmf <= m1_cmf; m2_fs <= m1_fs; m2_es <= m1_es;
+                m2_va <= m1_va; m2_sd <= m1_sd; m2_pa <= m1_pa; m2_cmf <= m1_cmf; m2_fpu <= m1_fpu; m2_fdiv <= m1_fdiv;
                 m2_dst <= m1_dst; m2_dst_v <= m1_dst_v; m2_ldlat <= m1_ldlat;
                 // translation faults are formed in M2 from registered vectors (timing)
                 m2_exc0 <= (m1_exc != E_NONE || !m1_mem) ? m1_exc : m1_unal ? E_UNAL : E_NONE;
@@ -1177,9 +1188,14 @@ module ev4_core (
             if (w_redir) w_v <= 1'b0;
             else begin
                 w_v <= m2_v && !stall_m2;
-                w_pc <= m2_pc; w_ir <= m2_ir; w_cls <= m2_cls; w_exc <= m2_exc;
-                w_dst <= m2_dst; w_dst_v <= m2_dst_v; w_va <= m2_va; w_cmf <= m2_cmf; w_fb <= m2_fb; w_fs <= m2_fs; w_es <= m2_es; w_dpr <= m2_dpr;
-                w_res <= m2_load ? m2_lres : (m2_store && m2_stc) ? {63'd0, m2_stc_ok} : m2_res;
+                w_pc <= m2_pc; w_ir <= m2_ir; w_cls <= m2_cls;
+                // an FP operation's trap, flags and result come with it from the unit: each takes its
+                // own, never what the FP operation before it left (NT 4.0 + IE 4.01: win32k's
+                // CMPTLT/SU after IE's user-mode NaN compares took a bogus ARITH, STOP 0x3B;
+                // 2026-11-04, tests/cpu/t3_fpld.py)
+                w_exc <= (m2_fpu && f_tr) ? E_ARITH : m2_exc;
+                w_dst <= m2_dst; w_dst_v <= m2_dst_v; w_va <= m2_va; w_cmf <= m2_cmf; w_fb <= m2_fb; w_fs <= m2_fpu ? f_fs : 6'd0; w_es <= (m2_fpu && f_tr) ? f_es : 7'd0; w_dpr <= m2_dpr;
+                w_res <= m2_load ? m2_lres : (m2_store && m2_stc) ? {63'd0, m2_stc_ok} : m2_fpu ? f_res : m2_res;
                 w_st <= m2_store && m2_exc == E_NONE && !(m2_stc && !m2_stc_ok);
                 w_sdata <= m2_quad ? m2_sd : {32'd0, m2_sd[31:0]};
                 w_ssize <= m2_quad ? 4'd8 : 4'd4;

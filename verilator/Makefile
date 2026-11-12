@@ -154,7 +154,13 @@ wbstress: obj_pipe/Vev4_core
 		IRQRATE=0 MEMDELAY=30 MEMSEED=$$s FASTLINE=1 obj_pipe/Vev4_core $(T0)/wb_stress.bin --max 40000000 || exit 1; \
 	done
 
-.PHONY: cputest cputest-pipe sromload t3 t3-rwc t3-prefetch perf wbstress
+# FP operations in flight (several in the unit at a time, results in order, forwarding from M2,
+# kills by interrupts) against the generator's own registers and memory, tests/cpu/fp_stress.py
+fpstress: obj_pipe/Vev4_core
+	@mkdir -p $(T0)
+	@for s in 1 2 3 4 5 6 7 8; do 		python3 -I ../tests/cpu/fp_stress.py $$s $(T0)/fp_stress.bin || exit 1; 		obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 20000000 || exit 1; 		BOARD=1 obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 20000000 || exit 1; 		MEMDELAY=9 MEMSEED=$$s obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 20000000 || exit 1; 		IRQRATE=40 IRQSEED=$$s MEMDELAY=20 FASTLINE=1 obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 40000000 || exit 1; 		IRQRATE=15 IRQSEED=$$s MEMDELAY=5 MEMSEED=$$s obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 40000000 || exit 1; 	done
+
+.PHONY: cputest cputest-pipe sromload t3 t3-rwc t3-prefetch perf wbstress fpstress
 
 # ---------------------------------------------------------------- system simulation
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the
