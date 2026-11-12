@@ -50,6 +50,7 @@ The device is 89 % full (37.2k of 41.9k ALMs). Tools: `quartus_sta -t scratch/cp
 | `_20261111c` (`6650af2`) | -2.472 | -1511 | the start: `m1_va` / `dtb_tag` -> `mg1_v` / `mg2_v`, the TGA's `dm_addr` -> the 21071's `d_wdata` |
 | round 1 (`60eea26`) | -1.737 | -659 | the store-forward compare on the D-cache index only; the return-address check in X; the 21071's write data apart from the DMA decode |
 | round 2 = `_20261111d` (`10aee62`) | -2.108 | -616 | the machine reset registered; `fq_ne` (the FP queue's "not empty" as a register) ahead of the stall chain; the DTB's page-size select per entry; a register stage on the DMA masters' request (one more cycle per DMA access). 37,189 ALMs, 47,845 registers, HDMI clock +0.144 |
+| area = `_20261112b` (`a4ed6a4`) | -1.487 | -913 | no timing change: the DMA's base and scatter/gather registers and the TOY's CMOS in MLAB register files (`rtl/sio/isa_lutram.v`); 36,473 ALMs (87 %, -716), 46,101 registers, HDMI clock -0.371 |
 
 Each round removed the groups it aimed at (`stall_d`, the DTB reset paths, apecs `d_addr` left the
 list after round 2) and others took their place. After round 2: `m2_hitq` -2.11 (139 paths from
@@ -78,6 +79,30 @@ boots and logs on, `ubench-alpha -i 3` as on `_20261111c` (Dhrystone 132311 lps,
 MWIPS, Arithoh 5993954, float / double 21203.6 / 13993.9, Hanoi 1565.2). Regression of `10aee62`:
 every unit and CPU target passes (`tb_sio`'s two stale TOY checks aside), the system simulation
 passes the DROM's POST at the cycle count of the build before.
+
+### The area round (2026-11-12)
+
+Point 1 above, as far as it could go without losing anything: `isa_dma`'s base address / count
+registers and scatter/gather entries and `isa_rtc`'s CMOS are read asynchronously from MLABs
+(`isa_lutram`, `ramstyle = "MLAB, no_rw_check"`: without `no_rw_check` Quartus 17.0 leaves them in
+registers, Info 276009, and the CMOS, read at two addresses, doubles). The new modules were run
+against the old ones on random stimulus with every output compared every cycle (8 seeds x 3 M
+cycles equal, four planted faults each caught; `scratch/area/eq.sh`), and `tb_cmos`, `tb_fdc`,
+`tb_audio`, `tb_isa_pic`, `tb_sio` are as before.
+
+**COM2 cannot be left out.** A build without it (`_20261112a`, `79684b0`: 35,982 ALMs, -1.990 ns,
+TNS -1704) passes the DROM's POST and then hangs: SRM V7.0 never prints its first progress code,
+on the board and in the system simulation alike (the simulation with COM2 goes on). COM2 is back
+(`a4ed6a4`); the rbf of `a` is in `/media/fat/rbf_old/` on both boards as `..._nocom2_hangs.rbf`.
+
+`_20261112b`: -1.487 ns is the best figure so far, but the failing set is another one again
+(none of the register files is on a failing path), so it is fit variation as much as the 2 % of
+area. Board check (.143): the DROM's POST, SRM `show config` / `show device` (all four PCI
+devices, dka0, dka400, dva0, ewa0, pka0, the ISA table read from the CMOS), `set os_type nt`
+kept across a reset (CMOS write and read), ARC, NT 4.0 boots, logs on and shows the right time,
+`ubench-alpha -i 3 dhry2reg whetstone-double`: 152160 lps / 49.8 MWIPS (the two tests alone; the
+132311 of `d` was within the full suite). Not tried on the board: a floppy transfer and audio
+playback (the DMA; covered by the equivalence run and `tb_fdc` / `tb_audio` only).
 
 ## Consequences for the pipeline (cpu.md 11)
 

@@ -102,7 +102,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | FM at 388h: an OPL2 (jtopl2) in place of the OPL3 | partial | P4 | `rtl/audio/opl_isa.v`: bank 1 (38Ah/38Bh) dropped, OPL2 status, so OPL3 detection finds an OPL2. A real OPL3 when jtopl's YMF262 exists |
 | ~~Speaker (8254 counter 2) to the audio mix~~ | **done** build 15 | P4 | `audio_mix.v` |
 | Audio mix to the MiSTer (WSS + FM + CD + speaker) | partial | P4 | Wired (build 15, `audio_cdc.v`); no OSD P4 Audio page yet (volume/mute; `mute[3:0]` is ready) |
-| COM2 on a MiSTer pin | open | P4 | |
+| COM2 on a MiSTer pin | open | P4 | The UART itself must stay in the build: without it SRM V7.0 hangs after the DROM's POST (tried 2026-11-12, `_20261112a`; `cpu-timing.md`) |
 | ~~PS/2 keyboard and mouse into the 8242 from hps_io~~ | **done** 2026-11-04 | P2 | Wired into the SIO; the keyboard reaches COM1 only while the picture is the terminal (`90933f8`: every 'b' typed in NT was a kernel debugger break-in) |
 
 ## MiSTer integration

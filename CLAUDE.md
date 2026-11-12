@@ -141,6 +141,10 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 - **2026-11-11: timing, two rounds on `cpu-perf`** (`60eea26`, `10aee62` = board build **`_20261111d`**): -2.472 -> -1.737 ->
   -2.108 ns, TNS -1511 -> -616; 37.2k ALMs (89 %). Not closed: a routing-dominated wall across modules, +-0.4 ns of fit noise
   (`docs/design/cpu-timing.md`: area reduction, the DTB / D-cache hit path, fitter seeds are next). SRM, NT 4.0 and ubench as on `c`.
+- **2026-11-12: area round** (`a4ed6a4` = board build **`_20261112b`**): the DMA's registers and the TOY's CMOS in MLAB register
+  files (`rtl/sio/isa_lutram.v`, needs `no_rw_check`), checked against the old modules cycle by cycle (`scratch/area/eq.sh`):
+  36.5k ALMs (87 %), -1.487 ns, TNS -913. **COM2 has to stay: SRM hangs after the DROM's POST without it** (`_20261112a`, retired
+  to `rbf_old`). SRM, ARC, NT 4.0 and ubench checked on .143; floppy and audio not on the board.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
