@@ -138,6 +138,9 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   flowing through the FPU and branch prediction in F2 (`6650af2`, board build **`_20261111c`**, -2.472 ns, 37.5k ALMs): ubench on NT
   Dhrystone 132422 lps (index 11.3), Whetstone 49.8 MWIPS (9.1); `make -C verilator perf / fpstress / bpstress / wbstress`.
   `tb_sio`'s two TOY time/date checks fail (the bench expects BCD; not a CPU matter).
+- **2026-11-11: timing, two rounds on `cpu-perf`** (`60eea26`, `10aee62` = board build **`_20261111d`**): -2.472 -> -1.737 ->
+  -2.108 ns, TNS -1511 -> -616; 37.2k ALMs (89 %). Not closed: a routing-dominated wall across modules, +-0.4 ns of fit noise
+  (`docs/design/cpu-timing.md`: area reduction, the DTB / D-cache hit path, fitter seeds are next). SRM, NT 4.0 and ubench as on `c`.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.

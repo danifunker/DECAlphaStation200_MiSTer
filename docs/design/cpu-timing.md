@@ -40,6 +40,45 @@ Grouped with a `report_timing -npaths 400` script on the system clock (source ->
 | 7 | -1.503 | 21.9k | the TOY's BCD conversion into the SIO read data; DTB select -> D-cache tag/protection. Fix: displayed time registered; per-entry tag compare and protection, ORed |
 | 8 (`0c8dfa6`) | -1.244 | ~22k | not yet grouped |
 
+### Closure attempt on the full machine (2026-11-11, branch `cpu-perf`)
+
+The device is 89 % full (37.2k of 41.9k ALMs). Tools: `quartus_sta -t scratch/cpuperf/paths.tcl`
+(the 6000 worst paths) and `scratch/cpuperf/grp.py` (grouped by endpoint).
+
+| Build | Worst slack | TNS | What was changed |
+|---|---|---|---|
+| `_20261111c` (`6650af2`) | -2.472 | -1511 | the start: `m1_va` / `dtb_tag` -> `mg1_v` / `mg2_v`, the TGA's `dm_addr` -> the 21071's `d_wdata` |
+| round 1 (`60eea26`) | -1.737 | -659 | the store-forward compare on the D-cache index only; the return-address check in X; the 21071's write data apart from the DMA decode |
+| round 2 = `_20261111d` (`10aee62`) | -2.108 | -616 | the machine reset registered; `fq_ne` (the FP queue's "not empty" as a register) ahead of the stall chain; the DTB's page-size select per entry; a register stage on the DMA masters' request (one more cycle per DMA access). 37,189 ALMs, 47,845 registers, HDMI clock +0.144 |
+
+Each round removed the groups it aimed at (`stall_d`, the DTB reset paths, apecs `d_addr` left the
+list after round 2) and others took their place. After round 2: `m2_hitq` -2.11 (139 paths from
+`m1_va` / `dtb_tag`: 9 logic levels, 4.7 ns of cells and 6.9 ns of routing), `x_b` -1.52, the
+I-cache RAM address -1.5..-1.26 (about 1800 paths from `d_ir`, `x_a`, `x_b`), `m1_rs` -1.45, the
+SIO's `pt_rdata` -1.35 (533), `SDRAM_A` -1.24, the TOY's `v_year` -1.09, `m2_pa` -1.09, `wb_ld`
+-1.02, `ps2_ascii` -0.98, apecs `c_rdata` -0.86 (767), the TGA's `s[][]` -0.84.
+
+**Finding: this is a wall at -1.0..-1.5 ns across unrelated modules, and the paths are routing-
+dominated.** Modules nobody touched (the SDRAM controller, `ps2_ascii`) enter and leave the list
+from fit to fit, and the worst slack moves about +-0.4 ns between fits of near-identical logic:
+the total (TNS) fell by 59 %, the worst path did not. More path-by-path work is inside that
+noise. What is left to try, in the order of expected effect:
+
+1. Area. The largest users after the CPU (9.3k ALMs, the FPU 1.6k): the SIO 6.0k (`isa_dma` 1.7k
+   with eight channels of registers and `rb[0:63]`; `isa_rtc` 0.9k with the CMOS in registers;
+   the Super I/O 0.8k; the 8242 0.7k), the TGA 3.5k, the SCSI targets 2.6k, the 53C810 2.4k, the
+   scaler 2.0k, the 21040 1.7k. Moving the DMA registers and the CMOS into RAM frees a few
+   percent and gives the fitter room.
+2. The DTB / D-cache hit path (`m1_va` -> 32 tag compares -> the PFN OR -> the D-cache tag compare
+   -> `m2_hitq`) as two stages, or the hit compared against a registered PFN.
+3. Other fitter seeds (the QSF has SEED 1): costs fits, changes nothing in the RTL.
+
+Board check of `_20261111d` (.143): SRM `show device` (dka0, dka400, dva0, ewa0, pka0), NT 4.0
+boots and logs on, `ubench-alpha -i 3` as on `_20261111c` (Dhrystone 132311 lps, Whetstone 49.7
+MWIPS, Arithoh 5993954, float / double 21203.6 / 13993.9, Hanoi 1565.2). Regression of `10aee62`:
+every unit and CPU target passes (`tb_sio`'s two stale TOY checks aside), the system simulation
+passes the DROM's POST at the cycle count of the build before.
+
 ## Consequences for the pipeline (cpu.md 11)
 
 - **No bypass mux in front of the ALU in the execute stage.** Operands must arrive registered:

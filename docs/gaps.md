@@ -28,7 +28,7 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | ~~Block (32-byte) bus transfers~~ | **done** 2026-11-01 | P3 | Cache fills are line reads: one SDRAM ACTIVE and two 8-beat READs, 4 quadword acks (`mem_line` -> `c_line` -> `d_line`); tb_sdram covers them |
 | A board cache (Bcache) | open | P4 | |
 | BIU_CTL / Bcache registers | partial | P4 | Stored as shadows only; no Bcache |
-| Timing: 100 MHz full-system closure | partial | P2 | Build 16 (`53584d1`): -1.897 ns, 33.9k ALMs (81%); runs on the board regardless (`cpu-timing.md`) |
+| Timing: 100 MHz full-system closure | partial | P2 | Build 16 (`53584d1`): -1.897 ns, 33.9k ALMs (81%); runs on the board regardless (`cpu-timing.md`). **2026-11-11, two rounds on `cpu-perf`** (`60eea26`, `10aee62` = board `_20261111d`, 37.2k ALMs 89 %): worst slack -2.472 -> -1.737 -> -2.108 ns, TNS -1511 -> -659 -> -616. The paths aimed at left the list, others replaced them: a routing-dominated wall at -1.0..-1.5 ns across the CPU, the SIO, the 21071, the SDRAM pins and the TGA, with about +-0.4 ns between fits. Not closed; next levers in `cpu-timing.md` (area: `isa_dma` and the CMOS into RAM; the DTB / D-cache hit path in two stages; fitter seeds). `_20261111d` on .143: SRM, NT 4.0, ubench unchanged |
 
 ## Firmware path (`docs/design/srom.md`)
 
