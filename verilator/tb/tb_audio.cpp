@@ -8,7 +8,7 @@
 //   autocalibration; playback by DMA channel 1 (16-bit stereo, 48 kHz) with
 //   the frames checked as they come out, the counter's interrupt on IRQ9
 //   through the 8259s, INT cleared by R2; capture by DMA channel 0 (silence
-//   into memory); the OPL's status (an OPL2), its timer 1, a tone; the mix
+//   into memory); the OPL's status (an OPL3), its timer 1, a tone; the mix
 //   (CD alone through the mute mask, the speaker's level, saturation both
 //   ways).
 //
@@ -208,9 +208,9 @@ int main(int argc, char **argv) {
     ad_w(9, 0x00); outb(WSS + 6, 0);
 
     // ------------------------------------------------------------ OPL
-    printf("-- OPL (an OPL2)\n");
+    printf("-- OPL (an OPL3)\n");
     uint8_t s0 = inb(0x388);
-    CHECK((s0 & 0xE0) == 0 && (s0 & 0x06) == 0x06, "OPL status %02x", s0);
+    CHECK((s0 & 0xE0) == 0 && (s0 & 0x06) == 0x00, "OPL status %02x", s0);
     opl_w(4, 0x60); opl_w(4, 0x80);
     wait(6000);
     CHECK((inb(0x388) & 0xE0) == 0, "flags after reset %02x", inb(0x388));
@@ -224,8 +224,8 @@ int main(int argc, char **argv) {
         {0x23, 0x01}, {0x43, 0x00}, {0x63, 0xF0}, {0x83, 0x77}, {0xC0, 0x01}, {0xB0, 0x31},
     };
     for (auto &w : tone) opl_w(w[0], w[1]);
-    opl_w(0x05, 0x01);                         // bank 1 (38Ah) would be the OPL3's: dropped
-    outb(0x38A, 0x05); outb(0x38B, 0x01);
+    CHECK(inb(0x389) == 0xFF && inb(0x38A) == 0xFF && inb(0x38B) == 0xFF, "389h-38Bh read %02x %02x %02x",
+          inb(0x389), inb(0x38A), inb(0x38B));
     wait(40000);
     int16_t fmin = 0, fmax = 0, fprev = t->fm;
     int fstep = 0;
@@ -243,7 +243,50 @@ int main(int argc, char **argv) {
     CHECK(fmax - fmin > 1000, "FM tone range %d..%d", fmin, fmax);
     CHECK(fstep <= 4, "FM output moves in steps of %d (a line between the chip's samples)", fstep);
     printf("   FM tone %d..%d\n", fmin, fmax);
-    opl_w(0xB0, 0x11);                         // key off
+    // the tone's range on each side over 20 ms
+    auto fm_lr = [&](int &l, int &r) {
+        int16_t l0 = 32767, l1 = -32768, r0 = 32767, r1 = -32768;
+        for (int i = 0; i < 2000000; i++) {
+            tick();
+            int16_t a = t->fm, b = t->fm_r;
+            if (a < l0) l0 = a;
+            if (a > l1) l1 = a;
+            if (b < r0) r0 = b;
+            if (b > r1) r1 = b;
+        }
+        l = l1 - l0; r = r1 - r0;
+    };
+    int rl, rr;
+    fm_lr(rl, rr);
+    CHECK(rl > 1000 && rr > 1000, "OPL2 mode: the tone on both sides (%d, %d)", rl, rr);
+    outb(0x38A, 0x05); outb(0x38B, 0x01);      // bank 1, register 05: NEW (OPL3 mode)
+    opl_w(0xC0, 0x11);                         // the voice to the left only
+    wait(200000); fm_lr(rl, rr);
+    CHECK(rl > 1000 && rr < 8, "OPL3 mode, left (%d, %d)", rl, rr);
+    opl_w(0xC0, 0x21);                         // right only
+    wait(200000); fm_lr(rl, rr);
+    CHECK(rl < 8 && rr > 1000, "OPL3 mode, right (%d, %d)", rl, rr);
+    // a voice of the second bank (channel 9: 38Ah/38Bh), to the right, with the first keyed off
+    opl_w(0x80, 0x7F); opl_w(0x83, 0x7F);      // the fastest release
+    opl_w(0xB0, 0x11);
+    wait(3000000); fm_lr(rl, rr);
+    CHECK(rl < 8 && rr < 8, "key off (%d, %d)", rl, rr);
+    for (auto &w : tone) { outb(0x38A, w[0]); outb(0x38B, w[0] == 0xC0 ? 0x21 : w[1]); }
+    wait(200000); fm_lr(rl, rr);
+    CHECK(rl < 8 && rr > 1000, "bank 1 voice, right (%d, %d)", rl, rr);
+    outb(0x38A, 0x83); outb(0x38B, 0x7F);
+    outb(0x38A, 0xB0); outb(0x38B, 0x11);      // key off
+    wait(3000000);
+    // 200 writes as fast as the SIO takes them, a clock between them (the chip's queue holds 64
+    // and empties at a byte per clock of its own, 40.7 ns): the last ones must have arrived
+    uint64_t c0 = cyc;
+    for (int i = 0; i < 199; i++) { opl_w(0x40, 0x3F); tick(); }
+    printf("   a write to the OPL every %.1f clocks\n", (cyc - c0) / 398.0);
+    opl_w(0x40, 0x10); opl_w(0xC0, 0x31); opl_w(0xB0, 0x31);
+    wait(200000); fm_lr(rl, rr);
+    CHECK(rl > 1000 && rr > 1000, "after a burst of writes (%d, %d)", rl, rr);
+    opl_w(0xB0, 0x11);
+    outb(0x38A, 0x05); outb(0x38B, 0x00);
 
     // ------------------------------------------------------------ the mix
     printf("-- mix\n");
@@ -271,7 +314,7 @@ int main(int argc, char **argv) {
     t->mute = 0;
     // the lone mixer: sums and saturation
     auto mx = [&](int a, int b, int c, int s) {
-        t->mx_a_l = a; t->mx_a_r = -a; t->mx_b = b; t->mx_c_l = c; t->mx_c_r = -c; t->mx_spk = s;
+        t->mx_a_l = a; t->mx_a_r = -a; t->mx_b = b; t->mx_b_r = b; t->mx_c_l = c; t->mx_c_r = -c; t->mx_spk = s;
         t->mx_c_stb = 1; tick(); t->mx_c_stb = 0;
         wait(3 * 2100);
     };

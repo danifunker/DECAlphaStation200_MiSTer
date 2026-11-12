@@ -174,9 +174,10 @@ bpstress: obj_pipe/Vev4_core
 SIO_RTL = $(RTL)/sio/ns16550.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v $(RTL)/sio/isa_lutram.v \
 	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/isa_fdc.v $(RTL)/sio/isa_fdc_img.v $(RTL)/sio/sio82378.v
 SIM_FAST ?= 1
-JTOPL_RTL = $(addprefix $(RTL)/audio/jtopl/,$(shell grep '^set_global' $(RTL)/audio/jtopl/jtopl.qip | grep -o 'jtopl[a-z0-9_]*\.v'))
+# the OPL3 (SystemVerilog; its package first, as opl3.qip lists it)
+OPL3_RTL = $(addprefix $(RTL)/audio/opl3_fpga/,$(shell grep '^set_global' $(RTL)/audio/opl3_fpga/opl3.qip | grep -o '[a-z0-9_]*\.s\?v ') synchronizer.sv)
 AUDIO_RTL = $(RTL)/audio/wss_ad1848.v $(RTL)/audio/opl_isa.v $(RTL)/audio/audio_mix.v $(RTL)/audio/as200_audio.v
-SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(RTL)/apecs/flash28f020.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/scsi/cd_audio.v $(JTOPL_RTL) $(AUDIO_RTL) $(RTL)/net/tulip_nb.v $(RTL)/net/tulip21040.v $(RTL)/tga/tga_bt485.v $(RTL)/tga/tga_video.v $(RTL)/tga/tga.v $(RTL)/as200_sys.v
+SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(RTL)/apecs/flash28f020.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/scsi/cd_audio.v $(OPL3_RTL) $(AUDIO_RTL) $(RTL)/net/tulip_nb.v $(RTL)/net/tulip21040.v $(RTL)/tga/tga_bt485.v $(RTL)/tga/tga_video.v $(RTL)/tga/tga.v $(RTL)/as200_sys.v
 FLASH   ?= ../scratch/roms/archive_alpha-station-200-roms/flash_v7.0_arc4.58.bin
 DROM    ?= ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E47_DROM1.7.bin
 
@@ -296,7 +297,7 @@ tb_sio_drom_floppy: obj_tb_sio_drom/Vsio82378 $(FLASH)
 # ---------------------------------------------------------------- audio (the sound card and the mix)
 # rtl/audio on the SIO's xio bus (verilator/tb/tb_audio.cpp; docs/design/audio.md)
 
-obj_tb_audio/Vtb_audio_top: $(JTOPL_RTL) $(AUDIO_RTL) $(SIO_RTL) tb/tb_audio_top.v tb/tb_audio.cpp
+obj_tb_audio/Vtb_audio_top: $(OPL3_RTL) $(AUDIO_RTL) $(SIO_RTL) tb/tb_audio_top.v tb/tb_audio.cpp
 	$(TB_V) --Mdir obj_tb_audio --top-module tb_audio_top -Wno-BLKSEQ -Wno-PINCONNECTEMPTY $^
 
 tb_audio: obj_tb_audio/Vtb_audio_top

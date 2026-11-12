@@ -22,7 +22,8 @@ set_global_assignment -name VERILOG_FILE rtl/sio/sio82378.v
 set_global_assignment -name VERILOG_FILE rtl/scsi/ncr53c810.v
 set_global_assignment -name VERILOG_FILE rtl/scsi/scsi_targets.v
 set_global_assignment -name VERILOG_FILE rtl/scsi/cd_audio.v
-set_global_assignment -name QIP_FILE rtl/audio/jtopl/jtopl.qip
+set_global_assignment -name QIP_FILE rtl/audio/opl3_fpga/opl3.qip
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/opl3_fpga/synchronizer.sv
 set_global_assignment -name VERILOG_FILE rtl/audio/wss_ad1848.v
 set_global_assignment -name VERILOG_FILE rtl/audio/opl_isa.v
 set_global_assignment -name VERILOG_FILE rtl/audio/audio_mix.v

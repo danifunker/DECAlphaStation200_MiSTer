@@ -38,11 +38,12 @@ module tb_audio_top (
     output wire        aud_tgl,
     output wire [15:0] wss_l,              // the codec's output
     output wire [15:0] wss_r,
-    output wire [15:0] fm,                 // the OPL's
+    output wire [15:0] fm,                 // the OPL's, left
+    output wire [15:0] fm_r,
     output wire [15:0] irq,                // the card's IRQ lines
     output wire  [7:0] dreq,
 
-    input  wire [15:0] mx_a_l, mx_a_r, mx_b, mx_c_l, mx_c_r,
+    input  wire [15:0] mx_a_l, mx_a_r, mx_b, mx_b_r, mx_c_l, mx_c_r,
     input  wire        mx_c_stb, mx_spk,
     output wire [15:0] mx_l, mx_r,
     output wire        mx_tgl
@@ -52,6 +53,11 @@ module tb_audio_top (
     wire  [7:0] xio_wdata, xio_rdata, xio_dreq;
     wire  [2:0] xio_dack_ch, xio_dma_ch;
     wire        spk;
+
+    // the audio clock: 24.576 MHz out of the bench's 100 MHz (a phase accumulator's top bit)
+    reg [31:0] ca;
+    always @(posedge clk) ca <= ca + 32'd1055531162;
+    wire clk_audio = ca[31];
 
     sio82378 #(.CLK_HZ(100000000), .RTC_FAST(1)) sio (
         .clk(clk), .rst(rst),
@@ -78,7 +84,7 @@ module tb_audio_top (
     );
 
     as200_audio audio (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst(rst), .clk_audio(clk_audio),
         .xio_addr(xio_addr), .xio_rd(xio_rd), .xio_wr(xio_wr), .xio_wdata(xio_wdata),
         .xio_claim(xio_claim), .xio_rdata(xio_rdata), .xio_irq(xio_irq), .xio_dreq(xio_dreq),
         .xio_dack(xio_dack), .xio_dack_ch(xio_dack_ch), .xio_dack_data(xio_dack_data),
@@ -88,13 +94,14 @@ module tb_audio_top (
     );
     assign wss_l = audio.pcm_l;
     assign wss_r = audio.pcm_r;
-    assign fm    = audio.fm;
+    assign fm    = audio.fm_l;
+    assign fm_r  = audio.fm_r;
     assign irq   = xio_irq;
     assign dreq  = xio_dreq;
 
     audio_mix mix (
         .clk(clk), .rst(rst),
-        .wss_l(mx_a_l), .wss_r(mx_a_r), .opl(mx_b), .cd_l(mx_c_l), .cd_r(mx_c_r), .cd_stb(mx_c_stb),
+        .wss_l(mx_a_l), .wss_r(mx_a_r), .opl_l(mx_b), .opl_r(mx_b_r), .cd_l(mx_c_l), .cd_r(mx_c_r), .cd_stb(mx_c_stb),
         .spk(mx_spk), .mute(4'd0), .out_l(mx_l), .out_r(mx_r), .out_tgl(mx_tgl)
     );
 endmodule

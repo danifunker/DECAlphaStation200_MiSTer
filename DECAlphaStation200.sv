@@ -392,6 +392,7 @@ as200_sys machine
 (
 	.clk(clk_sys),
 	.rst(m_reset),
+	.clk_audio(CLK_AUDIO),
 	.cfg_mem(cfg_mem),
 	.halt(halt_btn),
 	.jumpers({6'b111111, ~cfg[12], ~cfg[11]}),   // bit 0 J1, bit 1 J2: 1 = normal (OSD On = jumper set)

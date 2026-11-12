@@ -12,6 +12,7 @@ module as200_audio #(
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        clk_audio,             // 24.576 MHz: the FM synthesiser's clock
 
     // the 82378's xio bus
     input  wire [15:0] xio_addr,
@@ -41,7 +42,7 @@ module as200_audio #(
 );
     wire        wss_claim, opl_claim;
     wire  [7:0] wss_q, opl_q, cap_byte;
-    wire [15:0] pcm_l, pcm_r, fm;
+    wire [15:0] pcm_l, pcm_r, fm_l, fm_r;
 
     assign xio_claim    = wss_claim || opl_claim;
     assign xio_rdata    = wss_claim ? wss_q : opl_q;
@@ -56,14 +57,14 @@ module as200_audio #(
     );
 
     opl_isa #(.CLK_HZ(CLK_HZ)) u_opl (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst(rst), .clk_audio(clk_audio),
         .io_addr(xio_addr), .io_rd(xio_rd), .io_wr(xio_wr), .io_din(xio_wdata),
-        .claim(opl_claim), .io_dout(opl_q), .snd(fm)
+        .claim(opl_claim), .io_dout(opl_q), .snd_l(fm_l), .snd_r(fm_r)
     );
 
     audio_mix #(.CLK_HZ(CLK_HZ)) u_mix (
         .clk(clk), .rst(rst),
-        .wss_l(pcm_l), .wss_r(pcm_r), .opl(fm),
+        .wss_l(pcm_l), .wss_r(pcm_r), .opl_l(fm_l), .opl_r(fm_r),
         .cd_l(cd_audio_l), .cd_r(cd_audio_r), .cd_stb(cd_audio_stb),
         .spk(speaker), .mute(mute),
         .out_l(aud_l), .out_r(aud_r), .out_tgl(aud_tgl)

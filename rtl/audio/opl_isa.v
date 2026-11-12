@@ -1,30 +1,30 @@
 // The sound card's FM synthesiser at 388h-38Bh (docs/design/audio.md): the
-// manual's "YMF562" (most likely a YMF262 OPL3), here JTOPL's OPL2 (YM3812,
-// rtl/audio/jtopl, jotego, GPL-3) behind the OPL3's ports. Ported to
-// Verilog-2001 from the user's IBM RS/6000 core (IBMRS6K7248_opl.sv).
+// manual's "YMF562" (most likely a YMF262 OPL3), here Greg Taylor's OPL3 FPGA
+// (rtl/audio/opl3_fpga, LGPL-3, SystemVerilog, as in ao486_MiSTer 628ddbc,
+// unchanged) behind the card's ports.
 //
 //   388h  index (W), status (R)     389h  data (W)
 //   38Ah  bank 1 index (W)          38Bh  bank 1 data (W)
 //
-// Bank 0 goes to the OPL2: nine 2-operator voices, rhythm, timers. Bank 1's
-// writes (the OPL3's second half) are dropped. The status is the OPL2's
-// (bits 2:1 set, jtopl's dout), so OPL3 detection (status & 06h == 0) finds
-// an OPL2 and software uses it as one. Reads of 389h/38Bh give FFh.
+// The status is the OPL3's (bits 2:1 clear), so software finds an OPL3 and
+// uses both banks: 18 two-operator voices or six of four operators, stereo.
+// Reads of 389h-38Bh give FFh.
 //
-// The chip runs at 3.579545 MHz (a clock enable). Its writes go through a
-// 64-entry queue and reach it as it can take them (3.3 us after an index,
-// 23 us after data), so software that paces its writes for a slower bus
-// loses none.
+// The chip runs in clk_audio (24.576 MHz, a sample every 494 clocks: 49.7
+// kHz). Writes go into its own 64-entry queue between the clocks and it takes
+// one per clock of its own, so they need no pacing here. Its status comes
+// back through synchronisers.
 //
-// The chip's samples (one every 72 clocks of its own, 49.7 kHz) are joined by
-// straight lines on the way out, so the mix takes its 48 kHz from between
-// them: held samples put images of every partial 1.7 kHz to either side of it
-// (measured on the board, -20 dB at 4.7 kHz).
+// The chip's samples are joined by straight lines on the way out, so the mix
+// takes its 48 kHz from between them: held samples put images of every
+// partial 1.7 kHz to either side of it (measured on the board with the OPL2
+// that was here before, -20 dB at 4.7 kHz).
 module opl_isa #(
     parameter CLK_HZ = 100000000
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        clk_audio,                      // 24.576 MHz
 
     input  wire [15:0] io_addr,
     input  wire        io_rd,
@@ -33,92 +33,75 @@ module opl_isa #(
     output wire        claim,
     output wire  [7:0] io_dout,
 
-    output reg  signed [15:0] snd
+    output reg  signed [15:0] snd_l,
+    output reg  signed [15:0] snd_r
 );
-    localparam [63:0] INC64 = (64'd3579545 << 32) / CLK_HZ;
-    localparam [31:0] INC = INC64[31:0];
-    localparam [31:0] GAP_I32 = CLK_HZ / 300000;      // 3.3 us
-    localparam [31:0] GAP_D32 = CLK_HZ / 43000;       // 23 us
-    localparam [15:0] GAP_IDX = GAP_I32[15:0];
-    localparam [15:0] GAP_DAT = GAP_D32[15:0];
-
     assign claim = io_addr[15:2] == 14'h00E2;          // 388h-38Bh
-    wire wr = io_wr && claim && !io_addr[1];           // bank 0 only
+    wire wr = io_wr && claim;
 
-    reg [31:0] acc;
-    reg        cen;
-    always @(posedge clk) {cen, acc} <= {1'b0, acc} + {1'b0, INC};
-
-    // the queue: {a0, byte}
-    reg  [8:0] q [0:63];
-    reg  [5:0] q_r, q_w;
-    reg [15:0] gap;
-    reg        w_go, w_a0, pop;
-    reg  [7:0] w_d;
-    always @(posedge clk) if (wr) q[q_w] <= {io_addr[0], io_din};
-    always @(posedge clk) begin
-        w_go <= 1'b0;
-        pop  <= 1'b0;
-        if (wr) q_w <= q_w + 6'd1;
-        if (gap != 16'd0) gap <= gap - 16'd1;
-        else if (pop) begin
-            w_go <= 1'b1;                              // {w_a0, w_d} read last clock
-            gap  <= w_a0 ? GAP_DAT : GAP_IDX;
-        end else if (q_r != q_w) begin
-            {w_a0, w_d} <= q[q_r];
-            q_r <= q_r + 6'd1;
-            pop <= 1'b1;
-        end
-        if (rst) begin q_r <= 6'd0; q_w <= 6'd0; gap <= 16'd0; end
-    end
-
-    // the chip's reset: at least 6 cen periods
-    reg [7:0] rcnt;
-    always @(posedge clk) begin
-        if (rst) rcnt <= 8'd0;
-        else if (cen && !rcnt[7]) rcnt <= rcnt + 8'd1;
-    end
-
-    wire [7:0] dout;
-    wire signed [15:0] snd_w;
+    wire  [7:0] dout;
     wire        smp;
+    wire signed [15:0] smp_l, smp_r;
 `ifdef SIM_NOFM
-    // the system simulation without the FM synthesizer (speed): status 06h-clear, silence
-    assign dout = 8'h06; assign snd_w = 16'sd0; assign smp = 1'b0;
+    // the system simulation without the FM synthesizer (speed): an idle OPL3's status, silence
+    assign dout = 8'h00; assign smp = 1'b0; assign smp_l = 16'sd0; assign smp_r = 16'sd0;
 `else
-    jtopl2 u_opl (
-        .rst(!rcnt[7]), .clk(clk), .cen(cen),
-        .din(w_d), .addr(w_a0), .cs_n(!w_go), .wr_n(!w_go),
-        .dout(dout), .irq_n(), .snd(snd_w), .sample(smp)
+    // the chip registers its inputs, takes a write at the strobe's start and gives the status
+    // while the address it saw a clock before was 0: the address is the bus's for a write only
+    opl3 u_opl (
+        .clk(clk_audio), .clk_host(clk), .clk_dac(1'b0), .ic_n(!rst),
+        .cs_n(!claim), .rd_n(!io_rd), .wr_n(!io_wr),
+        .address(wr ? io_addr[1:0] : 2'b00), .din(io_din), .dout(dout),
+        .sample_valid(smp), .sample_l(smp_l), .sample_r(smp_r), .led(), .irq_n()
     );
 `endif
 
-    // the line from the sample before (s0) to the newest (s0 + ds); ph runs 0 to 2^28 over the
-    // chip's sample period (smp falls as snd_w changes)
-    localparam [63:0] PINC64 = (64'd3579545 << 28) / (64'd72 * CLK_HZ);
-    localparam [28:0] PINC = PINC64[28:0];
-    reg               smp_q;
-    reg signed [15:0] s0, s1, s0_q;
-    reg signed [16:0] ds;
-    reg        [28:0] ph;
-    reg signed [28:0] prod;
-    wire       [10:0] frac = ph[28] ? 11'h7FF : ph[27:17];
-    wire signed [17:0] ln = {{2{s0_q[15]}}, s0_q} + prod[28:11];
+    reg       wr_q;
+    reg [7:0] st_q;
     always @(posedge clk) begin
-        smp_q <= smp;
-        if (smp_q && !smp) begin
-            s0 <= s1;
-            s1 <= snd_w;
-            ds <= {snd_w[15], snd_w} - {s1[15], s1};
+        wr_q <= wr;
+        if (!wr_q) st_q <= dout;
+    end
+    assign io_dout = io_addr[1:0] == 2'b00 ? st_q : 8'hFF;
+
+    // the samples into clk: held with a toggle in clk_audio, taken two clocks after the
+    // toggle is seen
+    reg               a_tgl;
+    reg signed [15:0] a_l, a_r;
+    always @(posedge clk_audio) if (smp) begin
+        a_tgl <= !a_tgl;
+        a_l   <= smp_l;
+        a_r   <= smp_r;
+    end
+    reg [2:0] tg;
+    always @(posedge clk) tg <= {tg[1:0], a_tgl};
+    wire nw = tg[2] ^ tg[1];
+
+    // the line from the sample before (s0) to the newest (s0 + ds); ph runs 0 to 2^28 over the
+    // chip's sample period
+    localparam [63:0] PINC64 = (64'd24576000 << 28) / (64'd494 * CLK_HZ);
+    localparam [28:0] PINC = PINC64[28:0];
+    reg signed [15:0] l0, l1, l0_q, r0, r1, r0_q;
+    reg signed [16:0] dl, dr;
+    reg        [28:0] ph;
+    reg signed [28:0] pl, pr;
+    wire       [10:0] frac = ph[28] ? 11'h7FF : ph[27:17];
+    wire signed [17:0] ln_l = {{2{l0_q[15]}}, l0_q} + pl[28:11];
+    wire signed [17:0] ln_r = {{2{r0_q[15]}}, r0_q} + pr[28:11];
+    always @(posedge clk) begin
+        if (nw) begin
+            l0 <= l1; l1 <= a_l; dl <= {a_l[15], a_l} - {l1[15], l1};
+            r0 <= r1; r1 <= a_r; dr <= {a_r[15], a_r} - {r1[15], r1};
             ph <= 29'd0;
         end else if (!ph[28]) ph <= ph + PINC;
-        prod <= ds * $signed({1'b0, frac});
-        s0_q <= s0;
-        snd  <= ln[15:0];
-        if (rst) begin s0 <= 16'sd0; s1 <= 16'sd0; ds <= 17'sd0; ph <= 29'd0; end
+        pl    <= dl * $signed({1'b0, frac});
+        pr    <= dr * $signed({1'b0, frac});
+        l0_q  <= l0;
+        r0_q  <= r0;
+        snd_l <= ln_l[15:0];
+        snd_r <= ln_r[15:0];
+        if (rst) begin
+            l0 <= 16'sd0; l1 <= 16'sd0; dl <= 17'sd0; r0 <= 16'sd0; r1 <= 16'sd0; dr <= 17'sd0; ph <= 29'd0;
+        end
     end
-
-    reg [7:0] st_q;
-    always @(posedge clk) st_q <= dout;
-    assign io_dout = io_addr[0] ? 8'hFF : st_q;
 endmodule

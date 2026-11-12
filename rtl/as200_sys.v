@@ -14,6 +14,7 @@ module as200_sys #(
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        clk_audio,       // 24.576 MHz (the FM synthesiser)
     input  wire  [1:0] cfg_mem,
     input  wire        halt,            // the HALT button (CPU IRQ5, with the 8242's KBRST)         // Memory: 0 = 64 MB, 1 = 32 MB, 2 = 128 MB
     input  wire  [7:0] jumpers,
@@ -420,7 +421,7 @@ module as200_sys #(
     wire  [7:0] xio_wdata, xio_rdata, xio_dreq;
     wire  [2:0] xio_dack_ch, xio_dma_ch;
     as200_audio #(.CLK_HZ(100000000)) audio (
-        .clk(clk), .rst(rst),
+        .clk(clk), .rst(rst), .clk_audio(clk_audio),
         .xio_addr(xio_addr), .xio_rd(xio_rd), .xio_wr(xio_wr), .xio_wdata(xio_wdata),
         .xio_claim(xio_claim), .xio_rdata(xio_rdata), .xio_irq(xio_irq), .xio_dreq(xio_dreq),
         .xio_dack(xio_dack), .xio_dack_ch(xio_dack_ch), .xio_dack_data(xio_dack_data),

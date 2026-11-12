@@ -1,5 +1,5 @@
 // The audio mix (docs/design/audio.md), in the system clock: the WSS codec's
-// PCM, the OPL's FM, the CD-ROM's audio and the PC speaker, summed and
+// PCM, the OPL's FM (stereo), the CD-ROM's audio and the PC speaker, summed and
 // saturated to signed 16-bit stereo at 48 kHz.
 //
 // Every source is held (zero-order) between its own samples: the codec's at
@@ -21,7 +21,8 @@ module audio_mix #(
 
     input  wire signed [15:0] wss_l,
     input  wire signed [15:0] wss_r,
-    input  wire signed [15:0] opl,
+    input  wire signed [15:0] opl_l,
+    input  wire signed [15:0] opl_r,
     input  wire signed [15:0] cd_l,
     input  wire signed [15:0] cd_r,
     input  wire        cd_stb,
@@ -49,11 +50,11 @@ module audio_mix #(
     end
 
     // the held inputs
-    reg signed [15:0] cdh_l, cdh_r, wh_l, wh_r, oh;
+    reg signed [15:0] cdh_l, cdh_r, wh_l, wh_r, oh_l, oh_r;
     reg               spk_q;
     always @(posedge clk) begin
         if (cd_stb) begin cdh_l <= cd_l; cdh_r <= cd_r; end
-        wh_l <= wss_l; wh_r <= wss_r; oh <= opl;
+        wh_l <= wss_l; wh_r <= wss_r; oh_l <= opl_l; oh_r <= opl_r;
         spk_q <= spk;
         if (rst) begin cdh_l <= 16'sd0; cdh_r <= 16'sd0; end
     end
@@ -75,9 +76,9 @@ module audio_mix #(
     always @(posedge clk) begin
         t <= {t[2:0], tick};
         if (t[2]) begin
-            sum_l <= (mute[0] ? 18'sd0 : {{2{wh_l[15]}}, wh_l}) + (mute[1] ? 18'sd0 : {{2{oh[15]}}, oh}) +
+            sum_l <= (mute[0] ? 18'sd0 : {{2{wh_l[15]}}, wh_l}) + (mute[1] ? 18'sd0 : {{2{oh_l[15]}}, oh_l}) +
                      (mute[2] ? 18'sd0 : {{2{cdh_l[15]}}, cdh_l}) + (mute[3] ? 18'sd0 : {2'b00, spk_lvl});
-            sum_r <= (mute[0] ? 18'sd0 : {{2{wh_r[15]}}, wh_r}) + (mute[1] ? 18'sd0 : {{2{oh[15]}}, oh}) +
+            sum_r <= (mute[0] ? 18'sd0 : {{2{wh_r[15]}}, wh_r}) + (mute[1] ? 18'sd0 : {{2{oh_r[15]}}, oh_r}) +
                      (mute[2] ? 18'sd0 : {{2{cdh_r[15]}}, cdh_r}) + (mute[3] ? 18'sd0 : {2'b00, spk_lvl});
         end
         if (t[3]) begin
