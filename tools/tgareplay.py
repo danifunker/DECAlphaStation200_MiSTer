@@ -149,6 +149,13 @@ for ln, line in enumerate(lines):
         copy_flag = False
         if a.list: print('%5d copy buffer read %03x' % (ln, int(line[1:4], 16)))
         continue
+    if line[0] == 'R' and line[1:4].upper() == '04C' and st['mode'] & 0xFF not in (0x02, 0x06):
+        # the continue register outside the line modes: the mode's frame buffer write at the address
+        # register (XFree86's tga driver draws its fills, stipples and copies this way)
+        g = st['gadr'] & 0x1FFFFF; d = int(line[5:13], 16); m8 = st['mode'] & 0xFF
+        if m8 in (0x2D, 0x21, 0x25, 0x23):
+            d = (d & 0x7FF) | (g & 3) << 16      # a fill starts at the address register's byte
+        line = 'W%02x F %06x %08x' % (m8, g, d)
     if line[0] == 'R':
         off = int(line[1:4], 16); d = int(line[5:13], 16)
         if off == 0x20: st['fg'] = d

@@ -327,6 +327,7 @@ module tga #(
 
     // the command being worked on
     reg         c_fb;
+    reg         c_cont;                     // this frame buffer operation came through the continue register
     reg  [20:0] c_off;
     reg   [3:0] c_be;
     reg  [31:0] c_d;
@@ -435,7 +436,7 @@ module tga #(
         case (est)
         E_IDLE: begin
             if (cq_n != 4'd0 && !cq_pop) begin
-                {c_fb, c_off, c_be, c_d} <= cq_head;
+                {c_fb, c_off, c_be, c_d} <= cq_head; c_cont <= 1'b0;
                 cq_pop <= 1'b1; est <= E_DEC;
             end else if (rd_req && !rd_done && cq_n == 4'd0 && !cq_pop) est <= E_RD1;
         end
@@ -480,8 +481,13 @@ module tga #(
                 8'h20: datar <= c_d;
                 8'h27: l_w <= c_d[12:0];
                 8'h12: begin l_e <= $signed(c_d[31:15]); l_len <= c_d[3:0]; end   // 048: GB3R, initial error and Length
-                8'h13: begin                                                      // 04C: continue the line
+                8'h13: if (m_line) begin                                          // 04C: continue the line
                     l_pat <= c_d[15:0]; l_seg <= l_len16; est <= E_LINE;
+                end else begin
+                    // ... in every other mode: the mode's frame buffer operation at the address
+                    // register 03C with this data (manual 4.4.9; XFree86's tga driver draws its
+                    // fills, stipples and copies on the 21030 with 03C / 04C pairs only)
+                    c_fb <= 1'b1; c_cont <= 1'b1; c_off <= gadr[20:0]; c_be <= 4'hF; est <= E_DEC;
                 end
                 8'h40, 8'h41, 8'h42, 8'h43, 8'h44, 8'h45, 8'h46, 8'h47,
                 8'h48, 8'h49, 8'h4A, 8'h4B, 8'h4C, 8'h4D, 8'h4E, 8'h4F: if (m_line) begin
@@ -536,7 +542,8 @@ module tga #(
                 end
                 8'h2D, 8'h21, 8'h23, 8'h25: begin
                     // fill: data<10:0> + 1 pixels from the longword (+ data<17:16>)
-                    fill_start({c_off[20:2], 2'b00} + {19'd0, c_d[17:16]}, {1'b0, c_d[10:0]} + 12'd1);
+                    // (through the continue register the address register has the low bits)
+                    fill_start(c_cont ? c_off : {c_off[20:2], 2'b00} + {19'd0, c_d[17:16]}, {1'b0, c_d[10:0]} + 12'd1);
                     est <= E_GEN;
                 end
                 8'h02, 8'h06: begin

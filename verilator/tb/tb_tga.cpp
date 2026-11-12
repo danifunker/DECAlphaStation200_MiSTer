@@ -10,7 +10,8 @@
 // SRM's block-stipple probe, block / opaque / transparent fills (frame buffer
 // and address+start forms), opaque / transparent / block stipple, simple
 // writes with raster ops, plane and pixel masks, copy mode, COPY64, DMA write
-// and read copy (SRM's scroll), the Bt485 palette and registers (read back),
+// and read copy (SRM's scroll), fills, stipples and copies through the address
+// and continue registers (XFree86), the Bt485 palette and registers (read back),
 // a displayed frame (1024x768 SRM mode, VVBR 1, Bt485 cursor) against VRAM,
 // the end-of-frame interrupt, the video selector, and flash reads and writes
 // through the arbiter while the engine and the display use DDR3.
@@ -662,6 +663,131 @@ int main(int argc, char **argv) {
             reg_wr(0x38, 0); wait_idle(); set_mode(0);
             compare(bwd ? "NT rows right to left" : "NT rows left to right");
         }
+    }
+    // ------------------------------------------------ 5b. the continue register outside the line modes
+    // XFree86's tga driver (tga_accel.c) draws on the 21030 with register writes only: the address
+    // register 03C, then the continue register 04C with what a frame buffer write at that address
+    // would carry. Solid and pattern fills (03C = y * width + x, 04C = width - 1), colour expansion
+    // (03C, 04C = 32 stipple bits) and screen copies (038 shift, 03C source, 04C mask, 03C
+    // destination, 04C mask), the copies with the driver's own TGACopyLineForwards / Backwards.
+    {
+        for (int i = 0; i < 48; i++) {
+            int mode = i % 3 == 0 ? 0x2D : i % 3 == 1 ? 0x21 : 0x25;
+            set_fg(rng()); set_bg(rng()); set_bc(rng(), rng());
+            set_data(i < 6 ? 0xFFFFFFFF : (uint32_t)rng());
+            set_rop(i & 1 ? 3 : rng() % 16);
+            set_pm(i % 8 == 7 ? (uint32_t)rng() : 0xFFFFFFFF);
+            set_mode(mode);
+            for (int row = 0; row < 3; row++) {
+                uint32_t p0 = 0x100000 + rng() % 0x20000; int n = 1 + rng() % (i < 24 ? 64 : 1280);
+                reg_wr(0x3C, p0); reg_wr(0x4C, n - 1); ref_fill(p0, n, mode);
+            }
+            wait_idle();
+        }
+        set_mode(0); set_rop(3); set_pm(0xFFFFFFFF);
+        compare("fills through the continue register");
+        for (int i = 0; i < 48; i++) {
+            int mode = i % 3 == 0 ? 0x01 : i % 3 == 1 ? 0x05 : 0x0D;
+            set_fg(rng()); set_bg(rng()); set_bc(rng(), rng());
+            set_rop(i % 5 ? 3 : rng() % 16);
+            uint32_t o = 0x124000 + (rng() % 0x8000 & ~3u);
+            set_mode(mode);
+            for (int l = 0; l < 4; l++) {
+                uint32_t m = rng();
+                reg_wr(0x3C, o + 32 * l); reg_wr(0x4C, m); ref_stip(o + 32 * l, m, mode);
+            }
+            wait_idle();
+        }
+        set_mode(0); set_rop(3);
+        for (int i = 0; i < 16; i++) {
+            uint32_t o = 0x12E000 + (rng() % 0x1000 & ~3u), w = rng();
+            reg_wr(0x3C, o); reg_wr(0x4C, w); ref_simple(o, w, 0xF);
+        }
+        wait_idle();
+        compare("stipples and simple writes through the continue register");
+
+        // a copy pair: destination byte D + k comes from source byte S - shift + k; source bytes
+        // below the block's own come from the previous block's read where that holds them
+        struct { uint32_t ns = 0; bool v = false; uint8_t snap[32]; } pv;
+        auto pair = [&](uint32_t sa, uint32_t ms, uint32_t da, uint32_t md, int sh) {
+            reg_wr(0x38, sh);
+            reg_wr(0x3C, sa); reg_wr(0x4C, ms); reg_wr(0x3C, da); reg_wr(0x4C, md);
+            uint32_t ns = sa & ~3u, ds = da & ~3u; uint8_t snap[32], out[32];
+            for (int k = 0; k < 32; k++) snap[k] = ref[ns + k];
+            for (int k = 0; k < 32; k++) {
+                uint32_t a = ns - sh + k;
+                out[k] = a >= ns ? snap[a - ns] : (pv.v && a >= pv.ns && a < pv.ns + 32) ? pv.snap[a - pv.ns] : ref[a];
+            }
+            for (int k = 0; k < 32; k++) if (md >> k & 1) put(ds + k, out[k], true);
+            pv.ns = ns; pv.v = true; memcpy(pv.snap, snap, 32);
+        };
+        auto fwd = [&](uint32_t sa, uint32_t da, int w) {
+            int read = 0;
+            while (read < w) {
+                uint32_t ms = ~0u, md = (w - read) >= 32 ? ~0u : ~0u >> (32 - (w - read));
+                int sal = sa & 7; sa -= sal; ms <<= sal;
+                int dal = da & 7; da -= dal; md <<= dal;
+                int ps;
+                if (dal >= sal) ps = dal - sal;
+                else { ps = 8 - (sal - dal); da -= 8; md <<= 8; }
+                pair(sa, ms, da, md, ps);
+                sa += 32 - ps; da += 32;
+                read += 32; read -= dal;
+                if (dal < sal) read -= 8;
+            }
+        };
+        auto bwd = [&](uint32_t a1, uint32_t a2, int w) {
+            uint32_t sa = a1 + w - 32, da = a2 + w - 32; int read = 0;
+            while (read < w) {
+                uint32_t ms = ~0u, md = (w - read) >= 32 ? ~0u : ~0u << (32 - (w - read));
+                int sal = sa & 7, dal = da & 7, ps;
+                if (read == 0 && dal && sal > dal) {
+                    uint32_t ts = a1 + (w - sal), td = a2 + (w - dal - 8);
+                    uint32_t tdm = (0xFFu >> (8 - dal)) << 8;
+                    pair(ts, ~0u, td, tdm, (8 - sal) + dal);
+                    sa += 8 - sal; ms >>= 8 - sal; ms >>= dal; md >>= dal;
+                } else if (read == 0 && sal != dal) sa += 8 - sal;
+                else if (sal) { sa += 8 - sal; ms >>= 8 - sal; }
+                if (dal) { da += 8 - dal; md >>= 8 - dal; }
+                if (dal >= sal) ps = dal - sal;
+                else { ps = (8 - sal) + dal; if (dal) { sa += 8; ms >>= 8; } }
+                pair(sa, ms, da, md, ps);
+                if (dal > sal) { sa -= 24; da -= 32 - ps; read += read == 0 ? 24 + sal : 24; }
+                else if (dal == sal) { sa -= 32; da -= 32; read += (read == 0 && dal) ? 32 - (8 - dal) : 32; }
+                else { sa -= 24; da -= 32 - ps; read += dal ? 16 + sal : 32 - ps; }
+            }
+        };
+        // rows of a 1024-wide screen; the result has to be the row moved and nothing else
+        // touched (the reference is the pair model above, the check is against a plain move)
+        const uint32_t W = 1024, base = 0x140000, rows = 48;
+        set_mode(0x07); set_rop(3); set_pm(0xFFFFFFFF);
+        long xbad = 0;
+        for (int i = 0; i < 240; i++) {
+            int w = 1 + rng() % (i < 80 ? 40 : 300);
+            int x1 = 40 + rng() % (W - 80 - w), y1 = 1 + rng() % (rows - 2), x2, y2;
+            if (i % 3 == 0) { y2 = y1; x2 = x1 + 1 + rng() % 24; if (x2 + w > (int)W - 40) x2 = x1 - 1 - rng() % 24; }
+            else if (i % 3 == 1) { y2 = y1; x2 = x1 - 1 - (int)(rng() % 24); }
+            else { y2 = 1 + rng() % (rows - 2); x2 = 40 + rng() % (W - 80 - w); if (y2 == y1) y2 = y1 == 1 ? 2 : y1 - 1; }
+            std::vector<uint8_t> want(ref.begin() + base, ref.begin() + base + W * rows);
+            std::vector<uint8_t> row(want.begin() + y1 * W + x1, want.begin() + y1 * W + x1 + w);
+            for (int k = 0; k < w; k++) want[y2 * W + x2 + k] = row[k];
+            bool back = x2 > x1 && x1 + w > x2;
+            pv.v = false;
+            if (back) bwd(base + y1 * W + x1, base + y2 * W + x2, w); else fwd(base + y1 * W + x1, base + y2 * W + x2, w);
+            // (the driver's own slip: backwards, narrower than 32, destination alignment not 0 and
+            // below the source's, it shifts the destination mask down where it should cut its top,
+            // and writes that many pixels left of the destination: not a plain move on any 21030)
+            int sal_ = (x1 + w) & 7, dal_ = (x2 + w) & 7;
+            bool slip = back && w < 32 && dal_ && sal_ > dal_;
+            long bad = 0;
+            if (!slip) for (uint32_t k = 0; k < W * rows; k++) if (ref[base + k] != want[k]) bad++;
+            if (bad && xbad++ < 8) printf("  XFree86 copy %d %s: (%d,%d) -> (%d,%d) w %d: %ld bytes are not the moved row\n",
+                                         i, back ? "backwards" : "forwards", x1, y1, x2, y2, w, bad);
+            wait_idle();
+        }
+        CHECK(xbad == 0, "XFree86 copies: %ld rows not moved as a plain copy would", xbad);
+        reg_wr(0x38, 0); set_mode(0);
+        compare("copies through the continue register (XFree86)");
     }
     printf("tb_tga: copies done\n");
 
