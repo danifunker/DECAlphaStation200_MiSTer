@@ -51,6 +51,7 @@ The device is 89 % full (37.2k of 41.9k ALMs). Tools: `quartus_sta -t scratch/cp
 | round 1 (`60eea26`) | -1.737 | -659 | the store-forward compare on the D-cache index only; the return-address check in X; the 21071's write data apart from the DMA decode |
 | round 2 = `_20261111d` (`10aee62`) | -2.108 | -616 | the machine reset registered; `fq_ne` (the FP queue's "not empty" as a register) ahead of the stall chain; the DTB's page-size select per entry; a register stage on the DMA masters' request (one more cycle per DMA access). 37,189 ALMs, 47,845 registers, HDMI clock +0.144 |
 | area = `_20261112b` (`a4ed6a4`) | -1.487 | -913 | no timing change: the DMA's base and scatter/gather registers and the TOY's CMOS in MLAB register files (`rtl/sio/isa_lutram.v`); 36,473 ALMs (87 %, -716), 46,101 registers, HDMI clock -0.371 |
+| `_20261112c` (`c4fc2ce`) | -1.921 | -738 | not a timing change (the OPL's output interpolated, `audio.md`): 36,403 ALMs, 46,198 registers, HDMI clock met; the 0.4 ns from `b` is fit variation |
 
 Each round removed the groups it aimed at (`stall_d`, the DTB reset paths, apecs `d_addr` left the
 list after round 2) and others took their place. After round 2: `m2_hitq` -2.11 (139 paths from
@@ -101,8 +102,10 @@ area. Board check (.143): the DROM's POST, SRM `show config` / `show device` (al
 devices, dka0, dka400, dva0, ewa0, pka0, the ISA table read from the CMOS), `set os_type nt`
 kept across a reset (CMOS write and read), ARC, NT 4.0 boots, logs on and shows the right time,
 `ubench-alpha -i 3 dhry2reg whetstone-double`: 152160 lps / 49.8 MWIPS (the two tests alone; the
-132311 of `d` was within the full suite). Not tried on the board: a floppy transfer and audio
-playback (the DMA; covered by the equivalence run and `tb_fdc` / `tb_audio` only).
+132311 of `d` was within the full suite). Not tried on the board: a floppy transfer
+(covered by the equivalence run and `tb_fdc` only). Audio was (later the same day): NT's sounds
+(WSS playback through the DMA) play, and canyon.mid recorded on `d` and on `b` is the same
+(per-note level differs by more than 25 % in 0 of 280 notes).
 
 ## Consequences for the pipeline (cpu.md 11)
 

@@ -117,15 +117,23 @@ At 48 kHz (a phase accumulator on the system clock) the held values of the four 
 summed into 18 bits and saturated to signed 16-bit:
 
 - WSS: `pcm_l/r`, held between the codec's frames;
-- FM: mono into both channels, held between jtopl's samples;
+- FM: mono into both channels, a line between jtopl's samples (below);
 - CD: `cd_audio_l/r`, signed 16-bit, held from each `cd_audio_stb` (44.1 kHz from the SCSI CD-ROM);
 - the speaker (sio82378 `spk`: counter 2 gated by port 61h bits 0-1): the clocks it was high in
   the period, scaled to 0..8192 (a quarter of full scale). The averaging is a box filter: a 1 kHz
   beep comes out as a clean square without the 100 MHz edges aliasing.
 
 All sources are at unity gain. `mute[3:0]` (0 WSS, 1 FM, 2 CD, 3 speaker) silences one: it is
-there for an OSD page (P4 Audio). Zero-order hold is the only resampling (44.1 or 49.7 kHz into
-48 kHz), as on many MiSTer cores.
+there for an OSD page (P4 Audio). The WSS and the CD are resampled by zero-order hold (as on many
+MiSTer cores). The FM is not (2026-11-12): held 49,716 Hz samples taken at 48 kHz put an image
+1716 Hz either side of every partial, 20 dB below it, which a MIDI file played by NT 4.0 showed
+plainly (a 4688 Hz partial with 2972 and 6404 Hz beside it). `opl_isa` now draws a line between
+the chip's last two samples (one sample of delay, a phase counter restarted by jtopl's `sample`,
+one 17 x 11 multiplier); `tb_audio` checks that the output moves in small steps, and its
+`FM_DUMP=<file>` writes a tone at 48 kHz (no spur above -67 dB). On the board (`_20261112c`,
+canyon.mid in NT 4.0's Media Player, 60 s recorded off HDMI) the images fell from -20 dB to the
+level of the music's own partials there (-31 dB median); the notes are the same as before
+(envelope correlation 0.98).
 
 The output changes only at the 48 kHz period, with `aud_tgl` toggling; `audio_cdc.v` in the
 MiSTer top synchronises the toggle into CLK_AUDIO (24.576 MHz) and takes the pair when it
@@ -181,4 +189,4 @@ audio_cdc,as200_audio}.v`.
 - Capture is silence (the MiSTer has no audio input). I13's digital loopback is not mixed.
 - The CD-ROM's analogue path on the real card goes through the AD1848's AUX inputs (I2-I5 gain
   and mute); here the CD goes straight to the mix at unity.
-- Resampling is zero-order hold.
+- Resampling of the WSS and the CD is zero-order hold (the FM is interpolated).

@@ -144,7 +144,12 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 - **2026-11-12: area round** (`a4ed6a4` = board build **`_20261112b`**): the DMA's registers and the TOY's CMOS in MLAB register
   files (`rtl/sio/isa_lutram.v`, needs `no_rw_check`), checked against the old modules cycle by cycle (`scratch/area/eq.sh`):
   36.5k ALMs (87 %), -1.487 ns, TNS -913. **COM2 has to stay: SRM hangs after the DROM's POST without it** (`_20261112a`, retired
-  to `rbf_old`). SRM, ARC, NT 4.0 and ubench checked on .143; floppy and audio not on the board.
+  to `rbf_old`). SRM, ARC, NT 4.0 and ubench checked on .143; floppy not on the board.
+- **2026-11-12: MIDI on NT 4.0 "doesn't sound correct" (user).** Not from the area round: canyon.mid recorded off HDMI is the same
+  on `_20261111d` and `_20261112b`. Fixed: the OPL's 49.7 kHz samples were held into the 48 kHz mix (images 1716 Hz around every
+  partial); `opl_isa` now interpolates (`c4fc2ce` = board build **`_20261112c`**, -1.921 ns, 36.4k ALMs; images -20 -> -31 dB on
+  the board). Still different from the real machine: the FM is an OPL2, so NT plays in AdLib mode (`docs/gaps.md`).
+  `misterkvms-cli record 60s X.wav` + `scratch/area/vid/img.py` / `env.py` measure it.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
