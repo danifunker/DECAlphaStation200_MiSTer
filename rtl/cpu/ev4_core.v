@@ -506,7 +506,9 @@ module ev4_core (
     reg         x_sel_lda, x_sel_link;  // fast-result selects, decoded in D
     reg         x_cmov;
     reg         x_pred;                 // predicted taken (the fetch went to the target)
-    reg         x_pk;                   // ... and sure to be right: BR / BSR, a jump to the predicted address
+    reg         x_pk;                   // ... and sure to be right: BR / BSR
+    reg         x_pj;                   // ... a jump: right when Rb is the predicted address (compared
+    reg  [40:0] x_ptgt;                 //     in X on x_b; in D it sat behind the forwarding, -1.8 ns)
     reg         x_pcbr;                 // ... a conditional branch: right when the condition holds
 
     // M1 / M2 registers (declared here for forwarding)
@@ -695,7 +697,7 @@ module ev4_core (
     // a redirect is a wrong prediction: taken and not predicted, or predicted and not taken
     // (x_btarget is PC + 4 then), or a jump to another address than the return stack's
     wire x_taken = x_cls == C_BR || x_cls == C_JMP || (x_cls == C_CBR && x_cond);
-    assign x_redir = x_fire && x_exc == E_NONE && (x_pcbr ? !x_cond : x_pred ? !x_pk : x_taken);
+    assign x_redir = x_fire && x_exc == E_NONE && (x_pcbr ? !x_cond : x_pred ? !(x_pk || (x_pj && x_b[63:2] == {{21{x_ptgt[40]}}, x_ptgt})) : x_taken);
     assign x_target_r = x_cls == C_JMP ? {x_b[63:2], 2'b00} : x_btarget;
     // the return stack as the instructions that ran leave it
     wire        x_push = x_ir[31:26] == 6'h34 || (x_cls == C_JMP && x_ir[14]);
@@ -879,7 +881,7 @@ module ev4_core (
     // lands one cycle after the commit (registered write port), so a load up
     // to three instructions younger read the line before it: merge them in,
     // oldest first
-    reg         sh0_v, sh1_v, sh2_v; reg [33:3] sh0_a, sh1_a, sh2_a; reg [63:0] sh0_d, sh1_d, sh2_d; reg [7:0] sh0_b, sh1_b, sh2_b;
+    reg         sh0_v, sh1_v, sh2_v; reg [12:3] sh0_a, sh1_a, sh2_a; reg [63:0] sh0_d, sh1_d, sh2_d; reg [7:0] sh0_b, sh1_b, sh2_b;
     function [63:0] merge;
         input [63:0] q; input v; input [33:3] a; input [33:3] la; input [63:0] d; input [7:0] be;
         integer k;
@@ -891,7 +893,13 @@ module ev4_core (
     endfunction
     // the address compares are done in M1 against the entries the load will
     // meet in M2 (sh0, sh1 then and the store committing then) and registered
-    // with their data (timing: they ran from m2_pa into the load result)
+    // with their data (timing: they ran from m2_pa into the load result).
+    // Only the D-cache index is compared (cpu-timing.md): the history holds
+    // stores that hit, the merged data is used only when the load hits
+    // (m2_lq), and two hits on one index are on one line, so one address. The
+    // tag cannot change in between: a fill takes more cycles than the history
+    // lives (and clears it), an invalidate makes the load miss. The full
+    // compare ran m1_va -> DTB -> m1_pa -> 31 bits, the worst path of the core
     reg         mg2_v, mg1_v, mg0_v;
     reg  [63:0] mg2_d, mg1_d, mg0_d;
     reg   [7:0] mg2_b, mg1_b, mg0_b;
@@ -1155,8 +1163,8 @@ module ev4_core (
                     // where a wrong prediction goes: the target, or PC + 4 when it was predicted taken
                     x_btarget <= d_pred ? d_pc + 64'd4 : d_pc + 64'd4 + {{41{d_ir[20]}}, d_ir[20:0], 2'b00};
                     x_pred <= d_pred; x_pcbr <= d_pred && dc_cls == C_CBR;
-                    x_pk   <= d_pred && (dc_cls == C_BR || (dc_cls == C_JMP && !loop_b &&
-                                         fwd_b[63:2] == {{21{d_ptgt[40]}}, d_ptgt}));
+                    x_pk   <= d_pred && dc_cls == C_BR;
+                    x_pj   <= d_pred && dc_cls == C_JMP; x_ptgt <= d_ptgt;
                     x_link <= d_pc + 64'd4;
                     x_ipr <= ipr_rd;
                     x_sel_lda <= dc_cls == C_LDA;
@@ -1213,9 +1221,9 @@ module ev4_core (
                 m2_dpr <= {(dtb_m & (dtb_m - 32'd1)) != 32'd0, dtb_spr};
                 m2_dq <= dc_q; m2_dt <= dct_q; m2_dv <= dcv_q; m2_hitq <= m1_hit;
                 // store history as M2 will see it: sh1 -> sh2, sh0 -> sh1, M2's commit -> sh0
-                mg2_v <= sh1_v && sh1_a == m1_pa[33:3]; mg2_d <= sh1_d; mg2_b <= sh1_b;
-                mg1_v <= sh0_v && sh0_a == m1_pa[33:3]; mg1_d <= sh0_d; mg1_b <= sh0_b;
-                mg0_v <= m2_live && m2_store && !(m2_stc && !m2_stc_ok) && m2_hit && m2_pa[33:3] == m1_pa[33:3];
+                mg2_v <= sh1_v && sh1_a == m1_va[12:3]; mg2_d <= sh1_d; mg2_b <= sh1_b;
+                mg1_v <= sh0_v && sh0_a == m1_va[12:3]; mg1_d <= sh0_d; mg1_b <= sh0_b;
+                mg0_v <= m2_live && m2_store && !(m2_stc && !m2_stc_ok) && m2_hit && m2_pa[12:3] == m1_va[12:3];
                 mg0_d <= m2_wq; mg0_b <= m2_be;
                 mstate <= MS_IDLE;
             end
@@ -1243,7 +1251,7 @@ module ev4_core (
                     if (!wb_join) wb_wp <= wb_wp + 2'd1;
                     if (m2_hit) begin
                         dc_we <= 1'b1; dc_wa <= m2_pa[12:3]; dc_wd <= m2_wq; dc_wbe <= m2_be;
-                        sh0_v <= 1'b1; sh0_a <= m2_pa[33:3]; sh0_d <= m2_wq; sh0_b <= m2_be;
+                        sh0_v <= 1'b1; sh0_a <= m2_pa[12:3]; sh0_d <= m2_wq; sh0_b <= m2_be;
                     end
                 end
                 if (m2_lock) begin lock_flag <= 1'b1; lock_addr <= m2_pa[33:4]; end
@@ -1444,7 +1452,8 @@ module ev4_core (
                     if (!bunc) begin dc_we <= 1'b1; dc_wa <= {m2_pa[12:5], bbeat}; dc_wd <= mem_rdata; dc_wbe <= 8'hFF; end
                     if (bunc || bbeat == 2'd3) begin
                         mem_req <= 1'b0; bown <= B_NONE; mstate <= MS_DONE;
-                        if (!bunc) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_wd <= m2_pa[33:13]; dct_v <= 1'b1; tagw = 1'b1; dsettle <= 2'd3; end
+                        if (!bunc) begin dct_we <= 1'b1; dct_wa <= m2_pa[12:5]; dct_wd <= m2_pa[33:13]; dct_v <= 1'b1; tagw = 1'b1; dsettle <= 2'd3;
+                                           sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0; end
                     end else begin
                         bbeat <= bbeat + 2'd1; mem_addr <= {m2_pa[33:5], bbeat + 2'd1};
                     end

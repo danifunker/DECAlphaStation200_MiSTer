@@ -263,6 +263,12 @@ module apecs (
     wire [27:0] isz  = inst_size[bank];
     wire [27:0] doff = inst_base[bank] + (boff[bank][27:0] & (isz - 28'd1));
 
+    // the write data is taken whenever S_IDLE sees a request, apart from the
+    // decode: it means something only with the d_req that decode raises
+    // (timing: its enable sat behind the DMA window compare, -2.1 ns)
+    always @(posedge clk)
+        if (st == S_IDLE) d_wdata <= (dm_req && !dm_ack) ? {8{dm_wdata}} : c_line ? c_wline : {4{c_wdata}};
+
     always @(posedge clk) begin
         c_ack <= 1'b0;
         dm_ack <= 1'b0;
@@ -286,7 +292,6 @@ module apecs (
             end else if (dmx[34]) begin
                 d_req <= 1'b1; d_we <= dm_we; d_addr <= dmx[26:3]; d_line <= 1'b0;
                 d_be <= {28'd0, dm_be} << {dmx[4:2], 2'b00};
-                d_wdata <= {8{dm_wdata}};
                 dma_lane <= dmx[2];
                 st <= S_DMA;
                 dinv <= dm_we; dinv_idx <= dmx[12:5];
@@ -298,8 +303,8 @@ module apecs (
                 // ---------------------------------------- memory
                 if (bank_hit && isz != 28'd0) begin
                     d_req <= 1'b1; d_we <= c_we; d_addr <= doff[26:3];
-                    if (c_line) begin d_be <= c_wmask; d_wdata <= c_wline; end
-                    else begin d_be <= {24'd0, c_be} << {doff[4:3], 3'b000}; d_wdata <= {4{c_wdata}}; end
+                    if (c_line) d_be <= c_wmask;
+                    else d_be <= {24'd0, c_be} << {doff[4:3], 3'b000};
                     d_line <= c_line && !c_we; d_beats <= 2'd0;
                     st <= S_DRAM;
                 end else begin
