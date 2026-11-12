@@ -6,14 +6,14 @@ AD1848** codec, I/O base 530h (jumpers SW1/SW2: 530h, 604h, E80h, F40h), and an 
 the manual calls a "Yamaha YMF562" (most likely a YMF262 OPL3) at fixed 388h-38Bh. The card
 also mixes the CD-ROM's analogue audio and the motherboard speaker.
 
-`rtl/audio/` (plain Verilog-2001, except jotego's jtopl, used as is):
+`rtl/audio/` (plain Verilog-2001, except the OPL3 core, used as is):
 
 | File | Contents |
 |---|---|
 | `as200_audio.v` | the wrapper on the 82378's xio bus (sio.md 1): the card, the FM chip, the mix |
 | `wss_ad1848.v` | the WSS command/ID registers and the AD1848 (from the RS/6000 core's `IBMRS6K7248_cs4232.sv`, reduced) |
-| `opl_isa.v` | the FM chip's ports in front of jtopl's OPL2, with a paced write queue (from `IBMRS6K7248_opl.sv`) |
-| `jtopl/` | JTOPL (Jose Tejada, GPL-3), the OPL2 (YM3812); copied unchanged from the RS/6000 core (itself from openfpga-PCXT f2c011d). `jtopl.qip` lists the files (jtopl2.v first) |
+| `opl_isa.v` | the FM chip's ports in front of the OPL3, its bank rule for NEW = 0, the samples into the system clock and to 48 kHz |
+| `opl3_fpga/` | Greg Taylor's opl3_fpga (LGPL-3, SystemVerilog), the YMF262, as in ao486_MiSTer `628ddbc` (`README.md` there); unchanged. `jtopl/` (the OPL2 used until `_20261112c`) is still in the tree, not built |
 | `audio_mix.v` | WSS + FM + CD + speaker, 48 kHz, saturated |
 | `audio_cdc.v` | the mix into CLK_AUDIO for `sys/` (instantiated in the MiSTer top) |
 | `verilator/tb/tb_audio.cpp`, `tb_audio_top.v` | unit bench with the real SIO, `make -C verilator tb_audio` (64 checks) |
@@ -99,17 +99,31 @@ Indirect registers (AD1848: I0-I15; the index's bit 4 is ignored, so I16-I31 ali
 
 ## 3. The FM chip (`opl_isa.v`)
 
-388h index / status, 389h data, 38Ah/38Bh the OPL3's bank 1. **An OPL2 for now**: jotego's
-jtopl has no OPL3 yet (the README's YMF262 row says "Not yet") and none is among the user's
-repos, so jtopl2 (YM3812) runs bank 0. Bank 1's writes are dropped and the status is jtopl's
-OPL2 status (bits 2:1 set), so OPL3 detection finds an OPL2 and software uses it as one. The
-timers and their flags (AdLib detection) are the chip's. Reads of 389h/38Bh give FFh.
+388h index / status, 389h data, 38Ah/38Bh the second register pair. **An OPL3 since 2026-11-12**
+(user: "I think I'm used to OPL3"): Greg Taylor's opl3_fpga, the core ao486_MiSTer uses, in
+`rtl/audio/opl3_fpga/`, unchanged and in SystemVerilog (an exception to the plain-Verilog rule:
+someone else's chip, better kept identical to its source). Until `_20261112c` an OPL2 (jtopl2)
+stood here with bank 1 dropped, and NT 4.0 played MIDI in its AdLib mode.
 
-The chip runs on a 3.579545 MHz clock enable (sample rate 49.7 kHz). Its writes go into a
-64-entry queue and are handed on 3.3 us after an index and 23 us after data (the OPL2's own
-rules: jtopl applies a register as its slot comes round). The CPU's ISA accesses are much faster
-than an ISA bus, so software that paces itself by status reads would otherwise outrun the chip;
-the queue catches that, at the cost of latency when software does not pace at all.
+- The chip runs on CLK_AUDIO (24.576 MHz), a sample every 494 clocks (49,749 Hz). Writes cross
+  from the system clock through the core's 64-entry asynchronous FIFO, which empties at one byte
+  per audio clock (40.7 ns): there is no pacing as with jtopl (whose 23 us per data write could
+  overflow its queue on a burst of more than 32 register writes and lose key-offs; a hung note
+  was heard once on `_20261112c`, cause not confirmed). `tb_audio` writes 400 bytes at one per
+  3.5 system clocks and the last ones arrive; at one per 2.5 clocks the FIFO overflows (the
+  bench's bus; the CPU's I/O cycles through the 21071 were not measured).
+- The status (bits 2:1 = 0, an OPL3) reads at 388h; 389h-38Bh read FFh.
+- **NEW = 0**: a YMF262 not yet switched to its new mode (bank 1 register 05h bit 0) is an OPL2 at
+  either pair, so an index written at 38Ah selects bank 0 (05h excepted). opl3_fpga takes 38Ah
+  as bank 1 always; `opl_isa` keeps NEW and chooses the bank. NT 4.0's synthesizer driver tells
+  the chips apart so: timer 1 started through 38Ah/38Bh must set its flag, and must not once NEW
+  is set. Without the rule (`_20261112d`) NT stayed in AdLib mode; `tb_audio` checks both halves.
+- The two channels are held with a toggle in the audio clock, taken into the system clock and
+  interpolated to 48 kHz (section 4).
+
+On the board: `_20261112e`, canyon.mid in NT 4.0's Media Player recorded off HDMI: other levels
+and spectrum than `d` (AdLib mode on the same chip), silence after the end, and both channels
+equal (the piece's pans or the driver: not looked into).
 
 ## 4. The mix (`audio_mix.v`)
 
@@ -117,7 +131,7 @@ At 48 kHz (a phase accumulator on the system clock) the held values of the four 
 summed into 18 bits and saturated to signed 16-bit:
 
 - WSS: `pcm_l/r`, held between the codec's frames;
-- FM: mono into both channels, a line between jtopl's samples (below);
+- FM: stereo, a line between the chip's samples (below);
 - CD: `cd_audio_l/r`, signed 16-bit, held from each `cd_audio_stb` (44.1 kHz from the SCSI CD-ROM);
 - the speaker (sio82378 `spk`: counter 2 gated by port 61h bits 0-1): the clocks it was high in
   the period, scaled to 0..8192 (a quarter of full scale). The averaging is a box filter: a 1 kHz
@@ -128,7 +142,7 @@ there for an OSD page (P4 Audio). The WSS and the CD are resampled by zero-order
 MiSTer cores). The FM is not (2026-11-12): held 49,716 Hz samples taken at 48 kHz put an image
 1716 Hz either side of every partial, 20 dB below it, which a MIDI file played by NT 4.0 showed
 plainly (a 4688 Hz partial with 2972 and 6404 Hz beside it). `opl_isa` now draws a line between
-the chip's last two samples (one sample of delay, a phase counter restarted by jtopl's `sample`,
+the chip's last two samples (one sample of delay, a phase counter restarted by the chip's sample strobe,
 one 17 x 11 multiplier); `tb_audio` checks that the output moves in small steps, and its
 `FM_DUMP=<file>` writes a tone at 48 kHz (no spur above -67 dB). On the board (`_20261112c`,
 canyon.mid in NT 4.0's Media Player, 60 s recorded off HDMI) the images fell from -20 dB to the
@@ -177,15 +191,14 @@ audio_cdc audio_cdc (.clk_audio(CLK_AUDIO), .in_l(aud_l), .in_r(aud_r), .in_tgl(
                      .out_l(AUDIO_L), .out_r(AUDIO_R));
 ```
 
-`files.qip`: `rtl/audio/jtopl/jtopl.qip` (QIP_FILE) and `rtl/audio/{wss_ad1848,opl_isa,audio_mix,
+`files.qip`: `rtl/audio/opl3_fpga/opl3.qip` (QIP_FILE), `rtl/audio/opl3_fpga/synchronizer.sv` and `rtl/audio/{wss_ad1848,opl_isa,audio_mix,
 audio_cdc,as200_audio}.v`.
 
 ## 6. Open
 
-- A real OPL3 (18 voices, 4-operator, stereo): when jtopl's YMF262 exists, or a port of another
-  OPL3 core. Until then bank 1 is dropped.
-- jtopl at 100 MHz: its logic moves only on the 3.58 MHz enable, but its paths are timed at
-  10 ns. If the fit shows them, the OPL can take its own slower clock.
+- The OPL3 on the board by ear (user), and whether NT pans anything (canyon.mid is equal on both
+  channels).
+- The FM's level against the WSS and the CD: the core's 16-bit output goes into the mix as it is.
 - Capture is silence (the MiSTer has no audio input). I13's digital loopback is not mixed.
 - The CD-ROM's analogue path on the real card goes through the AD1848's AUX inputs (I2-I5 gain
   and mute); here the CD goes straight to the mix at unity.

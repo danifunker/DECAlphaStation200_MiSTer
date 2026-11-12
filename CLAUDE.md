@@ -150,6 +150,12 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   partial); `opl_isa` now interpolates (`c4fc2ce` = board build **`_20261112c`**, -1.921 ns, 36.4k ALMs; images -20 -> -31 dB on
   the board). Still different from the real machine: the FM is an OPL2, so NT plays in AdLib mode (`docs/gaps.md`).
   `misterkvms-cli record 60s X.wav` + `scratch/area/vid/img.py` / `env.py` measure it.
+- **2026-11-12: the FM is an OPL3** (user: "I think I'm used to OPL3"): Greg Taylor's opl3_fpga (ao486_MiSTer's, LGPL-3,
+  SystemVerilog kept as it is in `rtl/audio/opl3_fpga/`) on CLK_AUDIO behind `opl_isa.v`, stereo (`3acc56a` = `_20261112d`).
+  NT 4.0 finds an OPL3 only if timer 1 starts through 38Ah/38Bh while NEW = 0: `opl_isa` maps that to bank 0 (`a6eec86` =
+  board build **`_20261112e`**, -1.479 ns, 36.9k ALMs). canyon.mid on `e`: another rendering than AdLib mode, no hung note,
+  both channels equal; to be judged by ear (`docs/design/audio.md` 3). In the Run box the KVM's `type` drops backslashes:
+  use `d:/winnt/media/...`.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
