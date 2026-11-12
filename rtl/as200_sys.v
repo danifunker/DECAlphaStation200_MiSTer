@@ -283,10 +283,20 @@ module as200_sys #(
     );
     // DMA masters: the 53C810 and the SIO's 8237s, fixed priority, the owner
     // kept until its transfer is acknowledged
-    wire        dm_req, dm_we, dm_ack;
+    // the masters' request, muxed (dmm_*) and registered (dm_*) on its way to the 21071
+    // (timing: a master's address ran through the mux and the DMA windows into d_addr);
+    // a master holds its request's address and data until the acknowledge
+    wire        dmm_req, dmm_we, dm_ack;
+    wire [31:0] dmm_addr, dmm_wdata, dm_rdata;
+    wire  [3:0] dmm_be;
+    reg         dm_req, dm_we;
+    reg  [31:0] dm_addr, dm_wdata;
+    reg   [3:0] dm_be;
+    always @(posedge clk) begin
+        dm_req <= !rst && dmm_req;
+        dm_we <= dmm_we; dm_addr <= dmm_addr; dm_be <= dmm_be; dm_wdata <= dmm_wdata;
+    end
     assign dbg_dm_req = dm_req;
-    wire [31:0] dm_addr, dm_wdata, dm_rdata;
-    wire  [3:0] dm_be;
     wire        scsi_dm_req, scsi_dm_we;
     wire [31:0] scsi_dm_addr, scsi_dm_wdata;
     wire  [3:0] scsi_dm_be;
@@ -307,12 +317,12 @@ module as200_sys #(
             else if (tga_dm_req) begin dm_own <= 2'd3; dm_busy <= 1'b1; end
         end else if (dm_ack) dm_busy <= 1'b0;
     end
-    assign dm_req   = dm_busy && (dm_own == 2'd3 ? tga_dm_req : dm_own == 2'd2 ? enet_dm_req :
+    assign dmm_req   = dm_busy && (dm_own == 2'd3 ? tga_dm_req : dm_own == 2'd2 ? enet_dm_req :
                                   dm_own == 2'd1 ? sio_dm_req : scsi_dm_req) && !dm_ack;
-    assign dm_we    = dm_own == 2'd3 ? tga_dm_we    : dm_own == 2'd2 ? enet_dm_we    : dm_own == 2'd1 ? sio_dm_we    : scsi_dm_we;
-    assign dm_addr  = dm_own == 2'd3 ? tga_dm_addr  : dm_own == 2'd2 ? enet_dm_addr  : dm_own == 2'd1 ? sio_dm_addr  : scsi_dm_addr;
-    assign dm_be    = dm_own == 2'd3 ? tga_dm_be    : dm_own == 2'd2 ? enet_dm_be    : dm_own == 2'd1 ? sio_dm_be    : scsi_dm_be;
-    assign dm_wdata = dm_own == 2'd3 ? tga_dm_wdata : dm_own == 2'd2 ? enet_dm_wdata : dm_own == 2'd1 ? sio_dm_wdata : scsi_dm_wdata;
+    assign dmm_we    = dm_own == 2'd3 ? tga_dm_we    : dm_own == 2'd2 ? enet_dm_we    : dm_own == 2'd1 ? sio_dm_we    : scsi_dm_we;
+    assign dmm_addr  = dm_own == 2'd3 ? tga_dm_addr  : dm_own == 2'd2 ? enet_dm_addr  : dm_own == 2'd1 ? sio_dm_addr  : scsi_dm_addr;
+    assign dmm_be    = dm_own == 2'd3 ? tga_dm_be    : dm_own == 2'd2 ? enet_dm_be    : dm_own == 2'd1 ? sio_dm_be    : scsi_dm_be;
+    assign dmm_wdata = dm_own == 2'd3 ? tga_dm_wdata : dm_own == 2'd2 ? enet_dm_wdata : dm_own == 2'd1 ? sio_dm_wdata : scsi_dm_wdata;
     wire        scsi_dm_ack = dm_ack && dm_own == 2'd0;
     wire        sio_dm_ack  = dm_ack && dm_own == 2'd1;
     wire        enet_dm_ack = dm_ack && dm_own == 2'd2;

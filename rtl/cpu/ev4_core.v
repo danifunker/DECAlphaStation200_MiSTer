@@ -567,10 +567,11 @@ module ev4_core (
     wire  [5:0] fpu_fset;
     wire  [6:0] fpu_esum;
     reg   [1:0] fq_n;
+    reg         fq_ne;                  // fq_n != 0, registered (it heads the stall chain)
     reg  [77:0] fq0, fq1, fq2;          // {trap, EXC_SUM bits, FPCR bits, result}, fq0 the oldest
     wire [77:0] fq_in = {fpu_trap, fpu_esum, fpu_fset, fpu_result};
-    wire        f_ok  = fq_n != 2'd0 || fpu_done;       // the result of M2's operation is here
-    wire [77:0] f_hd  = fq_n != 2'd0 ? fq0 : fq_in;
+    wire        f_ok  = fq_ne || fpu_done;       // the result of M2's operation is here
+    wire [77:0] f_hd  = fq_ne ? fq0 : fq_in;
     wire [63:0] f_res = f_hd[63:0];
     wire  [5:0] f_fs  = f_hd[69:64];
     wire  [6:0] f_es  = f_hd[76:70];
@@ -788,22 +789,26 @@ module ev4_core (
     // the DTB (all entries compared at once; at most one matches)
     reg  [31:0] dtb_m;
     reg  [33:13] dtb_spfn;
-    reg   [1:0] dtb_sgh;
     reg   [9:0] dtb_spr;
     integer di;
     always @* begin
-        dtb_spfn = 21'd0; dtb_sgh = 2'd0; dtb_spr = 10'd0;
+        dtb_spfn = 21'd0; dtb_spr = 10'd0;
         for (di = 0; di < 32; di = di + 1) begin
             dtb_m[di] = dtb_hit_i(dtb_v[di], dtb_tag[di], dtb_gh[di], m1_va[42:13]);
-            if (dtb_m[di]) begin dtb_spfn = dtb_spfn | dtb_pfn[di]; dtb_sgh = dtb_sgh | dtb_gh[di]; dtb_spr = dtb_spr | dtb_pr[di]; end
+            // (the VA bits a large page passes through are picked per entry, beside the
+            // match, not after the OR: timing)
+            if (dtb_m[di]) begin
+                dtb_spfn = dtb_spfn | {dtb_pfn[di][33:22],
+                                       dtb_gh[di] == 2'd3 ? m1_va[21:19] : dtb_pfn[di][21:19],
+                                       dtb_gh[di][1]      ? m1_va[18:16] : dtb_pfn[di][18:16],
+                                       dtb_gh[di] != 2'd0 ? m1_va[15:13] : dtb_pfn[di][15:13]};
+                dtb_spr = dtb_spr | dtb_pr[di];
+            end
         end
     end
     wire        m1_dtbhit = dtb_m != 32'd0;
     wire        m1_xok  = m1_phys || m1_sp2 || m1_sp1 || m1_dtbhit;
-    wire [33:0] m1_dpa  = {dtb_spfn[33:22],
-                           dtb_sgh == 2'd3 ? m1_va[21:19] : dtb_spfn[21:19],
-                           dtb_sgh[1]      ? m1_va[18:16] : dtb_spfn[18:16],
-                           dtb_sgh != 2'd0 ? m1_va[15:13] : dtb_spfn[15:13], m1_va[12:0]};
+    wire [33:0] m1_dpa  = {dtb_spfn, m1_va[12:0]};
     wire [33:0] m1_pa   = (m1_phys || m1_sp2) ? m1_va[33:0] : m1_sp1 ? {4'd0, m1_va[29:0]} : m1_dpa;
     // protection (DTB hits only; superpages are kernel-only by construction),
     // and the D-cache tag compare, both per entry and ORed (no serial select
@@ -1042,7 +1047,7 @@ module ev4_core (
             sl_xmit <= 1'b1;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
-            x_fpgo <= 1'b0; fq_n <= 2'd0; rs_sp <= 2'd0; cs_sp <= 2'd0; rs_n <= 3'd0; cs_n <= 3'd0; exc_sum_r <= 7'd0; exc_mask <= 64'd0;
+            x_fpgo <= 1'b0; fq_n <= 2'd0; fq_ne <= 1'b0; rs_sp <= 2'd0; cs_sp <= 2'd0; rs_n <= 3'd0; cs_n <= 3'd0; exc_sum_r <= 7'd0; exc_mask <= 64'd0;
             wb_ev <= 4'd0; wb_wp <= 2'd0; wb_rp <= 2'd0; bown <= B_NONE; mem_req <= 1'b0; dsettle <= 2'd0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
@@ -1191,8 +1196,11 @@ module ev4_core (
                 2'd1: fq1 <= fq_in;
                 default: fq2 <= fq_in;
                 endcase
-            if (w_redir) fq_n <= 2'd0;
-            else fq_n <= fq_n + {1'b0, fpu_done} - {1'b0, f_pop};
+            if (w_redir) begin fq_n <= 2'd0; fq_ne <= 1'b0; end
+            else begin
+                fq_n <= fq_n + {1'b0, fpu_done} - {1'b0, f_pop};
+                fq_ne <= (fq_n + {1'b0, fpu_done} - {1'b0, f_pop}) != 2'd0;
+            end
 
             // ------------------------------------------------ X -> M1
             if (w_redir) m1_v <= 1'b0;

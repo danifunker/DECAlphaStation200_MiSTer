@@ -279,7 +279,8 @@ always @(posedge clk_sys) begin
 	if (reset_req || ioctl_download || !sdram_ready || roms_seen != 2'b11 || !nv_go) rst_cnt <= 4'hF;
 	else if (rst_cnt != 0) rst_cnt <= rst_cnt - 1'd1;
 end
-wire m_reset = rst_cnt != 0;
+reg  m_reset = 1'b1;		// registered: it fans out to the whole machine
+always @(posedge clk_sys) m_reset <= rst_cnt != 0;
 
 // the settings the machine runs with, taken from the OSD at every reset
 reg [127:0] cfg;
