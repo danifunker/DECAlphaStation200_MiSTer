@@ -85,11 +85,40 @@ the board's latencies and two random-delay runs), `tb_sdram` (random line writes
 against a reference), `tb_apecs`, `t3-fpld`, `t3-rwc`, `t3-prefetch`. Not run: the T0 suites (`cputest-pipe`, they
 need the alpha cross compiler, which the Windows machine's WSL does not have).
 
-## 4. Next, by the numbers
+## 4. Change 1 on the board (`_20261111b`, 2026-11-11)
+
+Fit: 37,528 ALMs (90 %), 47,555 registers, -2.091 ns at 100 MHz (as `_20261111a`: 37.5k, -2.062 ns).
+SRM and NT 4.0 boot. `ubench` on NT (UnixBench 6.0.1; its index 10 is a SPARCstation 20-61:
+Dhrystone 116700 lps, Whetstone 55.0 MWIPS):
+
+| | `_20261109g` (10 passes) | `_20261111b` (3 passes) |
+|---|---|---|
+| Dhrystone 2 (lps) | 103011.1 (index 8.8) | 109132.9 (9.4) |
+| Whetstone (MWIPS) | 30.6 (5.6) | **21.4 (3.9)** |
+| Arithoh | 5326311.1 | 5390163.2 |
+| Arith short / int / long | 9124.5 / 9809.7 / 10042.6 | 9093.1 / 10119.9 / 10118.2 |
+| Arith float / double | 13138.0 / 10232.3 | 13703.3 / 10231.9 |
+| Tower of Hanoi | 859.8 | 1569.8 |
+
+- **Whetstone is 30 % lower and the cause is not known.** No CPU, apecs or SDRAM commit lies between
+  the two builds other than change 1. Two benches added to look for it, `missmix` (a frame and a
+  table on one D-cache index: D-misses behind stores) and `fpmix` (four doubles of a line read,
+  added, stored back, a call), are both faster with change 1 (8.35 -> 7.30 and 4.68 -> 3.54 CPI),
+  so the bench does not reproduce it. Open: an A/B of Whetstone alone on `_20261111a` and
+  `_20261111b` (same passes, same NT state).
+- Dhrystone gained 6 % where `stackmix` gained 2x: store waits were not what bounds it on the
+  board.
+- **`fpmix`: 39 % of all cycles are X waiting for the FPU, 5.6 cycles per FP operation.** The FPU
+  is a 5-stage pipeline that takes an operation every cycle, but the core holds X until each
+  result is back, so independent FP operations run one at a time.
+
+## 5. Next, by the numbers
 
 1. Branch prediction: targets computed in D for `br`/`bsr` and predicted-taken backward branches
    (1 bubble instead of 3), a small return stack for `ret`.
 2. The 1-cycle wait of a branch on the result of the instruction before it.
 3. Load to use: forwarding a load's result one stage earlier.
-4. D-fill: a line read is 25 SDRAM cycles; the board cache of `pipeline.md` section 5 is the
+4. FP operations: let them flow through the FPU's pipeline in place of holding X for each one
+   (section 4, `fpmix`).
+5. D-fill: a line read is 25 SDRAM cycles; the board cache of `pipeline.md` section 5 is the
    answer to that and costs BRAM.

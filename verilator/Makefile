@@ -134,7 +134,7 @@ t3: obj_pipe/Vev4_core
 # The performance bench: the pipelined core with every signal public (cputest/tb_cpu.cpp CPU_PERF
 # reads the stall causes), the memory at the board's latencies (BOARD=1), the microbenchmarks of
 # tests/cpu/perf_bench.py (tools/alphaasm.py). docs/design/cpu-perf.md has the numbers.
-PERF_BENCH = calls memcpy_in memcpy_out branchy loaduse stackmix
+PERF_BENCH = calls memcpy_in memcpy_out branchy loaduse stackmix missmix fpmix
 obj_perf/Vev4_core: $(PIPE_RTL) cputest/tb_cpu.cpp
 	$(TB_V) --Mdir obj_perf --top-module ev4_core -Wno-BLKSEQ --public-flat-rw -CFLAGS '-DCPU_TOP=Vev4_core -DCPU_PIPE -DCPU_PERF' $^
 

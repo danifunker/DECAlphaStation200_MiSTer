@@ -13,6 +13,8 @@ body at KSEG + 0x6000 and stores 1 to TOHOST (PA 0x800000). Built with tools/alp
   loaduse     a 64-node linked list walked 2000 times (load -> address of the next load)
   stackmix    globals read, changed and written back, compares and branches, a small call:
               roughly the instruction mix of Dhrystone's main loop
+  missmix     a call whose frame and table share a D-cache index: D-misses behind stores
+  fpmix       four doubles of one line read, added and stored back, and a call (Whetstone's shape)
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'tools'))
@@ -33,7 +35,7 @@ p.label('spin0'); p.br(31, 'spin0')
 
 p.org(0x4000); p.label('init')
 p.lda(1, 31, 0x420); p.hw_mtpr(1, 0x4e)                    # ABOX_CTL: DC_ENA | SPE_2
-p.lda(1, 31, 1); p.sll(1, 1, 1, 41); p.hw_mtpr(1, 0x22)    # ICCSR: MAP
+p.lda(1, 31, 3); p.sll(1, 1, 1, 41); p.hw_mtpr(1, 0x22)    # ICCSR: FPE (42), MAP (41)
 p.hw_mtpr(31, 0x29)                                        # PS: kernel
 p.lda(S5, 31, -1); p.sll(S5, S5, S5, 42)                   # KSEG base
 p.lda(2, 31, 0x6000); p.bis(2, S5, 2)
@@ -173,6 +175,54 @@ elif name == 'stackmix':
     p.bis(S0, 31, V0)
     p.ldq(RA, 0, SP); p.ldq(S0, 8, SP)
     p.lda(SP, SP, 16)
+    p.ret()
+elif name == 'missmix':
+    # a function whose frame and whose table share a D-cache index (8 KB apart): each call stores
+    # into the frame, loads the table (a miss behind the stores) and loads the frame back (a miss)
+    kaddr(A1, 0x20); p.lda(A1, A1, 0x2000 - 32)            # the table line: the frame's index
+    count(S0, 20000)
+    p.label('loop')
+    p.bis(S0, 31, A0)
+    p.bsr(RA, 'f')
+    p.addq(V0, S1, S1)
+    p.stq(S1, 0, GP)
+    p.subq(S0, 31, S0, 1)
+    p.bne(S0, 'loop')
+    p.br(31, 'pass')
+    p.label('f')
+    p.lda(SP, SP, -32)
+    p.stq(RA, 0, SP); p.stq(S0, 8, SP); p.stq(A0, 16, SP)
+    p.ldq(T0, 0, A1)
+    p.addq(T0, A0, V0)
+    p.stq(V0, 64, GP)
+    p.ldq(RA, 0, SP); p.ldq(S0, 8, SP)
+    p.lda(SP, SP, 32)
+    p.ret()
+
+elif name == 'fpmix':
+    # Whetstone's array module: four doubles of one line read, combined and written back, and a
+    # call with a frame that saves an FP register
+    count(S0, 20000)
+    p.label('loop')
+    p.ldt(1, 0, GP); p.ldt(2, 8, GP); p.ldt(3, 16, GP); p.ldt(4, 24, GP)
+    p.addt(1, 2, 5); p.addt(5, 3, 5); p.addt(5, 4, 5)
+    p.stt(5, 0, GP)
+    p.addt(5, 2, 6); p.stt(6, 8, GP)
+    p.addt(6, 3, 7); p.stt(7, 16, GP)
+    p.addt(7, 4, 8); p.stt(8, 24, GP)
+    p.lda(A1, GP, 64)
+    p.bsr(RA, 'f')
+    p.subq(S0, 31, S0, 1)
+    p.bne(S0, 'loop')
+    p.br(31, 'pass')
+    p.label('f')
+    p.lda(SP, SP, -32)
+    p.stq(RA, 0, SP); p.stt(2, 8, SP)
+    p.ldt(2, 0, A1)
+    p.addt(2, 8, 2)
+    p.stt(2, 0, A1)
+    p.ldq(RA, 0, SP); p.ldt(2, 8, SP)
+    p.lda(SP, SP, 32)
     p.ret()
 else:
     sys.exit('unknown benchmark ' + name)
