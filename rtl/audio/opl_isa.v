@@ -15,6 +15,11 @@
 // 64-entry queue and reach it as it can take them (3.3 us after an index,
 // 23 us after data), so software that paces its writes for a slower bus
 // loses none.
+//
+// The chip's samples (one every 72 clocks of its own, 49.7 kHz) are joined by
+// straight lines on the way out, so the mix takes its 48 kHz from between
+// them: held samples put images of every partial 1.7 kHz to either side of it
+// (measured on the board, -20 dB at 4.7 kHz).
 module opl_isa #(
     parameter CLK_HZ = 100000000
 ) (
@@ -76,21 +81,44 @@ module opl_isa #(
 
     wire [7:0] dout;
     wire signed [15:0] snd_w;
+    wire        smp;
 `ifdef SIM_NOFM
     // the system simulation without the FM synthesizer (speed): status 06h-clear, silence
-    assign dout = 8'h06; assign snd_w = 16'sd0;
+    assign dout = 8'h06; assign snd_w = 16'sd0; assign smp = 1'b0;
 `else
     jtopl2 u_opl (
         .rst(!rcnt[7]), .clk(clk), .cen(cen),
         .din(w_d), .addr(w_a0), .cs_n(!w_go), .wr_n(!w_go),
-        .dout(dout), .irq_n(), .snd(snd_w), .sample()
+        .dout(dout), .irq_n(), .snd(snd_w), .sample(smp)
     );
 `endif
 
-    reg [7:0] st_q;
+    // the line from the sample before (s0) to the newest (s0 + ds); ph runs 0 to 2^28 over the
+    // chip's sample period (smp falls as snd_w changes)
+    localparam [63:0] PINC64 = (64'd3579545 << 28) / (64'd72 * CLK_HZ);
+    localparam [28:0] PINC = PINC64[28:0];
+    reg               smp_q;
+    reg signed [15:0] s0, s1, s0_q;
+    reg signed [16:0] ds;
+    reg        [28:0] ph;
+    reg signed [28:0] prod;
+    wire       [10:0] frac = ph[28] ? 11'h7FF : ph[27:17];
+    wire signed [17:0] ln = {{2{s0_q[15]}}, s0_q} + prod[28:11];
     always @(posedge clk) begin
-        st_q <= dout;
-        snd  <= snd_w;
+        smp_q <= smp;
+        if (smp_q && !smp) begin
+            s0 <= s1;
+            s1 <= snd_w;
+            ds <= {snd_w[15], snd_w} - {s1[15], s1};
+            ph <= 29'd0;
+        end else if (!ph[28]) ph <= ph + PINC;
+        prod <= ds * $signed({1'b0, frac});
+        s0_q <= s0;
+        snd  <= ln[15:0];
+        if (rst) begin s0 <= 16'sd0; s1 <= 16'sd0; ds <= 17'sd0; ph <= 29'd0; end
     end
+
+    reg [7:0] st_q;
+    always @(posedge clk) st_q <= dout;
     assign io_dout = io_addr[0] ? 8'hFF : st_q;
 endmodule

@@ -227,14 +227,21 @@ int main(int argc, char **argv) {
     opl_w(0x05, 0x01);                         // bank 1 (38Ah) would be the OPL3's: dropped
     outb(0x38A, 0x05); outb(0x38B, 0x01);
     wait(40000);
-    int16_t fmin = 0, fmax = 0;
-    for (int i = 0; i < 400000; i++) {
+    int16_t fmin = 0, fmax = 0, fprev = t->fm;
+    int fstep = 0;
+    FILE *fd = getenv("FM_DUMP") ? fopen(getenv("FM_DUMP"), "wb") : NULL;   // the tone at 48 kHz, for a spectrum
+    for (int i = 0; i < (fd ? 12000000 : 400000); i++) {
         tick();
         int16_t v = t->fm;
         if (v < fmin) fmin = v;
         if (v > fmax) fmax = v;
+        if (abs(v - fprev) > fstep) fstep = abs(v - fprev);
+        fprev = v;
+        if (fd && (i + 1LL) * 48 / 100000 != i * 48LL / 100000) fwrite(&v, 2, 1, fd);   // every 2083.3 clocks
     }
+    if (fd) fclose(fd);
     CHECK(fmax - fmin > 1000, "FM tone range %d..%d", fmin, fmax);
+    CHECK(fstep <= 4, "FM output moves in steps of %d (a line between the chip's samples)", fstep);
     printf("   FM tone %d..%d\n", fmin, fmax);
     opl_w(0xB0, 0x11);                         // key off
 
