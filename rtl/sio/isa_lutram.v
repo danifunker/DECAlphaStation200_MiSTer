@@ -2,7 +2,9 @@
 // registers and their read multiplexers). One write port, one read port: a second
 // reader is a second instance written alike. It behaves as an array of registers
 // does: a read in the cycle of a write to the same address gives the old value.
-// Its contents start at zero and no reset clears them.
+// Its contents start at zero and no reset clears them. (no_rw_check: Quartus infers no
+// MLAB from an asynchronous read without it; the MLAB registers the write's address and
+// data on the clock, so a reader in the write's own cycle still sees the old value.)
 module isa_lutram #(
     parameter AW = 3,
     parameter DW = 8
@@ -14,7 +16,7 @@ module isa_lutram #(
     input  wire [AW-1:0] ra,
     output wire [DW-1:0] rd
 );
-    (* ramstyle = "MLAB" *) reg [DW-1:0] mem [0:(1<<AW)-1];
+    (* ramstyle = "MLAB, no_rw_check" *) reg [DW-1:0] mem [0:(1<<AW)-1];
     always @(posedge clk) if (we) mem[wa] <= wd;
     assign rd = mem[ra];
 
