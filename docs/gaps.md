@@ -84,8 +84,8 @@ Priority: **P1** blocks SRM booting to `>>>` on COM1; **P2** needed to boot an O
 | Gap | Status | Pri | Notes |
 |---|---|---|---|
 | 28F020 command set (ID read, erase, program, verify) | **done** 2026-11-02 | P2 | `rtl/apecs/flash28f020.v` (`e88411e`): ID 89/BD, program, chip erase, verify; J6 (OSD P5) as write protect. ARC writes the flash at start-up: before, those commands landed in the image as data and SRM's next boot failed DROM's checksum |
-| Flash changes saved back to the SD card | open | P2 | Anything ARC stores in flash is lost at power-off until fbrom writes boot0.rom back |
-| NT Workstation as the default ARC boot entry | open | P3 | ARC's default on .143 is Terminal Server, which is not on `NT4_2GB.img`. Find where ARC keeps the entry first: if it is in flash, this needs the save-back above, not a change to the disk image |
+| Flash changes saved back to the SD card | **not a gap** (user, 2026-11-12) | - | The flash is the firmware (`boot0.rom`: SRM 7.0-9 + ARC 4.58), shipped as a file; updating firmware from inside the machine is not wanted (no new firmware will appear, and a new image is a new `boot0.rom`). Settings live in the NVRAM and the CMOS, which save to the `.nvr`. Whether ARC programs anything into the flash in a normal session was never measured (it sends commands at start-up; an ID read needs those too) |
+| NT Workstation as the default ARC boot entry | open | P3 | ARC's default on .143 is Terminal Server, which is not on `NT4_2GB.img`. Find where ARC keeps the entry first: expected in the NVRAM (saved to the `.nvr`); to be checked on the board |
 
 ## Devices not built yet (CORE_SPEC)
 
