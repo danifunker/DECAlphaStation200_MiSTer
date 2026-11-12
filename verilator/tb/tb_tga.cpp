@@ -709,7 +709,9 @@ int main(int argc, char **argv) {
         // a copy pair: destination byte D + k comes from source byte S - shift + k; source bytes
         // below the block's own come from the previous block's read where that holds them
         struct { uint32_t ns = 0; bool v = false; uint8_t snap[32]; } pv;
+        long npairs = 0;
         auto pair = [&](uint32_t sa, uint32_t ms, uint32_t da, uint32_t md, int sh) {
+            npairs++;
             reg_wr(0x38, sh);
             reg_wr(0x3C, sa); reg_wr(0x4C, ms); reg_wr(0x3C, da); reg_wr(0x4C, md);
             uint32_t ns = sa & ~3u, ds = da & ~3u; uint8_t snap[32], out[32];
@@ -788,6 +790,17 @@ int main(int argc, char **argv) {
         CHECK(xbad == 0, "XFree86 copies: %ld rows not moved as a plain copy would", xbad);
         reg_wr(0x38, 0); set_mode(0);
         compare("copies through the continue register (XFree86)");
+        // the time a copy pair takes (information, printed): rows of 300 pixels moved right by 560
+        // pixels (shift 0) or 563 (shift 3), from the first register write to the engine idle
+        for (int shf = 0; shf < 2; shf++) {
+            set_mode(0x07); set_rop(3); set_pm(0xFFFFFFFF);
+            long c0 = cyc, p0 = npairs;
+            for (int i = 0; i < 40; i++) { pv.v = false; fwd(base + (1 + i) * W + 40, base + (1 + i) * W + 600 + 3 * shf, 300); }
+            wait_idle();
+            printf("  copy timing, shift %d: %ld pairs, %.1f cycles a pair\n", 3 * shf, npairs - p0, (double)(cyc - c0) / (npairs - p0));
+        }
+        reg_wr(0x38, 0); set_mode(0);
+        compare("timed copies");
     }
     printf("tb_tga: copies done\n");
 
