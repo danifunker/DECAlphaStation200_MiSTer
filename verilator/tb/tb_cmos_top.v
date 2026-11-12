@@ -59,7 +59,7 @@ module tb_cmos_top (
         .cm_addr(cm_addr), .cm_we(cm_we), .cm_wdata(cm_wdata), .cm_rdata(cm_rdata), .cm_dirty(cm_dirty)
     );
 
-    // CLK_HZ 1000: the save's 2 s quiet time is 2,000 clocks here
+    // CLK_HZ 1000: the save's 5 s quiet time is 5,000 clocks here
     nvsave #(.CLK_HZ(1000)) nvs (
         .clk(clk), .rst(rst),
         .img_mounted(img_mounted), .img_size(img_size),

@@ -12,7 +12,7 @@
 //   - mount: all blocks are read in (the NVRAM through port B of the 21071
 //     model's NVRAM, the CMOS through the TOY's cm_* port), whatever the
 //     machine is doing;
-//   - save: 2 s after the last CPU write to the NVRAM or the CMOS, all blocks
+//   - save: 5 s after the last CPU write to the NVRAM or the CMOS, all blocks
 //     are written back (only while a file is mounted).
 // The NVRAM's port B reads with one clock of latency; block 16's bytes are
 // registered the same way, so sd_buff_din always follows sd_buff_addr by one.
@@ -51,7 +51,7 @@ module nvsave #(
 
     output reg         loaded           // the image has been read in once since rst (the machine waits for it)
 );
-    localparam [31:0] QUIET = CLK_HZ * 2;
+    localparam [31:0] QUIET = CLK_HZ * 5;
     localparam [63:0] CMOS_SIZE = 64'd8704;     // 17 blocks: the NVRAM and the CMOS
     reg        mounted, cmos_file, sd_rd_phase, busy, ack_seen, dirty, marker_ok;
     reg [31:0] quiet;

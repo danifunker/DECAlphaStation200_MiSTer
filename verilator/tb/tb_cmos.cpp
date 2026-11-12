@@ -2,7 +2,7 @@
 // block 16) and the OSD Console modes (0 NVRAM file, 1 SRM, 2 ARC; CMOS 3Fh = 1 starts ARC):
 //   - an 8,704-byte image with the "CMOS" marker loads 3Fh and the rest of the CMOS; 3Fh reads as
 //     kept in mode 0 and as the override in modes 1 and 2;
-//   - a guest write of 3Fh (a firmware console switch) is saved 2 s later into block 16 with the
+//   - a guest write of 3Fh (a firmware console switch) is saved 5 s later into block 16 with the
 //     marker, the NVRAM blocks unchanged, and an override never ends up in the file;
 //   - an 8 KB image is read and saved as 16 blocks (no CMOS, 3Fh reads 0: SRM);
 //   - a padded image (block 16 all zeros) loads no CMOS but gets one at the next save;
@@ -55,8 +55,8 @@ static void mount() {
     int r = 0; for (int i = 0; i < 50 && !r; i++) { r = serve(); tick(); }
     CHECK(r == 1, "mount: no read request");
 }
-static int save_wait() {   // let the 2 s quiet time pass and serve the save
-    for (int i = 0; i < 3000; i++) { tick(); if (t->sd_wr) return serve(); }
+static int save_wait() {   // let the 5 s quiet time pass and serve the save
+    for (int i = 0; i < 7000; i++) { tick(); if (t->sd_wr) return serve(); }
     return 0;
 }
 static int srm = 2;   // the OSD SRM console for the next reset (2 NVRAM file: 17h as kept)

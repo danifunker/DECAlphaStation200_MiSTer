@@ -266,7 +266,7 @@ core uses V1.7.
    `irq_h[2..5]`, and the SIO's `dm_*` port on the DMA arbiter. These files belong to another
    session.
 2. ~~CMOS is not persistent~~ (2026-11-10): the CMOS (00h-7Fh) is kept in block 16 of the NVRAM
-   image (an 8,704-byte file; `rtl/mister/nvsave.v` through `isa_rtc`'s `cm_*` port, saved 2 s
+   image (an 8,704-byte file; `rtl/mister/nvsave.v` through `isa_rtc`'s `cm_*` port, saved 5 s
    after a guest write). OSD Console = NVRAM file (the default) reads 3Fh as kept; SRM and ARC
    override the read only (and the ARC year mapping), the guest's writes still go to the file.
    OSD SRM console (2026-11-11) does the same for 17h: Graphics (the default) and Serial override
