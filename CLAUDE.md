@@ -134,6 +134,10 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   row). Open: NetBSD rejects the TOY ("preposterous TOD clock time") and writes a stale date back; SRM text after a
   NetBSD halt is garbled. The OpenVMS SYSTEM passwords are the same on all three disks (`scratch/os_credentials.txt`);
   the Tru64 PAKs are still to be loaded (user). Backups of the OpenVMS disks and NVRAM files are ZIPs in `C:\temp`.
+- **2026-11-11: CPU speed, branch `cpu-perf`** (`docs/design/cpu-perf.md`): the write buffer (`_20261111b`), then FP operations
+  flowing through the FPU and branch prediction in F2 (`6650af2`, board build **`_20261111c`**, -2.472 ns, 37.5k ALMs): ubench on NT
+  Dhrystone 132422 lps (index 11.3), Whetstone 49.8 MWIPS (9.1); `make -C verilator perf / fpstress / bpstress / wbstress`.
+  `tb_sio`'s two TOY time/date checks fail (the bench expects BCD; not a CPU matter).
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.

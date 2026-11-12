@@ -48,10 +48,13 @@ being written in W the same cycle gets the old value from the RAM, so W is a for
 
 ## 4. Branches
 
-- D predicts: BR/BSR always taken; conditional branches backward taken, forward not taken (the
-  21064's static rule); JSR/RET/JSR_COROUTINE through a 4-entry return stack (the 21064's
-  size). A predicted-taken redirect from D costs 2 bubbles (F1 and F2 squashed).
-- X resolves; a misprediction costs 3 bubbles.
+- **As built (2026-11-11, `cpu-perf.md` section 6): F2 predicts**, on the instruction the
+  I-cache hands out: BR/BSR always taken; conditional branches backward taken, forward not taken
+  (the 21064's static rule); RET/JSR_COROUTINE to the top of a 4-entry return stack (the 21064's
+  size) that BSR/JSR push. A predicted-taken redirect costs 1 bubble (the instruction in F1).
+  (The plan was D, 2 bubbles.)
+- X resolves; a misprediction costs 3 bubbles and puts the return stack's pointer back to what
+  the instructions that ran left.
 - Later: a branch target buffer looked up in F1 for 0-bubble taken branches, and a branch
   history table, measured against real code (SRM boot, NetBSD) before adding them.
 
@@ -72,7 +75,8 @@ being written in W the same cycle gets the old value from the RAM, so W is a for
 
 ## 6. FPU
 
-Pipelined, issued from X, results forwarded like integer results:
+Pipelined, issued from X; the instruction moves on to M2 and takes its result there from a
+3-entry queue (`cpu-perf.md` section 5), forwarded from M2:
 
 | Unit | Latency (cycles) | Notes |
 |---|---|---|

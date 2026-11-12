@@ -144,7 +144,11 @@ What the core has to do (the unit is written for it; nothing in the core is chan
    EXC_SUM[8:3], update SWC from `exc_sum[0]`, set write-mask bit 32 + Fc.
 4. Hazards: an FP operate result is forwardable from the M1 result flop like any slow result.
    In the first version nothing else needs checking, because X waits for done.
-5. **Later, pipelined issue** (the unit already allows one start per cycle): let X continue
+5. **Pipelined issue as built (2026-11-11, `3fd3a55`, `cpu-perf.md` section 5):** X issues the
+   operation in its first cycle and the instruction moves to M1 and M2; results return in order
+   into a 3-entry queue and join the instruction at M2 -> W (trap, flags, value), so traps stay
+   precise and no scoreboard is needed. Divides hold X. The plan this replaced:
+   **pipelined issue** (the unit already allows one start per cycle): let X continue
    after `start`, scoreboard Fc until `done` (with `done_tag` = the destination), add an FP write
    port or merge `done` into W, and make TRAPB/EXCB, MT/MF_FPCR and CALL_PAL wait until nothing
    is in flight. Traps then become imprecise (legal: the trap shadow, cpu.md 8.4), and EXC_SUM's

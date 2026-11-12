@@ -118,13 +118,89 @@ Dhrystone 116700 lps, Whetstone 55.0 MWIPS):
   is a 5-stage pipeline that takes an operation every cycle, but the core holds X until each
   result is back, so independent FP operations run one at a time.
 
-## 5. Next, by the numbers
+## 5. Change 2: FP operations flow through the FPU (`3fd3a55`, branch `cpu-perf`)
 
-1. Branch prediction: targets computed in D for `br`/`bsr` and predicted-taken backward branches
-   (1 bubble instead of 3), a small return stack for `ret`.
+The unit takes an operation a cycle; the core held X until each result was back. Now an FP
+operation is issued in its first X cycle and moves on: M1, then M2, where it waits (`m2_fwait`)
+for its result. Results come back in issue order into a 3-entry queue (`fq0..fq2`; a result that
+arrives while its instruction is already waiting in M2 bypasses it), and the trap, the FPCR flags
+and the value join the instruction at M2 -> W, so exceptions stay precise and nothing else in
+the core changes its view of an FP instruction. A consumer in D forwards from M2 once the result
+is there. Divides still hold X (`fp_hold`): one is in the unit at a time.
+
+`fpmix` (BOARD=1): CPI 3.54 -> **2.79**. Tests: `make -C verilator fpstress`
+(`tests/cpu/fp_stress.py`: random ADDT/SUBT/MULT/DIVT, dependent and independent, STT/LDT over
+64 KB, CPYS, CMPTLT, FBxx, against the generator's own registers and memory, with random memory
+delays and interrupts that kill operations in flight), `tb_fpu`, `t3-fpld`, `wbstress`.
+
+## 6. Change 3: branch prediction in F2 (`6650af2`)
+
+Every taken branch was a redirect from X: 3 bubbles. F2 has the instruction (the I-cache's
+longword select), so the prediction is made there and steers the next PC in the cycle the
+instruction leaves F2: **1 bubble** (the instruction in F1).
+
+- BR / BSR: taken. Conditional branches (integer and FP): taken when the displacement is
+  negative, the 21064's static rule. The target is PC + 4 + disp, an adder on `pc_f2`.
+- RET and JSR_COROUTINE (hint bit 15) go to the top of a **4-entry return stack** that BSR, JSR
+  and JSR_COROUTINE (hint bit 14) push; predicted only when the stack holds something.
+- The instruction carries `d_pred` (and the predicted return address) to X. X redirects only
+  when the prediction was wrong: a predicted-taken conditional branch whose condition fails goes
+  to PC + 4, a jump whose register is not the predicted address goes to the register, an
+  unpredicted taken branch goes to its target as before. Any prediction is therefore safe.
+- The return stack is speculative. X keeps the pointer and count as the instructions that really
+  ran leave them (`cs_sp`, `cs_n`), and every X or W redirect copies them back; the entries are
+  not restored (a wrong-path push can overwrite one: a wrong prediction later, nothing more).
+
+CPI (BOARD=1), FP change -> prediction:
+
+| | before | after | X redirects left |
+|---|---|---|---|
+| `calls` | 1.795 | **1.335** | |
+| `memcpy_in` | 2.00 | **1.675** | |
+| `memcpy_out` | 3.38 | 3.25 | |
+| `branchy` | 2.00 | **1.73** | the data-dependent ones (100,002) |
+| `loaduse` | 2.24 | **1.76** | |
+| `stackmix` | 1.80 | 1.72 | |
+| `missmix` | 7.30 | 7.06 | |
+| `fpmix` | 2.79 | **2.57** | |
+
+Tests: `make -C verilator bpstress` (`tests/cpu/bp_stress.py` + `bp_stress.sh`): random control
+flow (nested loops, data-dependent branches of every kind right after an ALU result, a compare or
+a load, BSR / JSR / JSR_COROUTINE calls, returns by RET, JMP, JSR_COROUTINE and through another
+register, functions that return past two instructions of the caller, recursion deeper than the
+stack, jump tables, BSR as a plain jump), about 12 KB of code. The image runs on
+`tools/alphaemu` (built with the host's cc: no cross compiler needed) and the core's retire trace
+must equal alphaemu's line for line, with instant memory, the board's latencies and random
+delays; with random interrupts the checksums must. A mutation (the return address compared
+without its low two bits) is caught.
+
+### Changes 2 and 3 on the board (`_20261111c`, `6650af2`, 2026-11-11)
+
+Fit: 37,502 ALMs (89 %), 47,980 registers, **-2.472 ns** at 100 MHz (TNS -1511; `_20261111b` was
+-2.091), -0.262 ns on the HDMI clock. The worst 300 paths are `m1_va` / `dtb_tag` -> `mg1_v` /
+`mg2_v` (234) and the TGA's `dm_addr` -> the 21071's `d_wdata` (54); one is the prediction's
+(`w_v` -> `x_pk`, at -1.74). SRM and NT 4.0 boot; `ubench-alpha -i 3` on NT (`ub_11c.txt` on the
+desktop):
+
+| | `_20261111b` | `_20261111c` | |
+|---|---|---|---|
+| Dhrystone 2 (lps) | 109132.9 (index 9.4) | **132422.0 (11.3)** | +21 % |
+| Whetstone (MWIPS) | 32.0 (5.8) | **49.8 (9.1)** | +56 % |
+| Arithoh | 5390163.2 | 5993298.6 | +11 % |
+| Arith short / int / long | 9093.1 / 10119.9 / 10118.2 | 9996.5 / 10973.5 / 10969.1 | +8..10 % |
+| Arith float / double | 13703.3 / 10231.9 | 21180.9 / 13994.6 | +55 % / +37 % |
+| Tower of Hanoi | 1569.8 | 1564.2 | 0 |
+
+Against the real 4/100 (an index near 8 integer, 9 FP): integer is past it, FP is level with it.
+Tower of Hanoi does not move: its recursion is deeper than the four-entry return stack, and its
+branches are forward. (To get NT up after a core load with the 8 KB `WinNT4.nvr`: SRM `set os_type
+nt`, OSD Apply and reset, then the second boot selection; the first is the Terminal Server's.)
+
+## 7. Next, by the numbers
+
+1. A branch history table for forward branches and loop exits (`branchy` still redirects on
+   every data-dependent branch; 2-bit counters in an M10K read with the I-cache).
 2. The 1-cycle wait of a branch on the result of the instruction before it.
 3. Load to use: forwarding a load's result one stage earlier.
-4. FP operations: let them flow through the FPU's pipeline in place of holding X for each one
-   (section 4, `fpmix`).
-5. D-fill: a line read is 25 SDRAM cycles; the board cache of `pipeline.md` section 5 is the
+4. D-fill: a line read is 25 SDRAM cycles; the board cache of `pipeline.md` section 5 is the
    answer to that and costs BRAM.
