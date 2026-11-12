@@ -10,7 +10,8 @@
 // once the SDRAM and DDR3 adapters exist.
 module as200_sys #(
     parameter SROM_HEX = "srom/build/avanti_srom.bitstream.hex",  // relative to the Quartus project
-    parameter SIM_FAST = 0              // 1 (simulation only): the TOY's seconds run fast
+    parameter SIM_FAST = 0,             // 1 (simulation only): the TOY's seconds run fast
+    parameter BC_LB = 13                // the board cache's lines, log2 (rtl/apecs/bcache.v): 13 = 256 KB
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -18,6 +19,7 @@ module as200_sys #(
     input  wire  [1:0] cfg_mem,
     input  wire        halt,            // the HALT button (CPU IRQ5, with the 8242's KBRST)         // Memory: 0 = 64 MB, 1 = 32 MB, 2 = 128 MB
     input  wire  [7:0] jumpers,
+    input  wire        bc_en,           // the board cache (static: latched at reset)
     output wire  [7:0] leds,
 
     // the flashbus NVRAM's save port (rtl/mister/nvsave.v)
@@ -242,13 +244,23 @@ module as200_sys #(
         .f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata), .f_ack(f_ack), .f_rdata(f_rdata)
     );
 
+    // the board cache sits on the 21071's DRAM port
+    wire        a_req, a_ack;
+    wire [63:0] a_rdata;
+    bcache #(.LB(BC_LB)) bcache (
+        .clk(clk), .rst(rst), .en(bc_en),
+        .d_req(a_req), .d_we(d_we), .d_line(d_line), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
+        .d_ack(a_ack), .d_rdata(a_rdata),
+        .s_req(d_req), .s_ack(d_ack), .s_rdata(d_rdata)
+    );
+
     apecs core_logic (
         .clk(clk), .rst(rst), .cfg_mem(cfg_mem), .jumpers(jumpers), .leds(leds),
         .nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
         .c_req(c_req), .c_we(c_we), .c_line(c_line), .c_addr(c_addr), .c_be(c_be), .c_wdata(c_wdata), .c_wmask(c_wmask), .c_wline(c_wline),
         .c_ack(c_ack), .c_rdata(c_rdata),
-        .d_req(d_req), .d_we(d_we), .d_line(d_line), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
-        .d_ack(d_ack), .d_rdata(d_rdata),
+        .d_req(a_req), .d_we(d_we), .d_line(d_line), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
+        .d_ack(a_ack), .d_rdata(a_rdata),
         .f_req(fu_req), .f_we(fu_we), .f_addr(fu_addr), .f_wdata(fu_wdata),
         .f_ack(fu_ack), .f_rdata(fu_rdata),
         .pt_req(pt_req), .pt_cmd(pt_cmd), .pt_dev(pt_dev), .pt_addr(pt_addr), .pt_be(pt_be),

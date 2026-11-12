@@ -51,6 +51,7 @@ assign BUTTONS = 0;
 //   13       J6 flash write      (0 enabled)
 //   15:14    TOY year            (0 from the MiSTer RTC, 1 1999)
 //   16       (retired: the old Console SRM/ARC; saved .CFGs that set it are ignored)
+//   19       Board cache         (0 On: rtl/apecs/bcache.v; 1 Off: the DRAM port wired through)
 //   18:17    Console             (0 NVRAM file: the TOY CMOS 3Fh kept with the NVRAM image, so the
 //                                firmware's own console switch sticks per file; 1 SRM, 2 ARC: overrides)
 //   20       Halt button         (T: an action)
@@ -104,6 +105,7 @@ localparam CONF_STR = {
 	"P5O[11],J1 SROM console,Off,On;",
 	"P5O[12],J2 floppy boot,Off,On;",
 	"P5O[13],J6 flash write,Enabled,Disabled;",
+	"P5O[19],Board cache,On,Off;",
 	"P5O[15:14],TOY year,From RTC,1999;",
 	"P5O[24],CPU state line,Off,On;",
 `ifndef AS200_NODEBUG
@@ -286,7 +288,7 @@ always @(posedge clk_sys) m_reset <= rst_cnt != 0;
 reg [127:0] cfg;
 always @(posedge clk_sys) if (reset_req) cfg <= status;
 // Input settings (10) and the Halt button (20) stay out
-assign cfg_pending = {status[9:1], status[18:11], status[30:29]} != {cfg[9:1], cfg[18:11], cfg[30:29]};
+assign cfg_pending = {status[9:1], status[19:11], status[30:29]} != {cfg[9:1], cfg[19:11], cfg[30:29]};
 
 // a saved 128MB with a smaller module falls back to 64MB
 wire [1:0] cfg_mem = (cfg[2:1] == 2'd2 && !sdram_128) ? 2'd0 : cfg[2:1];
@@ -396,6 +398,7 @@ as200_sys machine
 	.cfg_mem(cfg_mem),
 	.halt(halt_btn),
 	.jumpers({6'b111111, ~cfg[12], ~cfg[11]}),   // bit 0 J1, bit 1 J2: 1 = normal (OSD On = jumper set)
+	.bc_en(~cfg[19]),                      // OSD Board cache
 	.leds(leds),
 	.nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
 

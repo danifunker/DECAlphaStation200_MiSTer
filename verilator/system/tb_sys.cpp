@@ -33,6 +33,15 @@
 //     --disk-lat N     every block request waits N cycles before the transfer (Main and the SD card)
 //     --vram-every N   every N cycles write the TGA's 2 MB VRAM to --vram FILE
 //                      (default ../scratch/vram.bin; tools/vram2png.py shows it)
+//     --no-bcache      the board cache (rtl/apecs/bcache.v) off: the DRAM port wired through
+//     --board-dram     the DRAM answers with the board's SDRAM timing (rtl/mister/sdram_ctl.v at
+//                      100 MHz: a read's first quadword 9 cycles after the request, a line's
+//                      others 4 apart, then 4 cycles busy; a write busy 4 cycles a quadword + 6)
+//                      instead of on the next cycle: for speed comparisons
+//     --bcstat N       board cache statistics: every N cycles (and at the end) a line with the
+//                      DRAM port's line reads and writes and the hit rates direct-mapped caches
+//                      of 64 KB .. 1 MB (32-byte lines) in front of it would have had: "r" filled
+//                      by read misses only, "w" also by writes of a whole line
 //
 // Prints every LED change (with the TI Table 8-1 meaning of the SROM codes),
 // the SROM serial port's output (the DROM's console: SL_XMIT decoded as a
@@ -85,7 +94,8 @@ int main(int argc, char **argv) {
     const char *flash = nullptr, *drom = nullptr, *trace = nullptr;
     uint64_t cycles = 200000000, trace_from = 0, trace_lo = 0, trace_hi = ~0ull;
     int mem = 0, until_led = -1, jumpers = 0x03, save_led = -1;
-    uint64_t save_at = 0;
+    uint64_t save_at = 0, bcstat = 0;
+    bool bc_en = true, board_dram = false;
     int ccstep = 0;
     uint64_t disk_lat = 0, disk_wait = 0;
     std::string ckpt = "../scratch/sys.ckpt", restore, typed;
@@ -112,6 +122,9 @@ int main(int argc, char **argv) {
         else if (a == "--save-led") save_led = strtol(next(), 0, 16);
         else if (a == "--ckpt") ckpt = next();
         else if (a == "--restore") restore = next();
+        else if (a == "--bcstat") bcstat = strtoull(next(), 0, 0);
+        else if (a == "--no-bcache") bc_en = false;
+        else if (a == "--board-dram") board_dram = true;
         else if (a == "--type") {
             std::string v = next();
             for (size_t k = 0; k < v.size(); k++) {
@@ -157,6 +170,7 @@ int main(int argc, char **argv) {
     Vas200_sys *t = new Vas200_sys;
     t->cfg_mem = mem;
     t->jumpers = jumpers;
+    t->bc_en = bc_en;
     t->com1_rxd = 1;
     t->com2_rxd = 1;
     t->srom_rxd = 1;
@@ -251,11 +265,46 @@ int main(int argc, char **argv) {
     bool vpend = false; int vr_left = 0; uint32_t vr_ra = 0;
     bool dpend = false, fpend = false;
     std::string line;
+    // --bcstat: tags of the modelled board caches (line number + 1; 0 = empty)
+    enum { BC_N = 5 };                                  // 64 KB << k
+    std::vector<uint32_t> bc_tag[2][BC_N];
+    uint64_t bc_hit[2][BC_N] = {}, bc_rd = 0, bc_rdcyc = 0, bc_wr = 0, bc_wrfull = 0, bc_single = 0, bc_cyc0 = cyc, bc_ret0 = retired;
+    if (bcstat) for (int v = 0; v < 2; v++) for (int k = 0; k < BC_N; k++) bc_tag[v][k].assign(2048u << k, 0);
+    auto bc_print = [&]() {
+        fprintf(stderr, "bcstat cyc %" PRIu64 " insns %" PRIu64 " linerd %" PRIu64 " rdcyc %" PRIu64 " wr %" PRIu64 " wrfull %" PRIu64 " single %" PRIu64,
+                cyc - bc_cyc0, retired - bc_ret0, bc_rd, bc_rdcyc, bc_wr, bc_wrfull, bc_single);
+        for (int v = 0; v < 2; v++) {
+            fprintf(stderr, " %s", v ? "w" : "r");
+            for (int k = 0; k < BC_N; k++) fprintf(stderr, " %" PRIu64, bc_hit[v][k]);
+        }
+        fputc('\n', stderr);
+    };
     while (cyc < cycles) {
         // DRAM: answer on the cycle after the request appears
         t->d_ack = 0;
         static int dbeat = 0;
-        if (t->d_req && !dpend) { dpend = true; dbeat = 0; }
+        if (bcstat && t->d_req) {
+            if (!t->d_we && t->d_line) bc_rdcyc++;
+            if (!dpend) {
+                uint32_t ln = (uint32_t)(t->d_addr >> 2) + 1;       // d_addr counts quadwords
+                bool full = t->d_we && t->d_be == 0xFFFFFFFFu;
+                if (t->d_we) { bc_wr++; bc_wrfull += full; }
+                else if (t->d_line) bc_rd++;
+                else bc_single++;
+                for (int k = 0; k < BC_N; k++) {
+                    uint32_t ix = (ln - 1) & ((2048u << k) - 1);
+                    if (!t->d_we && t->d_line) for (int v = 0; v < 2; v++) {
+                        if (bc_tag[v][k][ix] == ln) bc_hit[v][k]++; else bc_tag[v][k][ix] = ln;
+                    }
+                    if (full) bc_tag[1][k][ix] = ln;
+                }
+            }
+        }
+        if (bcstat && cyc % bcstat == 0 && cyc != bc_cyc0) bc_print();
+        static int dwait = 0, dbusy = 0;
+        if (dbusy) dbusy--;
+        else if (t->d_req && !dpend) { dpend = true; dbeat = 0; dwait = board_dram && !t->d_we ? 7 : 0; }
+        else if (t->d_req && dpend && dwait) dwait--;
         else if (t->d_req && dpend) {
             uint64_t a = ((uint64_t)t->d_addr << 3) + (t->d_line ? 8 * dbeat : 0), q;
             if (t->d_we) {      // a line with 32 byte enables
@@ -265,7 +314,14 @@ int main(int argc, char **argv) {
             }
             memcpy(&q, &dram[a], 8);
             t->d_rdata = q; t->d_ack = 1;
-            if (!t->d_line || ++dbeat == 4) dpend = false;
+            if (t->d_we || !t->d_line || ++dbeat == 4) {
+                dpend = false;
+                if (board_dram) {
+                    int nq = 0;
+                    for (int qw = 0; qw < 4; qw++) nq += (t->d_be >> (8 * qw) & 0xFF) != 0;
+                    dbusy = t->d_we ? 4 * nq + 6 : 4;
+                }
+            } else if (board_dram) dwait = 3;
         }
         // flashbus ROMs
         t->f_ack = 0;
@@ -406,6 +462,7 @@ int main(int argc, char **argv) {
             }
         }
     }
+    if (bcstat) bc_print();
     if (!sline.empty()) fprintf(stderr, "SROM port (partial line): %s\n", sline.c_str());
     fprintf(stderr, "stopped after %" PRIu64 " cycles (%.3f ms at 100 MHz), %" PRIu64 " instructions, last PC %#" PRIx64 ", LED %02X\n",
             cyc, cyc / 1e5, retired, (uint64_t)t->dbg_pc, t->leds);

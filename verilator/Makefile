@@ -177,7 +177,7 @@ SIM_FAST ?= 1
 # the OPL3 (SystemVerilog; its package first, as opl3.qip lists it)
 OPL3_RTL = $(addprefix $(RTL)/audio/opl3_fpga/,$(shell grep '^set_global' $(RTL)/audio/opl3_fpga/opl3.qip | grep -o '[a-z0-9_]*\.s\?v ') synchronizer.sv)
 AUDIO_RTL = $(RTL)/audio/wss_ad1848.v $(RTL)/audio/opl_isa.v $(RTL)/audio/audio_mix.v $(RTL)/audio/as200_audio.v
-SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(RTL)/apecs/flash28f020.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/scsi/cd_audio.v $(OPL3_RTL) $(AUDIO_RTL) $(RTL)/net/tulip_nb.v $(RTL)/net/tulip21040.v $(RTL)/tga/tga_bt485.v $(RTL)/tga/tga_video.v $(RTL)/tga/tga.v $(RTL)/as200_sys.v
+SYS_RTL = $(PIPE_RTL) $(RTL)/apecs/apecs.v $(RTL)/apecs/bcache.v $(RTL)/apecs/flash28f020.v $(SIO_RTL) $(RTL)/scsi/ncr53c810.v $(RTL)/scsi/scsi_targets.v $(RTL)/scsi/cd_audio.v $(OPL3_RTL) $(AUDIO_RTL) $(RTL)/net/tulip_nb.v $(RTL)/net/tulip21040.v $(RTL)/tga/tga_bt485.v $(RTL)/tga/tga_video.v $(RTL)/tga/tga.v $(RTL)/as200_sys.v
 FLASH   ?= ../scratch/roms/archive_alpha-station-200-roms/flash_v7.0_arc4.58.bin
 DROM    ?= ../scratch/roms/archive_alpha-station-200-roms/AVANTI_E47_DROM1.7.bin
 
@@ -219,6 +219,15 @@ tb_sdram: obj_tb_sdram/Vtb_sdram_top
 	obj_tb_sdram/Vtb_sdram_top
 
 .PHONY: tb_sdram
+
+# the board cache alone, 64 lines (rtl/apecs/bcache.v; verilator/tb/tb_bcache.cpp)
+obj_tb_bcache/Vbcache: $(RTL)/apecs/bcache.v tb/tb_bcache.cpp
+	$(TB_V) --Mdir obj_tb_bcache --top-module bcache -GLB=6 $^
+
+tb_bcache: obj_tb_bcache/Vbcache
+	obj_tb_bcache/Vbcache
+
+.PHONY: tb_bcache
 
 # ---------------------------------------------------------------- the 53C810 and its SCSI targets
 # rtl/scsi: PCI header, the DROM's config test, registers through both BARs,
