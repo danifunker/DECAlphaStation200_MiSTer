@@ -171,7 +171,7 @@ bpstress: obj_pipe/Vev4_core
 # ---------------------------------------------------------------- system simulation
 # rtl/as200_sys.v: the CPU running our SROM, the 21071 model, COM1; the
 # flash and DROM images from scratch/ (not in git)
-SIO_RTL = $(RTL)/sio/ns16550.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v \
+SIO_RTL = $(RTL)/sio/ns16550.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v $(RTL)/sio/isa_lutram.v \
 	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/isa_fdc.v $(RTL)/sio/isa_fdc_img.v $(RTL)/sio/sio82378.v
 SIM_FAST ?= 1
 JTOPL_RTL = $(addprefix $(RTL)/audio/jtopl/,$(shell grep '^set_global' $(RTL)/audio/jtopl/jtopl.qip | grep -o 'jtopl[a-z0-9_]*\.v'))
@@ -235,7 +235,7 @@ tb_ncr810: obj_tb_ncr810/Vtb_ncr810_top
 # ---------------------------------------------------------------- SIO (82378 and the ISA devices)
 # rtl/sio/sio82378.v on its PCI target bus (verilator/tb/tb_sio.cpp; docs/design/sio.md);
 # RTC_FAST: the TOY second is 512 ticks of its 32 kHz (the periodic rates unchanged)
-SIO_RTL = $(RTL)/sio/sio82378.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v \
+SIO_RTL = $(RTL)/sio/sio82378.v $(RTL)/sio/isa_pic.v $(RTL)/sio/isa_pit.v $(RTL)/sio/isa_dma.v $(RTL)/sio/isa_lutram.v \
 	$(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_kbc.v $(RTL)/sio/isa_superio.v $(RTL)/sio/isa_fdc.v $(RTL)/sio/isa_fdc_img.v $(RTL)/sio/ns16550.v
 SIO_V   = $(TB_V) --top-module sio82378 -Wno-BLKSEQ -Wno-PINCONNECTEMPTY -GRTC_FAST=1 -GFD_SPEED=100
 
@@ -249,7 +249,7 @@ tb_sio: obj_tb_sio/Vsio82378
 
 # the TOY CMOS kept with the NVRAM image and the OSD Console modes (rtl/sio/isa_rtc.v,
 # rtl/mister/nvsave.v; verilator/tb/tb_cmos.cpp)
-obj_tb_cmos/Vtb_cmos_top: tb/tb_cmos_top.v $(RTL)/sio/isa_rtc.v $(RTL)/mister/nvsave.v tb/tb_cmos.cpp
+obj_tb_cmos/Vtb_cmos_top: tb/tb_cmos_top.v $(RTL)/sio/isa_rtc.v $(RTL)/sio/isa_lutram.v $(RTL)/mister/nvsave.v tb/tb_cmos.cpp
 	$(TB_V) --top-module tb_cmos_top -Wno-BLKSEQ --Mdir obj_tb_cmos $^
 
 tb_cmos: obj_tb_cmos/Vtb_cmos_top

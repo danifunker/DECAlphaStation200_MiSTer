@@ -11,6 +11,7 @@ set_global_assignment -name VERILOG_FILE rtl/apecs/flash28f020.v
 set_global_assignment -name VERILOG_FILE rtl/sio/ns16550.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_pic.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_pit.v
+set_global_assignment -name VERILOG_FILE rtl/sio/isa_lutram.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_dma.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_rtc.v
 set_global_assignment -name VERILOG_FILE rtl/sio/isa_kbc.v

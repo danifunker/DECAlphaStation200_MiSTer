@@ -66,10 +66,13 @@ module isa_dma (
     wire [15:0] port = io_addr;
 
     // ---------------------------------------------------------------- registers
-    reg [15:0] base_a [0:7];
     reg [15:0] cur_a  [0:7];
-    reg [15:0] base_c [0:7];
     reg [15:0] cur_c  [0:7];
+    // the base address and count, and a list's current address and count, are read by
+    // the engine only, for the channel it serves: register files (isa_lutram), below
+    wire [15:0] base_a_ch, base_c_ch;
+    wire [31:0] sg_a_ch;
+    wire [23:0] sg_c_ch;
     reg  [7:0] page   [0:7];
     reg  [7:0] hpage  [0:7];
     reg  [7:0] cur_pg [0:7];            // the page a transfer is at (the page register, carried into)
@@ -84,8 +87,6 @@ module isa_dma (
     reg  [7:0] temp;                    // the last byte read from memory (the temporary register)
     // scatter/gather: each channel's list running, its entry, loading, ended, interrupting
     reg  [7:0] sg_on, sg_load, sg_end, sg_int, sg_last;
-    reg [31:0] sg_a   [0:7];
-    reg [23:0] sg_c   [0:7];
     reg [31:0] sg_ptr [0:7];
     assign sg_irq = |sg_int;
 
@@ -158,12 +159,12 @@ module isa_dma (
                 if (rn < 4'd8) begin
                     // a channel's address (even) or count (odd), low byte then high; base and current
                     if (!rn[0]) begin
-                        if (!ff) begin base_a[rch][7:0]  <= io_din; cur_a[rch][7:0]  <= io_din; end
-                        else     begin base_a[rch][15:8] <= io_din; cur_a[rch][15:8] <= io_din; end
+                        if (!ff) cur_a[rch][7:0]  <= io_din;
+                        else     cur_a[rch][15:8] <= io_din;
                         cur_pg[rch] <= page[rch];
                     end else begin
-                        if (!ff) begin base_c[rch][7:0]  <= io_din; cur_c[rch][7:0]  <= io_din; end
-                        else     begin base_c[rch][15:8] <= io_din; cur_c[rch][15:8] <= io_din; end
+                        if (!ff) cur_c[rch][7:0]  <= io_din;
+                        else     cur_c[rch][15:8] <= io_din;
                     end
                     if (ctl) ff2 <= ~ff2; else ff1 <= ~ff1;
                 end else case (rn)
@@ -213,14 +214,8 @@ module isa_dma (
         // ---- the transfers ----
         if (sg_loaded) begin                               // an entry in
             sg_load[ch] <= 1'b0;
-            sg_a[ch]    <= sg_new_a;
-            sg_c[ch]    <= sg_new_c[23:0];
             sg_last[ch] <= sg_new_c[31];
             sg_ptr[ch]  <= sg_ptr[ch] + 32'd8;
-        end
-        if (sg_go_step) begin
-            sg_a[ch] <= mode[ch][3] ? sg_a[ch] - (ch[2] ? 32'd2 : 32'd1) : sg_a[ch] + (ch[2] ? 32'd2 : 32'd1);
-            sg_c[ch] <= sg_c[ch] - (ch[2] ? 24'd2 : 24'd1);
         end
         if (sg_go_next) sg_load[ch] <= 1'b1;
         if (sg_go_end) begin                               // the list's end: masked, IRQ 13
@@ -232,7 +227,7 @@ module isa_dma (
         end
         if (go_tc) begin
             tc_st[ch] <= 1'b1;
-            if (mode[ch][2]) begin cur_a[ch] <= base_a[ch]; cur_c[ch] <= base_c[ch]; cur_pg[ch] <= page[ch]; end   // auto-initialise
+            if (mode[ch][2]) begin cur_a[ch] <= base_a_ch; cur_c[ch] <= base_c_ch; cur_pg[ch] <= page[ch]; end   // auto-initialise
             else mask[ch] <= 1'b1;
             req_sw[ch] <= 1'b0;
         end else if (go_step) begin
@@ -250,6 +245,21 @@ module isa_dma (
             sg_on <= 8'h0; sg_load <= 8'h0; sg_end <= 8'h0; sg_int <= 8'h0; sg_last <= 8'h0;
         end
     end
+
+    // the base registers: written with the current ones (low byte then high), read at ch
+    wire bw_a = io_wr && (d1 || d2) && rn < 4'd8 && !rn[0];
+    wire bw_c = io_wr && (d1 || d2) && rn < 4'd8 &&  rn[0];
+    isa_lutram #(3, 8) u_base_al (.clk(clk), .we(bw_a && !ff), .wa(rch), .wd(io_din), .ra(ch), .rd(base_a_ch[7:0]));
+    isa_lutram #(3, 8) u_base_ah (.clk(clk), .we(bw_a &&  ff), .wa(rch), .wd(io_din), .ra(ch), .rd(base_a_ch[15:8]));
+    isa_lutram #(3, 8) u_base_cl (.clk(clk), .we(bw_c && !ff), .wa(rch), .wd(io_din), .ra(ch), .rd(base_c_ch[7:0]));
+    isa_lutram #(3, 8) u_base_ch (.clk(clk), .we(bw_c &&  ff), .wa(rch), .wd(io_din), .ra(ch), .rd(base_c_ch[15:8]));
+    // a list's current address and count: an entry in (sg_loaded), or a step
+    wire [31:0] sg_a_step = mode[ch][3] ? sg_a_ch - (ch[2] ? 32'd2 : 32'd1) : sg_a_ch + (ch[2] ? 32'd2 : 32'd1);
+    wire [23:0] sg_c_step = sg_c_ch - (ch[2] ? 24'd2 : 24'd1);
+    isa_lutram #(3, 32) u_sg_a (.clk(clk), .we(sg_loaded || sg_go_step), .wa(ch),
+                                .wd(sg_go_step ? sg_a_step : sg_new_a), .ra(ch), .rd(sg_a_ch));
+    isa_lutram #(3, 24) u_sg_c (.clk(clk), .we(sg_loaded || sg_go_step), .wa(ch),
+                                .wd(sg_go_step ? sg_c_step : sg_new_c[23:0]), .ra(ch), .rd(sg_c_ch));
 
     // ---------------------------------------------------------------- the engine
     // a channel wanting service: requested (DREQ or software), unmasked, not cascade (and
@@ -272,7 +282,7 @@ module isa_dma (
     localparam T_IDLE = 3'd0, T_RD = 3'd1, T_WR = 3'd2, T_DONE = 3'd3, T_GAP = 3'd4,
                T_SG = 3'd5, T_SG_W = 3'd6, T_SG2_W = 3'd7;
     reg  [2:0] ts;
-    wire [31:0] ta = sg_on[ch] ? sg_a[ch] :
+    wire [31:0] ta = sg_on[ch] ? sg_a_ch :
                      ch[2] ? {hpage[ch], cur_pg[ch][7:1], cur_a[ch], 1'b0} : {hpage[ch], cur_pg[ch], cur_a[ch]};
     wire  [1:0] ttype = mode[ch][1:0];                  // 00 verify, 01 write (to memory), 10 read (from memory)
 
@@ -320,7 +330,7 @@ module isa_dma (
             dack_ch <= ch;
             if (sg_on[ch]) begin
                 // a list's entry: its count is the bytes less 1
-                if (sg_c[ch] < (ch[2] ? 24'd2 : 24'd1)) begin
+                if (sg_c_ch < (ch[2] ? 24'd2 : 24'd1)) begin
                     if (sg_last[ch]) begin tc <= 1'b1; sg_go_end <= 1'b1; end
                     else sg_go_next <= 1'b1;
                 end else sg_go_step <= 1'b1;

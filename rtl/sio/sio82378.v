@@ -313,7 +313,11 @@ module sio82378 #(
     wire s_rtc  = ubcsa[0] && a[15:1] == 15'h0038;
     wire s_p92  = ubcsb[6] && a == 16'h0092;
     wire s_com1 = uart1_on && a[15:3] == uart1_base;
+`ifdef AS200_NOCOM2
+    wire s_com2 = 1'b0;                 // built without COM2 (below): its ports are not claimed
+`else
     wire s_com2 = uart2_on && a[15:3] == uart2_base && !s_com1;
+`endif
     wire s_sup  = sup_claim;
     wire s_x    = xio_claim && !(s_dma || s_pic || s_pit || s_kbc || s_rtc || s_p92 || s_com1 || s_com2 || s_sup);
 
@@ -446,6 +450,16 @@ module sio82378 #(
         .tx_stb(com1_tx_stb), .tx_byte(com1_tx_byte), .rx_inj_stb(com1_rx_inj_stb), .rx_inj_byte(com1_rx_inj_byte)
     );
 
+    // AS200_NOCOM2 (a VERILOG_MACRO in the QSF) builds the machine without COM2: the MiSTer
+    // gives it no pins, and the logic is wanted for timing. The benches keep it.
+`ifdef AS200_NOCOM2
+    assign q_com2 = 8'hFF;
+    assign com2_int = 1'b0;
+    assign com2_out2_n = 1'b1;
+    assign com2_txd = 1'b1;
+    assign com2_rts_n = 1'b1;
+    assign com2_dtr_n = 1'b1;
+`else
     ns16550 com2 (
         .clk(clk), .rst(rst), .ce_1m8(ce_1m8),
         .io_addr(a[2:0]), .io_rd(io_rd && s_com2), .io_wr(io_wr && s_com2), .io_din(io_din), .io_dout(q_com2),
@@ -454,4 +468,5 @@ module sio82378 #(
         .cts_n(com2_cts_n), .dsr_n(com2_dsr_n), .ri_n(com2_ri_n), .dcd_n(com2_dcd_n),
         .tx_stb(), .tx_byte(), .rx_inj_stb(1'b0), .rx_inj_byte(8'h00)
     );
+`endif
 endmodule

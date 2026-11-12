@@ -54,6 +54,9 @@ set_global_assignment -name SEED 1
 # comment this out to build them in again
 set_global_assignment -name VERILOG_MACRO "AS200_NODEBUG=1"
 
+# the core without COM2 (no pins on the MiSTer; rtl/sio/sio82378.v): comment this out to build it in
+set_global_assignment -name VERILOG_MACRO "AS200_NOCOM2=1"
+
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 
 #enable it only if 8bit indexed mode is used in core

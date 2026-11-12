@@ -80,14 +80,17 @@ module isa_rtc #(
     reg [6:0] reg_a;                    // DV, RS (UIP is made)
     reg [7:0] reg_b;
     reg [2:0] flags;                    // PF, AF, UF
-    reg [7:0] cram [0:127];             // 0E-7F used
+    // the CMOS (0E-7F used): a register file (isa_lutram), one copy read at the index and one
+    // at the save port; 3Fh and 17h are kept here as well, where the overrides need them
+    wire [7:0] cram_ix, cram_cm;
     reg [7:0] nv3f;                     // 3Fh as kept with the NVRAM image (0 without one: SRM)
+    reg [7:0] nv17;                     // 17h likewise
     reg       arc_year;                 // the ARC year base, fixed at reset (and when the image loads)
 
     // 3Fh as the guest reads it: the kept value, or the OSD's override
     wire [7:0] eff3f = console_mode == 2'd1 ? 8'h00 : console_mode == 2'd2 ? 8'h01 : nv3f;
     // 17h as the guest reads it: the OSD's override, or the kept value
-    wire [7:0] eff17 = srm_con_mode == 2'd0 ? 8'h01 : srm_con_mode == 2'd1 ? 8'h00 : cram[7'h17];
+    wire [7:0] eff17 = srm_con_mode == 2'd0 ? 8'h01 : srm_con_mode == 2'd1 ? 8'h00 : nv17;
 
     wire bin = reg_b[2];
     wire h24 = reg_b[1];
@@ -199,11 +202,11 @@ module isa_rtc #(
         7'h0D: rd71 = 8'h80;                                    // VRT: the battery is good
         7'h17: rd71 = eff17;
         7'h3F: rd71 = eff3f;
-        default: rd71 = cram[index];
+        default: rd71 = cram_ix;
         endcase
     end
     assign io_dout = io_addr[0] ? rd71 : {1'b0, index};
-    assign cm_rdata = cm_addr == 7'h3F ? nv3f : cram[cm_addr];
+    assign cm_rdata = cm_addr == 7'h3F ? nv3f : cram_cm;
 
     wire data_w = io_wr && io_addr[0];
     wire [6:0] tk  = take(io_din, bin);              // a byte written, as register B reads it
@@ -213,18 +216,23 @@ module isa_rtc #(
     always @(posedge clk) begin
         cm_dirty <= 1'b0;
         if (cm_we) begin
-            cram[cm_addr] <= cm_wdata;
+            if (cm_addr == 7'h17) nv17 <= cm_wdata;
             if (cm_addr == 7'h3F) begin
                 nv3f <= cm_wdata;
                 if (console_mode == 2'd0) arc_year <= cm_wdata == 8'h01;
             end
         end else if (data_w && index >= 7'h0E) begin
-            cram[index] <= io_din;
+            if (index == 7'h17) nv17 <= io_din;
             if (index == 7'h3F) nv3f <= io_din;     // the year base follows at the next reset
             cm_dirty <= 1'b1;
         end
         if (rst) arc_year <= eff3f == 8'h01;
     end
+    wire       cram_we = cm_we || (data_w && index >= 7'h0E);
+    wire [6:0] cram_wa = cm_we ? cm_addr : index;
+    wire [7:0] cram_wd = cm_we ? cm_wdata : io_din;
+    isa_lutram #(7, 8) u_cram_ix (.clk(clk), .we(cram_we), .wa(cram_wa), .wd(cram_wd), .ra(index),   .rd(cram_ix));
+    isa_lutram #(7, 8) u_cram_cm (.clk(clk), .we(cram_we), .wa(cram_wa), .wd(cram_wd), .ra(cm_addr), .rd(cram_cm));
 
     always @(posedge clk) begin
         if (t32k && reg_a[6:4] == 3'b010) begin
@@ -303,8 +311,7 @@ module isa_rtc #(
     // a sensible clock before the first update from the MiSTer (benches, or no RTC)
     integer i;
     initial begin
-        for (i = 0; i < 128; i = i + 1) cram[i] = 8'h00;
-        nv3f = 8'h00; arc_year = 1'b0; cm_dirty = 1'b0;
+        nv3f = 8'h00; nv17 = 8'h00; arc_year = 1'b0; cm_dirty = 1'b0;
         sec = 6'd0; min = 6'd0; hour = 5'd12; date = 5'd1; month = 4'd1; year = 7'd26; dow = 3'd5;
         // register B: binary, 24 hour, what ARC, NT's HAL (0x46) and the BSDs use (BCD here
         // made ARC read 14:45 as 20:69 after a core load)
