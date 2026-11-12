@@ -196,11 +196,69 @@ Tower of Hanoi does not move: its recursion is deeper than the four-entry return
 branches are forward. (To get NT up after a core load with the 8 KB `WinNT4.nvr`: SRM `set os_type
 nt`, OSD Apply and reset, then the second boot selection; the first is the Terminal Server's.)
 
-## 7. Next, by the numbers
+## 7. The board cache (`7002bad`, board build `_20261112f`, 2026-11-12)
+
+`rtl/apecs/bcache.v` on the 21071 model's DRAM port, in front of the SDRAM: 256 KB, direct mapped,
+32-byte lines, write-through (the memory always holds the truth, so DMA and the bank aliasing
+need no attention). A line read that hits is answered from block RAM, the first quadword two
+cycles after the request and then one a cycle (5 cycles a line; the SDRAM takes 25). OSD
+Advanced > Board cache On / Off (status 19, latched at reset) wires the port through. `make -C
+verilator tb_bcache` (random traffic against a reference memory and a model of the cache's
+contents); `tb_sys --no-bcache`, `--board-dram` (the SDRAM's timing in the system simulation) and
+`--bcstat N` (hit counts for 64 KB .. 1 MB caches on the same run).
+
+**The size.** `--bcstat` on a run from reset through the DROM and SRM into NetBSD's boot off the
+CD, line reads answered by a cache of each size (cumulative):
+
+| cycles | line reads | 64 KB | 128 KB | 256 KB | 1 MB |
+|---|---|---|---|---|---|
+| 1.0 G | 4.60 M | 66 % | 80 % | **90 %** | |
+| 2.5 G | 18.66 M | | | **55 %** | 57 % |
+| 3.25 G | 28.99 M | 59 % | 67 % | **70 %** | 72 % |
+
+256 KB is where the curve flattens: 1 MB, which the block RAM could not hold anyway, gains two
+points.
+
+**System simulation**, from reset with the board's SDRAM timing, 1.0 G cycles, cache off / on:
+the DROM's POST to LED 2E 347,448,917 / 347,473,913 cycles (the instruction counts are equal),
+SRM's start from LED 2E to 0B **232.6 M / 196.6 M cycles (-15.5 %)**, instructions in the 1.0 G
+cycles 378,201,169 / 397,316,832 (+5 %), the same 44 LED codes in the same order.
+
+**Fit**: 37,247 ALMs (89 %), 46,051 registers, 505 of 553 M10K (91 %), block memory 3,769,582
+bits (67 %), **-2.127 ns** at 100 MHz (TNS -1210), the HDMI clock met. The cache's memories are
+2.18 Mbit of that.
+
+**Board** (.143, NT 4.0 Workstation, `ubench-alpha -i 3`, the same build with the OSD's Board
+cache On and Off; `ub_12f_on.txt`, `ub_12f_off.txt` on the desktop):
+
+| | cache Off | cache On | |
+|---|---|---|---|
+| Dhrystone 2 (lps) | 131499.1 (index 11.3) | **152985.0 (13.1)** | +16 % |
+| Whetstone (MWIPS) | 49.5 (9.0) | **52.4 (9.5)** | +6 % |
+| Arithoh | 5955604.1 | 6033213.4 | +1 % |
+| Arith short / int / long | 9939.0 / 10906.0 / 10899.4 | 10067.1 / 11047.6 / 11042.0 | +1 % |
+| Arith float / double | 21050.1 / 13903.2 | 21309.8 / 14082.2 | +1 % |
+| Tower of Hanoi | 1559.8 | 1574.9 | +1 % |
+| Partial index | 10.1 | 11.2 | |
+
+Off repeats `_20261111c` (132422.0, 49.8) within 1 %. The cache stays, default On.
+
+### Dual issue: evaluated, not built
+
+The 21064 issues two instructions a cycle only for an aligned pair of one integer operate or
+branch with one load, store or FP operate, and not when the second reads the first's result.
+An estimate, not a measurement: on code that stays in the 8 KB caches that is 18 to 35 % fewer
+cycles at best, and nothing where the time goes to cache misses. The price: a second decoder,
+four more register-file read ports, a second set of forwarding comparators and muxes in front
+of the ALU, a second retire port and paired precise exceptions; several thousand ALMs with 4.7k
+free (89 % used), on a design that misses 100 MHz by 2.1 ns. It does not pay on this board as it
+stands; it is worth another look if the serial console display goes behind a feature flag and
+the timing closes.
+
+## 8. Next, by the numbers
 
 1. A branch history table for forward branches and loop exits (`branchy` still redirects on
    every data-dependent branch; 2-bit counters in an M10K read with the I-cache).
 2. The 1-cycle wait of a branch on the result of the instruction before it.
 3. Load to use: forwarding a load's result one stage earlier.
-4. D-fill: a line read is 25 SDRAM cycles; the board cache of `pipeline.md` section 5 is the
-   answer to that and costs BRAM.
+4. ~~D-fill: a line read is 25 SDRAM cycles~~: the board cache, section 7.

@@ -15,7 +15,8 @@ is co-simulated against it instruction by instruction.
   manipulation 2 cycles, loads 3, multiply multi-cycle. Software scheduled for the 21064 is
   therefore also scheduled for this core.
 - **Single issue, in order** first. Dual issue (the 21064 pairs an integer/branch op with a
-  load/store or FP op) is a later step if the area and timing allow.
+  load/store or FP op) was evaluated on 2026-11-12 and not built: the area and the timing do not allow it
+  (`cpu-perf.md` section 7).
 - **Precise exceptions** at writeback (cpu.md 5.2 "Impl").
 
 ## 2. Stages
@@ -67,9 +68,10 @@ being written in W the same cycle gets the old value from the RAM, so W is a for
 - **Write buffer**: 4 entries of 32 bytes with byte masks and merging (the 21064's number); an
   entry leaves as one line write (`mem_wmask`, `mem_wline`), I/O writes as single quadwords in
   program order (`cpu-perf.md` section 3).
-- **Board cache** (the 21064's external "Bcache"; the AS200 has 512 KB): a BRAM-backed L2 between
-  the BIU and the 21071 model, size set by the BRAM budget (128-256 KB), because SDRAM latency at
-  100 MHz is ~10 cycles a miss. Invisible to software except through BIU_CTL diagnostics.
+- **Board cache** (the 21064's external "Bcache"; the AS200 has 512 KB): a block RAM L2 on the
+  21071 model's DRAM port (`rtl/apecs/bcache.v`, since `7002bad`): 256 KB, direct mapped,
+  write-through, a line in 5 cycles where the SDRAM takes 25. Invisible to software (the BIU_CTL
+  bits are shadows). Measurements: `cpu-perf.md` section 7.
 - **BIU**: one transaction at a time in the 21064's priority order (D-fill, I-fill, write buffer),
   the interface of cpu.md 11.3.
 

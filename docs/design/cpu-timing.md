@@ -54,6 +54,7 @@ The device is 89 % full (37.2k of 41.9k ALMs). Tools: `quartus_sta -t scratch/cp
 | `_20261112c` (`c4fc2ce`) | -1.921 | -738 | not a timing change (the OPL's output interpolated, `audio.md`): 36,403 ALMs, 46,198 registers, HDMI clock met; the 0.4 ns from `b` is fit variation |
 | `_20261112d` (`3acc56a`) | -1.393 | -746 | the OPL3 (opl3_fpga on CLK_AUDIO) for jtopl2: 36,889 ALMs, 45,969 registers, 54 DSP blocks; the audio clock has 15.5 ns of slack |
 | `_20261112e` (`a6eec86`) | -1.479 | -1113 | the OPL3's bank rule for NEW = 0: 36,905 ALMs; HDMI clock met by 0.040 ns |
+| `_20261112f` (`7002bad`) | -2.127 | -1210 | the board cache (`rtl/apecs/bcache.v`, 256 KB in block RAM): 37,247 ALMs (89 %), 46,051 registers, 505 of 553 M10K; HDMI clock met by 0.214 ns |
 
 Each round removed the groups it aimed at (`stall_d`, the DTB reset paths, apecs `d_addr` left the
 list after round 2) and others took their place. After round 2: `m2_hitq` -2.11 (139 paths from

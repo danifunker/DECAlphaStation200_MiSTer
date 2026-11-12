@@ -156,6 +156,11 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   board build **`_20261112e`**, -1.479 ns, 36.9k ALMs). canyon.mid on `e`: another rendering than AdLib mode, no hung note,
   both channels equal; to be judged by ear (`docs/design/audio.md` 3). In the Run box the KVM's `type` drops backslashes:
   use `d:/winnt/media/...`.
+- **2026-11-12: the board cache** (user's plan of 2026-11-12, item 2: "implement if it pays"): `rtl/apecs/bcache.v`, 256 KB
+  in block RAM on the 21071's DRAM port, write-through, OSD Advanced > Board cache On (default) / Off (status 19)
+  (`7002bad` = board build **`_20261112f`**, -2.127 ns, 37.2k ALMs, 505 of 553 M10K). NT ubench On / Off on .143: Dhrystone
+  152985 / 131499 lps, Whetstone 52.4 / 49.5 MWIPS. **Dual issue evaluated and not built** (area, timing;
+  `docs/design/cpu-perf.md` 7). The NVRAM image's save to the SD card was checked on the board.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
