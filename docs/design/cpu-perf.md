@@ -100,12 +100,18 @@ Dhrystone 116700 lps, Whetstone 55.0 MWIPS):
 | Arith float / double | 13138.0 / 10232.3 | 13703.3 / 10231.9 |
 | Tower of Hanoi | 859.8 | 1569.8 |
 
-- **Whetstone is 30 % lower and the cause is not known.** No CPU, apecs or SDRAM commit lies between
-  the two builds other than change 1. Two benches added to look for it, `missmix` (a frame and a
-  table on one D-cache index: D-misses behind stores) and `fpmix` (four doubles of a line read,
-  added, stored back, a call), are both faster with change 1 (8.35 -> 7.30 and 4.68 -> 3.54 CPI),
-  so the bench does not reproduce it. Open: an A/B of Whetstone alone on `_20261111a` and
-  `_20261111b` (same passes, same NT state).
+- **The 21.4 MWIPS did not repeat.** Whetstone alone on the same build and NT session (`ubench-alpha -i 3
+  whetstone-double`, twice): **32.0 and 31.8 MWIPS** (index 5.8), so change 1 gives +4 % and the full
+  run's figure belonged to that run (cause not looked for; it was the first run after boot). The
+  benches added while looking, `missmix` (a frame and a table on one D-cache index) and `fpmix` (four
+  doubles of a line read, added, stored back, a call), are faster with change 1 too (8.35 -> 7.30
+  and 4.68 -> 3.54 CPI).
+- For scale: SPECint92 / SPECfp92 of the real 4/100 are about 74 (DEC's launch figure) / 95.2
+  (published), of the SPARCstation 20-61 88.9 / 102.8: the real machine is about 0.83 / 0.93 of the
+  baseline, an index near 8 (integer) and 9 (FP). We are at 9.4 and 5.8.
+- ubench on NT: `ubench-alpha.exe` on the Administrator's desktop (`-i passes`, `-v`, test names;
+  `-?` lists them); the copy in `dump/ubench/UnixBench/portable` on D: does not start ("Program too
+  big to fit in memory").
 - Dhrystone gained 6 % where `stackmix` gained 2x: store waits were not what bounds it on the
   board.
 - **`fpmix`: 39 % of all cycles are X waiting for the FPU, 5.6 cycles per FP operation.** The FPU
