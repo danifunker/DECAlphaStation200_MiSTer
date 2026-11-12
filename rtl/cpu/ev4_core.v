@@ -491,6 +491,30 @@ module ev4_core (
     end
     wire d_fcmov = d_op == 6'h17 && d_ir[15:5] >= 11'h02A && d_ir[15:5] <= 11'h02F;
     wire dc_uc = d_cmov || d_fcmov;
+    // a conditional branch right behind this instruction takes its flags without the result's
+    // carry chain (X, fz / fsg): 1 an add (ADDx, LDA, LDAH), 2 a subtract (SUBx), 3-5 AND / BIS /
+    // XOR (dc_zi: BIC / ORNOT / EQV, the operand inverted); dc_zl a longword result (bits 31:0)
+    reg   [2:0] dc_zk;
+    reg         dc_zl, dc_zi;
+    always @* begin
+        dc_zk = 3'd0; dc_zl = 1'b0; dc_zi = 1'b0;
+        if (d_op == 6'h08 || d_op == 6'h09) dc_zk = 3'd1;
+        else if (d_op == 6'h10) case (d_func)
+            7'h00, 7'h40: begin dc_zk = 3'd1; dc_zl = 1'b1; end         // ADDL(/V)
+            7'h20, 7'h60: dc_zk = 3'd1;                                   // ADDQ(/V)
+            7'h09, 7'h49: begin dc_zk = 3'd2; dc_zl = 1'b1; end         // SUBL(/V)
+            7'h29, 7'h69: dc_zk = 3'd2;                                   // SUBQ(/V)
+            default: ;
+        endcase else if (d_op == 6'h11) case (d_func)
+            7'h00: dc_zk = 3'd3;
+            7'h08: begin dc_zk = 3'd3; dc_zi = 1'b1; end
+            7'h20: dc_zk = 3'd4;
+            7'h28: begin dc_zk = 3'd4; dc_zi = 1'b1; end
+            7'h40: dc_zk = 3'd5;
+            7'h48: begin dc_zk = 3'd5; dc_zi = 1'b1; end
+            default: ;
+        endcase
+    end
     // integer compares (CMPEQ CMPLT CMPLE CMPULT CMPULE): results 0 or 1
     wire d_iscmp = d_op == 6'h10 && (d_func == 7'h2D || d_func == 7'h4D || d_func == 7'h6D ||
                                      d_func == 7'h1D || d_func == 7'h3D);
@@ -501,6 +525,8 @@ module ev4_core (
     reg   [5:0] x_dst; reg x_dst_v; reg x_fast; reg x_ldlat; reg x_ser;
     reg  [63:0] x_btarget;
     reg         x_iscmp;                // the instruction in X is an integer compare
+    reg   [2:0] x_zk;                   // ... its kind for the carry-free zero test (dc_zk)
+    reg         x_zl, x_zi;
     reg  [63:0] x_link;                 // PC + 4, computed in D
     reg  [63:0] x_ipr;                  // HW_MFPR's IPR value, read in D (serialized)
     reg         x_sel_lda, x_sel_link;  // fast-result selects, decoded in D
@@ -553,6 +579,27 @@ module ev4_core (
                          ? {agen[63:3], 3'b000} : x_hwm ? {agen[63:2], 2'b00} : agen;
     // the fast result: what the X->X loop forwards
     wire [63:0] fast_res = x_sel_lda ? agen : x_sel_link ? x_link : fa_res;
+    // the branch flags of the fast result without its carry chain, for a conditional branch
+    // right behind its producer (cpu-perf.md 9): A + B == 0 exactly when every bit of A ^ B equals
+    // the bit below it of A | B (bit -1 = 0); A - B == 0 when A == B; the logical results as they
+    // are. A longword result is zero when its bits 31:0 are. fsg (the sign) for the logical kinds
+    wire [63:0] zx_a = x_sel_lda ? x_b : x_a;
+    wire [63:0] zx_b = x_sel_lda ? x_disp : x_b;
+    wire [63:0] zx_bi = x_zi ? ~x_b : x_b;
+    reg  [63:0] zt;
+    always @* begin
+        case (x_zk)
+        3'd1: zt = (zx_a ^ zx_b) ^ {zx_a[62:0] | zx_b[62:0], 1'b0};
+        3'd2: zt = x_a ^ x_b;
+        3'd3: zt = x_a & zx_bi;
+        3'd4: zt = x_a | zx_bi;
+        default: zt = x_a ^ zx_bi;
+        endcase
+    end
+    wire        fz  = x_zl ? zt[31:0] == 32'd0 : zt == 64'd0;
+    wire        fsg = zt[63];
+    wire        x_zok = x_zk != 3'd0;       // fz holds
+    wire        x_sok = x_zk[2] || x_zk == 3'd3;   // fsg holds (3-5)
 
     // ---------------------------------------------------------------- FP arithmetic in flight
     // An FP operation (opcodes 15, 16) is issued to the unit in its first cycle in X and moves on
@@ -616,8 +663,12 @@ module ev4_core (
         fwd(d_ra, dc_ua, rf_a, fwd_a, loop_a, sa);
         fwd(d_rb, dc_ub, rf_b, fwd_b, loop_b, sb);
         fwd(d_rc, dc_uc, rf_c, fwd_c, loop_c, sc);
+        // a conditional branch loops from a compare (result 0 or 1), and from the kinds whose
+        // carry-free zero test (fz) or sign (fsg) gives what its condition needs: BEQ BNE BLE BGT
+        // need the zero, BLT BGE BLE BGT the sign, BLBC / BLBS bit 0 only (FP branches never loop)
         haz = sa || sb || sc || loop_c ||        // operand C has no loop path: wait a cycle
-              (dc_cls == C_CBR && loop_a && !x_iscmp);   // a branch loops only from a compare
+              (dc_cls == C_CBR && loop_a && !x_iscmp &&
+               (!d_ir[29] || (d_ir[26] && !x_zok) || (d_ir[27] && !x_sok)));
     end
 
     // serialization
@@ -1155,13 +1206,14 @@ module ev4_core (
                     x_dst <= dc_dst; x_dst_v <= dc_dst_v; x_fast <= dc_fast; x_ldlat <= dc_ldlat || dc_fpu;
                     x_ser <= dc_ser;
                     x_a <= loop_a ? fast_res : fwd_a;
-                    // a branch takes the loop only from a compare (result 0 or 1), so
-                    // the flags come from bit 0 (no zero test after the ALU)
-                    x_az   <= loop_a ? !fast_res[0] : fwd_a == 64'd0;
+                    // a branch takes the loop from a compare (flags from bit 0) or with the
+                    // carry-free flags (fz, fsg): no zero test after the ALU
+                    x_az   <= loop_a ? (x_iscmp ? !fast_res[0] : fz) : fwd_a == 64'd0;
                     x_az63 <= loop_a ? !fast_res[0] : fwd_a[62:0] == 63'd0;
-                    x_as   <= loop_a ? 1'b0 : fwd_a[63];
+                    x_as   <= loop_a ? !x_iscmp && fsg : fwd_a[63];
                     x_al   <= loop_a ? fast_res[0] : fwd_a[0];
                     x_iscmp <= d_iscmp;
+                    x_zk <= dc_zk; x_zl <= dc_zl; x_zi <= dc_zi;
                     x_b <= d_lit && d_op[5:2] == 4'b0100      // the literal form: integer operate (10-13) only
                            ? {56'd0, d_ir[20:13]} : (loop_b ? fast_res : fwd_b);
                     x_c <= fwd_c;                       // CMOV's Rc: never from the loop (stalls instead)

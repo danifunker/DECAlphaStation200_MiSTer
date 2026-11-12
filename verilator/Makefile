@@ -134,7 +134,7 @@ t3: obj_pipe/Vev4_core
 # The performance bench: the pipelined core with every signal public (cputest/tb_cpu.cpp CPU_PERF
 # reads the stall causes), the memory at the board's latencies (BOARD=1), the microbenchmarks of
 # tests/cpu/perf_bench.py (tools/alphaasm.py). docs/design/cpu-perf.md has the numbers.
-PERF_BENCH = calls memcpy_in memcpy_out branchy loaduse stackmix missmix fpmix
+PERF_BENCH = calls memcpy_in memcpy_out branchy loaduse stackmix missmix fpmix divq
 obj_perf/Vev4_core: $(PIPE_RTL) cputest/tb_cpu.cpp
 	$(TB_V) --Mdir obj_perf --top-module ev4_core -Wno-BLKSEQ --public-flat-rw -CFLAGS '-DCPU_TOP=Vev4_core -DCPU_PIPE -DCPU_PERF' $^
 
@@ -161,10 +161,12 @@ fpstress: obj_pipe/Vev4_core
 	@for s in 1 2 3 4 5 6 7 8; do 		python3 -I ../tests/cpu/fp_stress.py $$s $(T0)/fp_stress.bin || exit 1; 		obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 20000000 || exit 1; 		BOARD=1 obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 20000000 || exit 1; 		MEMDELAY=9 MEMSEED=$$s obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 20000000 || exit 1; 		IRQRATE=40 IRQSEED=$$s MEMDELAY=20 FASTLINE=1 obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 40000000 || exit 1; 		IRQRATE=15 IRQSEED=$$s MEMDELAY=5 MEMSEED=$$s obj_pipe/Vev4_core $(T0)/fp_stress.bin --max 40000000 || exit 1; 	done
 
 # Branch prediction (static prediction and the return stack in F2, checked in X) on random
-# control flow, tests/cpu/bp_stress.py: retire traces against tools/alphaemu, checksums under
-# random interrupts (tests/cpu/bp_stress.sh)
+# control flow, tests/cpu/bp_stress.py, and branches right behind their operand's producer,
+# tests/cpu/brz_stress.py: retire traces against tools/alphaemu, checksums under random
+# interrupts (tests/cpu/bp_stress.sh)
 bpstress: obj_pipe/Vev4_core
 	@bash ../tests/cpu/bp_stress.sh 1 2 3 4 5 6 7 8 9 10 11 12
+	@GEN=brz_stress.py bash ../tests/cpu/bp_stress.sh 1 2 3 4 5 6
 
 .PHONY: cputest cputest-pipe sromload t3 t3-rwc t3-prefetch perf wbstress fpstress bpstress
 
