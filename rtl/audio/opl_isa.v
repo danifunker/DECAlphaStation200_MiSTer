@@ -39,6 +39,19 @@ module opl_isa #(
     assign claim = io_addr[15:2] == 14'h00E2;          // 388h-38Bh
     wire wr = io_wr && claim;
 
+    // An OPL3 that has not been switched to its new mode (bank 1, register 05h, bit 0) is an
+    // OPL2 at either register pair: an index written at 38Ah selects the first bank, except
+    // 05h itself. NT 4.0's synthesizer driver tells the chips apart by this: it starts timer 1
+    // through 38Ah/38Bh, expects the flag at 388h, then sets NEW and expects the same writes
+    // to do nothing. The chip below takes 38Ah as bank 1 always, so the bank is chosen here.
+    reg       newm, ix_b1, ix_05;
+    wire      b1 = io_addr[1] && (newm || io_din == 8'h05);
+    always @(posedge clk) begin
+        if (wr && !io_addr[0]) begin ix_b1 <= b1; ix_05 <= io_din == 8'h05; end
+        if (wr && io_addr[0] && ix_b1 && ix_05) newm <= io_din[0];
+        if (rst) begin newm <= 1'b0; ix_b1 <= 1'b0; ix_05 <= 1'b0; end
+    end
+
     wire  [7:0] dout;
     wire        smp;
     wire signed [15:0] smp_l, smp_r;
@@ -51,7 +64,7 @@ module opl_isa #(
     opl3 u_opl (
         .clk(clk_audio), .clk_host(clk), .clk_dac(1'b0), .ic_n(!rst),
         .cs_n(!claim), .rd_n(!io_rd), .wr_n(!io_wr),
-        .address(wr ? io_addr[1:0] : 2'b00), .din(io_din), .dout(dout),
+        .address(wr ? {b1, io_addr[0]} : 2'b00), .din(io_din), .dout(dout),
         .sample_valid(smp), .sample_l(smp_l), .sample_r(smp_r), .led(), .irq_n()
     );
 `endif

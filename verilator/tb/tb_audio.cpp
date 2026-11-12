@@ -286,6 +286,30 @@ int main(int argc, char **argv) {
     wait(200000); fm_lr(rl, rr);
     CHECK(rl > 1000 && rr > 1000, "after a burst of writes (%d, %d)", rl, rr);
     opl_w(0xB0, 0x11);
+    // NT 4.0's test for an OPL3: timer 1 started through 38Ah/38Bh sets its flag while NEW is 0,
+    // and does not with NEW set (there register 04h of bank 1 is the 4-operator connections)
+    auto t1_b1 = [&]() {
+        outb(0x38A, 0x04); outb(0x38B, 0x60); outb(0x38A, 0x04); outb(0x38B, 0x80);
+        wait(6000);
+        uint8_t a = inb(0x388);
+        outb(0x38A, 0x02); outb(0x38B, 0xFF); outb(0x38A, 0x04); outb(0x38B, 0x21);
+        wait(30000);
+        uint8_t b = inb(0x388);
+        opl_w(4, 0x60); opl_w(4, 0x80);
+        wait(6000);
+        return (a & 0xE0) << 8 | (b & 0xE0);
+    };
+    int dn = t1_b1();
+    CHECK(dn == 0x0000, "NEW = 1: timer 1 through 38Ah does not run (%04x)", dn);
+    outb(0x38A, 0x04); outb(0x38B, 0x00);      // the connections that test wrote
+    outb(0x38A, 0x05); outb(0x38B, 0x00);
+    wait(6000);
+    dn = t1_b1();
+    CHECK(dn == 0x00C0, "NEW = 0: timer 1 through 38Ah runs (%04x)", dn);
+    outb(0x38A, 0x05); outb(0x38B, 0x01); wait(6000);
+    dn = t1_b1();
+    CHECK(dn == 0x0000, "NEW = 1 again (%04x)", dn);
+    outb(0x38A, 0x04); outb(0x38B, 0x00);
     outb(0x38A, 0x05); outb(0x38B, 0x00);
 
     // ------------------------------------------------------------ the mix
