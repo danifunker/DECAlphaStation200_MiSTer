@@ -271,6 +271,32 @@ module ev4_core (
     wire [31:0] f2_insn  = pc_f2[2] ? q2[63:32] : q2[31:0];
     wire        f_hold   = stall_d;
 
+    // Branch prediction, in F2 (docs/design/pipeline.md): BR / BSR are taken, a conditional
+    // branch is predicted taken when it goes backward, RET and JSR_COROUTINE go to the top of a
+    // four-entry return stack that BSR and JSR push. A predicted instruction steers the fetch in
+    // the cycle it leaves F2 (p_take: one bubble, the instruction in F1) and carries d_pred /
+    // x_pred; X redirects only when the prediction was wrong (to PC + 4 or to the real target),
+    // so any prediction is safe. The stack is speculative: X keeps the pointer and count of the
+    // instructions that really ran (cs_*), and a redirect restores them.
+    wire  [5:0] f2_op    = f2_insn[31:26];
+    wire        f2_isbr  = f2_op == 6'h30 || f2_op == 6'h34;
+    wire        f2_iscbr = f2_op[5:3] == 3'b111 || (f2_op[5:3] == 3'b110 && f2_op[1:0] != 2'b00);
+    wire        f2_isjmp = f2_op == 6'h1A;
+    wire        f2_pop   = f2_isjmp && f2_insn[15];                       // RET, JSR_COROUTINE
+    wire        f2_push  = f2_op == 6'h34 || (f2_isjmp && f2_insn[14]);   // BSR, JSR, JSR_COROUTINE
+    reg  [40:0] rs0, rs1, rs2, rs3;     // return addresses [42:2]
+    reg   [1:0] rs_sp, cs_sp;           // the top entry
+    reg   [2:0] rs_n,  cs_n;            // entries that hold a return address (0-4)
+    wire [40:0] rs_top = rs_sp == 2'd0 ? rs0 : rs_sp == 2'd1 ? rs1 : rs_sp == 2'd2 ? rs2 : rs3;
+    wire [63:0] f2_link  = pc_f2 + 64'd4;
+    wire        p_pred   = f2_isbr || (f2_iscbr && f2_insn[20]) || (f2_pop && rs_n != 3'd0);
+    wire [63:0] p_target = f2_isjmp ? {{21{rs_top[40]}}, rs_top, 2'b00}
+                                    : pc_f2 + 64'd4 + {{41{f2_insn[20]}}, f2_insn[20:0], 2'b00};
+    // the instruction in F2 moves to D this cycle (unless a redirect kills it)
+    wire        f2_go    = v_f2 && f2_tr_ok && f2_hit && fstate == FS_FETCH && !f_hold &&
+                           !ld_active && !isweep && !ld_start;
+    wire        p_take   = p_pred && f2_go;
+
     // Next PC. The X redirect (a taken branch or jump) decides last: it is
     // the late signal (operand flop -> condition), so npc_o is everything
     // else, and the X target and its I-cache valid bit are looked up in
@@ -303,6 +329,8 @@ module ev4_core (
             else nv_o = 1'b0;
         end else if (f2_miss) begin
             nv_o = 1'b0; kill_o = 1'b1;
+        end else if (p_take) begin
+            npc_o = p_target; nv_o = 1'b1; kill_o = 1'b1;
         end else if (!f_hold)
             npc_o = pc_f1 + 64'd4;
     end
@@ -314,6 +342,8 @@ module ev4_core (
 
     // ================================================================ D stage
     reg         d_v;  reg [63:0] d_pc; reg [31:0] d_ir; reg [3:0] d_exc;
+    reg         d_pred;                 // the fetch followed this instruction's predicted target
+    reg  [40:0] d_ptgt;                 // RET / JSR_COROUTINE: the predicted target [42:2]
 
     // register file: three read ports (A = Ra, B = Rb, C = Rc for CMOV)
     wire [63:0] rf_a, rf_b, rf_c;
@@ -475,6 +505,9 @@ module ev4_core (
     reg  [63:0] x_ipr;                  // HW_MFPR's IPR value, read in D (serialized)
     reg         x_sel_lda, x_sel_link;  // fast-result selects, decoded in D
     reg         x_cmov;
+    reg         x_pred;                 // predicted taken (the fetch went to the target)
+    reg         x_pk;                   // ... and sure to be right: BR / BSR, a jump to the predicted address
+    reg         x_pcbr;                 // ... a conditional branch: right when the condition holds
 
     // M1 / M2 registers (declared here for forwarding)
     reg         m1_v;  reg [63:0] m1_pc; reg [31:0] m1_ir; reg [3:0] m1_cls; reg [3:0] m1_exc;
@@ -659,9 +692,20 @@ module ev4_core (
         endcase
     end
     wire x_fire = x_v && !stall_x && !w_redir;
-    assign x_redir = x_fire && x_exc == E_NONE &&
-                     (x_cls == C_BR || x_cls == C_JMP || (x_cls == C_CBR && x_cond));
+    // a redirect is a wrong prediction: taken and not predicted, or predicted and not taken
+    // (x_btarget is PC + 4 then), or a jump to another address than the return stack's
+    wire x_taken = x_cls == C_BR || x_cls == C_JMP || (x_cls == C_CBR && x_cond);
+    assign x_redir = x_fire && x_exc == E_NONE && (x_pcbr ? !x_cond : x_pred ? !x_pk : x_taken);
     assign x_target_r = x_cls == C_JMP ? {x_b[63:2], 2'b00} : x_btarget;
+    // the return stack as the instructions that ran leave it
+    wire        x_push = x_ir[31:26] == 6'h34 || (x_cls == C_JMP && x_ir[14]);
+    wire        x_pop  = x_cls == C_JMP && x_ir[15];
+    wire        x_rsop = x_fire && x_exc == E_NONE && (x_cls == C_BR || x_cls == C_JMP);
+    wire  [1:0] cs_sp_n = !x_rsop || x_push == x_pop ? cs_sp : x_push ? cs_sp + 2'd1 : cs_sp - 2'd1;
+    wire  [2:0] cs_n_n  = !x_rsop ? cs_n :
+                          x_push && x_pop ? (cs_n == 3'd0 ? 3'd1 : cs_n) :
+                          x_push ? (cs_n == 3'd4 ? 3'd4 : cs_n + 3'd1) :
+                          x_pop  ? (cs_n == 3'd0 ? 3'd0 : cs_n - 3'd1) : cs_n;
 
     // the slow X results (into M1's second result flop)
     // FP operate (opcode 17), FPCR (cpu.md 8.2, 8.5)
@@ -990,7 +1034,7 @@ module ev4_core (
             sl_xmit <= 1'b1;
             d_v <= 1'b0; x_v <= 1'b0; m1_v <= 1'b0; m2_v <= 1'b0; w_v <= 1'b0; r_v <= 1'b0;
             ser_pending <= 1'b0; mul_fin <= 1'b0; mul_live <= 1'b0; mstate <= MS_IDLE;
-            x_fpgo <= 1'b0; fq_n <= 2'd0; exc_sum_r <= 7'd0; exc_mask <= 64'd0;
+            x_fpgo <= 1'b0; fq_n <= 2'd0; rs_sp <= 2'd0; cs_sp <= 2'd0; rs_n <= 3'd0; cs_n <= 3'd0; exc_sum_r <= 7'd0; exc_mask <= 64'd0;
             wb_ev <= 4'd0; wb_wp <= 2'd0; wb_rp <= 2'd0; bown <= B_NONE; mem_req <= 1'b0; dsettle <= 2'd0;
             sh0_v <= 1'b0; sh1_v <= 1'b0; sh2_v <= 1'b0;
         end else begin
@@ -1066,6 +1110,26 @@ module ev4_core (
                 d_pc  <= pc_f2;
                 d_ir  <= f2_tr_ok ? f2_insn : 32'd0;
                 d_exc <= f2_tr_ok ? E_NONE : f2_itbm ? E_ITBM : E_ITBACV;
+                d_pred <= p_take; d_ptgt <= rs_top;
+            end
+
+            // the return stack: pushed and popped as calls and returns leave F2, put back to what
+            // the instructions that ran left when X or W redirects
+            cs_sp <= cs_sp_n; cs_n <= cs_n_n;
+            if (w_redir || x_redir) begin
+                rs_sp <= cs_sp_n; rs_n <= cs_n_n;
+            end else if (f2_go && (f2_push || f2_pop)) begin
+                if (f2_push) begin
+                    case (f2_pop ? rs_sp : rs_sp + 2'd1)
+                    2'd0: rs0 <= f2_link[42:2];
+                    2'd1: rs1 <= f2_link[42:2];
+                    2'd2: rs2 <= f2_link[42:2];
+                    default: rs3 <= f2_link[42:2];
+                    endcase
+                end
+                if (f2_push && !f2_pop) begin rs_sp <= rs_sp + 2'd1; rs_n <= rs_n == 3'd4 ? 3'd4 : rs_n + 3'd1; end
+                else if (!f2_push)      begin rs_sp <= rs_sp - 2'd1; rs_n <= rs_n == 3'd0 ? 3'd0 : rs_n - 3'd1; end
+                else if (rs_n == 3'd0) rs_n <= 3'd1;
             end
 
             // ------------------------------------------------ D -> X
@@ -1088,7 +1152,11 @@ module ev4_core (
                     x_b <= d_lit && d_op[5:2] == 4'b0100      // the literal form: integer operate (10-13) only
                            ? {56'd0, d_ir[20:13]} : (loop_b ? fast_res : fwd_b);
                     x_c <= fwd_c;                       // CMOV's Rc: never from the loop (stalls instead)
-                    x_btarget <= d_pc + 64'd4 + {{41{d_ir[20]}}, d_ir[20:0], 2'b00};
+                    // where a wrong prediction goes: the target, or PC + 4 when it was predicted taken
+                    x_btarget <= d_pred ? d_pc + 64'd4 : d_pc + 64'd4 + {{41{d_ir[20]}}, d_ir[20:0], 2'b00};
+                    x_pred <= d_pred; x_pcbr <= d_pred && dc_cls == C_CBR;
+                    x_pk   <= d_pred && (dc_cls == C_BR || (dc_cls == C_JMP && !loop_b &&
+                                         fwd_b[63:2] == {{21{d_ptgt[40]}}, d_ptgt}));
                     x_link <= d_pc + 64'd4;
                     x_ipr <= ipr_rd;
                     x_sel_lda <= dc_cls == C_LDA;
