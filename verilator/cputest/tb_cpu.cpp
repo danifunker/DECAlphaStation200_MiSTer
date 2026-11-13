@@ -37,6 +37,8 @@
 #include <cinttypes>
 #include <vector>
 #include <string>
+#include <map>
+#include <algorithm>
 
 int main(int argc, char **argv) {
     Verilated::commandArgs(argc, argv);      // $test$plusargs in the RTL (+fpudbg ...)
@@ -101,6 +103,12 @@ int main(int argc, char **argv) {
         "store waits for write buffer", "settle after D-fill", "multiplier", "FPU", "operand hazard (load-use etc.)",
         "serialized instruction", "I-cache fill", "bubbles (redirects, other)" };
     uint64_t pc_[P_N] = {0}, n_xredir = 0, n_wredir = 0, n_wr = 0, n_dfill = 0, n_ifill = 0, n_unc = 0;
+    // PCPROF=1: per retired instruction, the cycles since the previous retirement and what each of
+    // them was blamed on, summed by PC (the gaps land on the instruction that came out after them)
+    const bool pcprof = getenv("PCPROF") != nullptr;
+    struct Prof { uint32_t insn = 0; uint64_t n = 0, gap = 0, k[P_N] = {0}; };
+    std::map<uint64_t, Prof> prof;
+    uint64_t gk[P_N] = {0};
 #endif
     // IRQRATE=N (pipelined core): irq_h[0] rises at random, about once every N cycles while
     // low (IRQSEED); a write to PA 0x700000 (rt/t0_pal.h T0_IRQ's handler) drops it
@@ -195,6 +203,13 @@ int main(int argc, char **argv) {
             if (SIG(w_redir)) n_wredir++;
             tick(); cyc++;
             pc_[c->dbg_retire ? P_RETIRE : k]++;
+            if (pcprof) {
+                if (c->dbg_retire) {
+                    Prof &q = prof[(uint64_t)c->dbg_pc];
+                    q.insn = c->dbg_insn; q.n++;
+                    for (int i = 0; i < P_N; i++) { q.k[i] += gk[i]; q.gap += gk[i]; gk[i] = 0; }
+                } else gk[k]++;
+            }
             goto retired;
         }
 #endif
@@ -220,6 +235,17 @@ int main(int argc, char **argv) {
     for (int i = 0; i < P_N; i++) if (pc_[i]) printf("  %-34s %10" PRIu64 "  %5.1f%%\n", pname[i], pc_[i], 100.0 * pc_[i] / cyc);
     printf("  X redirects %" PRIu64 ", W redirects %" PRIu64 ", writes %" PRIu64 ", D-fills %" PRIu64 ", I-fills %" PRIu64 ", uncached reads %" PRIu64 "\n",
            n_xredir, n_wredir, n_wr, n_dfill, n_ifill, n_unc);
+    if (pcprof) {
+        std::vector<std::pair<uint64_t, Prof>> v(prof.begin(), prof.end());
+        std::sort(v.begin(), v.end(), [](auto &a, auto &b) { return a.first < b.first; });
+        printf("  pc        insn       retired   gap/ret  causes\n");
+        for (auto &e : v) {
+            if (e.second.n < 1000) continue;
+            printf("  %08" PRIx64 "  %08x  %8" PRIu64 "  %7.2f ", e.first & 0xffffffffu, e.second.insn, e.second.n, (double)e.second.gap / e.second.n);
+            for (int i = 0; i < P_N; i++) if (e.second.k[i]) printf(" %s=%.2f", pname[i], (double)e.second.k[i] / e.second.n);
+            printf("\n");
+        }
+    }
 #endif
     if (irqrate) printf("%" PRIu64 " interrupts raised\n", nirq);
     if (rc == 3) { printf("no TOHOST after %" PRIu64 " cycles (pc %#" PRIx64 ")\n", cyc, (uint64_t)c->dbg_pc); rc = 1; }
