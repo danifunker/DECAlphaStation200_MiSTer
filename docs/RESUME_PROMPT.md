@@ -1,5 +1,8 @@
 # Resume prompt (2026-11-01)
 
+> **2026-11-13: release `release-20261113`** = board build `_20261112j` (`releases/DECAlphaStation200_20261113.rbf`, RTL `0ab78dd`,
+> SDC `860ebd0`): the CPU speed work of `cpu-perf` (write buffer, pipelined FP issue, branch prediction, the branch behind its
+> producer, the BTB), the board cache, the OPL3, the floppy, XFree86's accelerated tga driver, the HDMI clock met.
 > **2026-11-11:** the current state is `CLAUDE.md` (State) and `docs/gaps.md` (the baseline survey row); the board
 > build is `_20261111a` (commit `2516794`: the OSD SRM console option), on .143 and .92 in `_Unstable`.
 > **2026-11-10:** the current state is `CLAUDE.md` (State) and `docs/PLAN_20261109.md` (Status); the board builds are
