@@ -658,6 +658,8 @@ module ev4_core (
     endfunction
 
     reg        haz;
+    wire        m2_lfwd;                // M2's load hit: its result is final (what W will take)
+    wire [63:0] m2_lfv;                 // ... that result (both assigned in M2)
     reg [63:0] fwd_a, fwd_b, fwd_c;
     reg        loop_a, loop_b, loop_c;
     task fwd;
@@ -671,8 +673,10 @@ module ev4_core (
                 end else if (hit_src(m1_v, m1_dst_v, m1_dst, src)) begin
                     if (m1_ldlat) stall = 1'b1; else val = m1_res;
                 end else if (hit_src(m2_v, m2_dst_v, m2_dst, src)) begin
-                    // an FP result is forwarded from M2 once the unit has returned it
-                    if (m2_fpu ? !f_ok : m2_ldlat) stall = 1'b1; else val = m2_fpu ? f_res : m2_res;
+                    // an FP result is forwarded from M2 once the unit has returned it; a load that
+                    // hit the D-cache from M2 (its data, merges and hit are registered: cpu-perf.md 10)
+                    if (m2_fpu ? !f_ok : (m2_ldlat && !m2_lfwd)) stall = 1'b1;
+                    else val = m2_fpu ? f_res : m2_lfwd ? m2_lfv : m2_res;
                 end else if (hit_src(w_v, w_dst_v && (w_exc == E_NONE || w_exc == E_ARITH), w_dst, src))
                     val = w_res;
                 else if (hit_src(r_v, 1'b1, r_dst, src))
@@ -1054,6 +1058,8 @@ module ev4_core (
         default: m2_lres = m2_quad ? m2_lq : {{32{m2_lw[31]}}, m2_lw};
         endcase
     end
+    assign m2_lfwd = m2_load && m2_hit;
+    assign m2_lfv  = m2_lres;
 
     // ================================================================ bus (one transaction at a time)
     reg   [1:0] bbeat;
