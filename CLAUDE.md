@@ -184,7 +184,12 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 - **2026-11-13: the board cache writes back** (a one-line victim buffer; coherent with DMA because every DRAM access passes
   through it) **and the BTB carries a return hint** (`cpu-perf.md` 12, 13; `257fcd0` = board build **`_20261113c`**, -2.038 ns,
   37.9k ALMs): on .92 `cc -O2` -3 %, the tga copies -1..-3 %, gzip unchanged. `tb_cpu` `PCPROF=1` profiles gaps per PC. Next in
-  `cpu-perf.md` 14: FP out-of-order completion (not started, risky).
+  `cpu-perf.md` 14: FP out-of-order completion (not started, risky).
+- **2026-11-13: released as `release-20261113b`** (`releases/DECAlphaStation200_20261113b.rbf` = board build `_20261113d`,
+  -2.096 ns, 38.2k ALMs): 13c plus the OSD's SRM console defaulting to NVRAM file (both console options now follow the `.nvr`).
+  Release check: .143 SRM CD boot, OpenVMS 7.3 DECwindows + shutdown, NT 4.0 (ARC from the NVRAM file, floppy, WSS, OPL3, ubench
+  Dhrystone index 16.0); .92 FreeBSD 5.2.1 benches, Windows 2000. On .143 `WinNT4.nvr` is the former `nt4nv.nvr` (boots ARC, NT
+  Workstation by default; the old 8 KB file in `/media/fat/nvr_bak_20261113/`).
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
