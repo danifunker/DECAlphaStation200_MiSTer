@@ -244,14 +244,19 @@ module as200_sys #(
         .f_req(f_req), .f_we(f_we), .f_addr(f_addr), .f_wdata(f_wdata), .f_ack(f_ack), .f_rdata(f_rdata)
     );
 
-    // the board cache sits on the 21071's DRAM port
-    wire        a_req, a_ack;
-    wire [63:0] a_rdata;
+    // the board cache sits on the 21071's DRAM port (write-back: it sends the memory its own
+    // writes of dirty lines, so d_* are its outputs)
+    wire         a_req, a_ack, a_we, a_line;
+    wire [26:3]  a_addr;
+    wire [31:0]  a_be;
+    wire [255:0] a_wdata;
+    wire [63:0]  a_rdata;
     bcache #(.LB(BC_LB)) bcache (
         .clk(clk), .rst(rst), .en(bc_en),
-        .d_req(a_req), .d_we(d_we), .d_line(d_line), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
+        .d_req(a_req), .d_we(a_we), .d_line(a_line), .d_addr(a_addr), .d_be(a_be), .d_wdata(a_wdata),
         .d_ack(a_ack), .d_rdata(a_rdata),
-        .s_req(d_req), .s_ack(d_ack), .s_rdata(d_rdata)
+        .s_req(d_req), .s_we(d_we), .s_line(d_line), .s_addr(d_addr), .s_be(d_be), .s_wdata(d_wdata),
+        .s_ack(d_ack), .s_rdata(d_rdata)
     );
 
     apecs core_logic (
@@ -259,7 +264,7 @@ module as200_sys #(
         .nvb_addr(nvb_addr), .nvb_we(nvb_we), .nvb_wdata(nvb_wdata), .nvb_rdata(nvb_rdata), .nv_dirty(nv_dirty),
         .c_req(c_req), .c_we(c_we), .c_line(c_line), .c_addr(c_addr), .c_be(c_be), .c_wdata(c_wdata), .c_wmask(c_wmask), .c_wline(c_wline),
         .c_ack(c_ack), .c_rdata(c_rdata),
-        .d_req(a_req), .d_we(d_we), .d_line(d_line), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata),
+        .d_req(a_req), .d_we(a_we), .d_line(a_line), .d_addr(a_addr), .d_be(a_be), .d_wdata(a_wdata),
         .d_ack(a_ack), .d_rdata(a_rdata),
         .f_req(fu_req), .f_we(fu_we), .f_addr(fu_addr), .f_wdata(fu_wdata),
         .f_ack(fu_ack), .f_rdata(fu_rdata),
