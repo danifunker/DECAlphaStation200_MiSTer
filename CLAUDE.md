@@ -176,7 +176,11 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   (`0ab78dd` = board build **`_20261112i`**, -1.535 ns, 37.6k ALMs; `cpu-perf.md` 9): division 546 -> 477 cycles, the tga
   driver's copy pair 2652 -> 2385 on .92. **The HDMI clock meets timing** (user asked: placement only, no template features
   dropped): the SDC over-constrains it by 0.8 ns for the fitter alone (`860ebd0` = board build **`_20261112j`**, HDMI +0.225 ns,
-  system -1.463 ns; FreeBSD, xdm and the benches as on `i`, .92).
+  system -1.463 ns; FreeBSD, xdm and the benches as on `i`, .92). **Released as `release-20261113`**
+  (`releases/DECAlphaStation200_20261113.rbf` = `_20261112j`).
+- **2026-11-13: load-to-use and the branch history table** (`cpu-perf.md` 10, 11): a load that hit forwards from M2, a
+  2048-entry BHT (with F2 clearing BTB entries it overrides), BLT/BGT behind an add take the sign from M1 (`abee413` = board
+  build **`_20261113b`**, -1.713 ns, 37.9k ALMs): on .92 `cc -O2` -5 %, `gzip -9` -9 %, the tga copies -5..-19 %.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.

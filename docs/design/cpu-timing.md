@@ -59,6 +59,8 @@ The device is 89 % full (37.2k of 41.9k ALMs). Tools: `quartus_sta -t scratch/cp
 | `_20261112h` (`cb294b3`) | -2.484 | -844 | a branch right behind its operand's producer (carry-free zero test in X): 37,449 ALMs (89 %), 45,989 registers; HDMI clock -0.359 ns |
 | `_20261112i` (`0ab78dd`) | -1.535 | -239 | the branch target buffer (256 entries beside the I-cache, a hint at F1): 37,577 ALMs (90 %), 45,953 registers; HDMI clock -0.773 ns (sys only, fit noise) |
 | `_20261112j` (`860ebd0`) | -1.463 | -968 | the same RTL as `i`; `DECAlphaStation200.sdc` gives the fitter alone 0.8 ns more setup uncertainty on the HDMI clock (`quartus_fit` only, the STA reports the real figures): the template's scaler (`sys/ascal` `o_vcpt_pre3`, `o_hacc_next`) had missed by up to 0.77 ns at 148.5 MHz, **HDMI clock met by +0.225 ns**, every hold met; 37,575 ALMs, 46,148 registers |
+| `_20261113a` (`16fa11c`) | -2.092 | -1130 | a load's result from M2, the BHT, the sign from M1: 37,806 ALMs, 46,117 registers, 509 of 553 M10K; HDMI +0.003 ns |
+| `_20261113b` (`abee413`) | -1.713 | -1017 | F2 clears a BTB entry it overrides: 37,920 ALMs (90 %), 46,147 registers; HDMI +0.484 ns |
 
 Each round removed the groups it aimed at (`stall_d`, the DTB reset paths, apecs `d_addr` left the
 list after round 2) and others took their place. After round 2: `m2_hitq` -2.11 (139 paths from

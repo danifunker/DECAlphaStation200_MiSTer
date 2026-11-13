@@ -340,12 +340,71 @@ Board (`_20261112i`, .92, FreeBSD 5.2.1, rpcc from the guest; `_20261112h` -> `i
 FreeBSD boots, logs in and shuts down. Fit: 37,577 ALMs (90 %), 45,953 registers, **-1.535 ns** (TNS
 -239; the fetch path did not get worse).
 
-## 10. Next, by the numbers
+## 10. Change 6: a load's result from M2 (`be72190`)
+
+A load's result reached its consumer only from W: the consumer left D four cycles after the load
+entered X, where the 21064 needs three. In M2 everything the load returns is already in registers
+(the D-cache word `m2_dq`, the merged stores `mg*`, the hit `m2_hitq` compared in M1), so `m2_lres`
+is a short path from flops: a load that hit now forwards it from M2 (`m2_lfwd`, `m2_lfv`). A miss
+or an uncached load stalls M2 (and D with it) until its data is in, as before; STx_C still waits
+for W (its success flag).
+
+| | before | after |
+|---|---|---|
+| `loaduse` | 1.511 | **1.264** |
+| `memcpy_in` | 1.346 | **1.181** |
+| `fpmix` | 2.466 | **2.358** |
+| the others | | the same |
+
+Tests: bp_stress / brz_stress, wb_stress, fp_stress pass. Forwarding on a miss too passes them,
+and rightly so (M2 moves on only with the bus data in `m2_lres`); forwarding the D-cache word
+without the store merges fails wb_stress and fp_stress.
+
+## 11. Change 7: a branch history table, the sign from M1 (`653e10d`, `16fa11c`, `abee413`; board build `_20261113b`)
+
+**The BHT.** 2048 two-bit counters in an M10K, read at npc[12:2] with the I-cache (the 21064 has
+2048 history bits in its I-cache), carried with the branch to X. A counter says how often its
+conditional branch went against the static rule (backward taken, forward not): 2 or 3 turns F2's
+prediction round. Zeros (power-up) are the static rule, so the table needs no clearing. X moves
+the counter of each conditional branch it resolves; a wrong prediction is still corrected in X,
+so a stale or aliased counter costs time only. New kernel `bias`: the LFSR loop of `branchy` with a
+forward branch taken 7 times in 8, another one into a backward branch that is never taken.
+
+**The BTB follows the BHT** (`abee413`): F2 clears a BTB entry whose hint it overrides. Without it a
+branch the BHT turned to "not taken" kept its entry, and the fetch went to the old target and back
+on every execution: on the board the division got slower (int 3 / 1 477 -> 504 cycles on
+`_20261113a`) until this went in.
+
+**The sign from M1** (`16fa11c`): BLT BGE BLE BGT right behind an add, subtract or other loop
+producer whose sign the carry-free test of section 8 does not give (`subq a0, 1, a0; bgt a0, loop`)
+went to X a cycle late. Now it goes at once and X takes the sign from M1, where the producer's
+result is registered by then (`x_asl`, `x_asi = m1_rf[63]`); the two move together, since nothing
+holds X but not M1 for a branch. The zero still comes from the carry-free test, or the branch waits
+(BEQ / BNE after shifts, scaled adds, byte ops). brz_stress covers it: taking the sign from X
+instead fails bp_stress.
+
+| | before | BHT | + BTB clearing |
+|---|---|---|---|
+| `bias` | 1.687 (312,549 X redirects) | 1.281 (78,173) | **1.213** |
+| `branchy` (random) | 1.319 | 1.364 | **1.341** |
+| the others | | the same | the same |
+
+**Board** (.92, FreeBSD 5.2.1; `_20261112j` -> `_20261113b`, which also has section 10): `cc -O2 -c`
+of a 10 KB C file 14.75 -> **14.0 s** user (-5 %), `gzip -9` of the 6 MB kernel 172 -> **156 s**
+user (-9 %); rpcc: int 3 / 1 477 -> **471** cycles, long 860 -> **850**, the tga driver's shifted
+copy pair 2385 -> **2273**, backwards 1850 -> **1736**, 500x500 backwards 1538 -> **1428**, the
+aligned scroll 604 -> **487**. FreeBSD and xdm as before. Fit: 37,920 ALMs (90 %), -1.713 ns, the HDMI
+clock +0.484 ns.
+
+## 12. Next, by the numbers
 
 0. ~~The taken branch's bubble~~: section 9.
-1. A branch history table for forward branches and loop exits (`branchy` still redirects on
-   every data-dependent branch; 2-bit counters in an M10K read with the I-cache).
-2. ~~The 1-cycle wait of a branch on the result of the instruction before it~~: section 8 (the
-   sign of an add, scaled adds, shifts and byte ops still wait).
-3. Load to use: forwarding a load's result one stage earlier.
+1. ~~A branch history table~~: section 11. What is left in `branchy` is the misprediction itself
+   (about 3.5 cycles: a branch resolves in X, the fetch restarts at F0).
+2. ~~The 1-cycle wait of a branch on the result of the instruction before it~~: sections 8 and
+   11 (the zero of shifts, scaled adds and byte ops still waits).
+3. ~~Load to use~~: section 10.
 4. ~~D-fill: a line read is 25 SDRAM cycles~~: the board cache, section 7.
+5. `stackmix` (1.720): stores waiting for the write buffer (12.5 %) and bubbles (27 %, not yet
+   split by cause: the bench counts at W, so a bubble made in D or F shows as "other").
+6. `fpmix` (2.358): X holds an FP operation's consumer (operand hazard 14.5 %) and the FPU (26 %).
