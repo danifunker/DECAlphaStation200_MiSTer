@@ -296,6 +296,28 @@ module ev4_core (
     wire        f2_go    = v_f2 && f2_tr_ok && f2_hit && fstate == FS_FETCH && !f_hold &&
                            !ld_active && !isweep && !ld_start;
     wire        p_take   = p_pred && f2_go;
+    // The branch target buffer (cpu-perf.md 9): 256 entries read with the I-cache (at npc[9:2]),
+    // so F1 knows whether the instruction it fetched was a predicted-taken PC-relative branch the
+    // last time it left F2, and where it went; the fetch goes to that target at once instead of to
+    // PC + 4, and the bubble behind the branch is gone. F2 checks the hint against the instruction:
+    // the same PC (the tag) and the same displacement give the same target. A hint F2 does not
+    // confirm redirects from F2 as before (to the predicted target, or to PC + 4 when F2 predicts
+    // nothing), so a wrong or stale entry costs the bubble and nothing more; X is unchanged. F2
+    // writes an entry for each taken prediction of its own that was not a confirmed hint.
+    // Entry: {valid, PC[42:10], displacement[20:0], target[42:2]}
+    wire [95:0] bt_q;
+    reg         bt_we;
+    reg   [7:0] bt_wa;
+    reg  [95:0] bt_wd;
+    wire        f1_bhit  = v_f1 && bt_q[95] && bt_q[94:62] == pc_f1[42:10];
+    wire [63:0] f1_btgt  = {{21{bt_q[40]}}, bt_q[40:0], 2'b00};
+    reg         f2_bt;                  // the fetch after the instruction in F2 went to its BTB target
+    reg  [20:0] f2_bdisp;               // ... that entry's displacement
+    wire        bconf    = f2_bt && !f2_isjmp && f2_insn[20:0] == f2_bdisp;   // the hint was right
+    // F2 steers the fetch: a taken prediction the hint did not already follow, or a hint F2 does not
+    // predict (back to PC + 4)
+    wire        p_redir  = f2_go && (p_pred ? !bconf : f2_bt);
+    wire [63:0] p_rtgt   = p_pred ? p_target : f2_link;
 
     // Next PC. The X redirect (a taken branch or jump) decides last: it is
     // the late signal (operand flop -> condition), so npc_o is everything
@@ -329,16 +351,18 @@ module ev4_core (
             else nv_o = 1'b0;
         end else if (f2_miss) begin
             nv_o = 1'b0; kill_o = 1'b1;
-        end else if (p_take) begin
-            npc_o = p_target; nv_o = 1'b1; kill_o = 1'b1;
+        end else if (p_redir) begin
+            npc_o = p_rtgt; nv_o = 1'b1; kill_o = 1'b1;
         end else if (!f_hold)
-            npc_o = pc_f1 + 64'd4;
+            npc_o = f1_bhit ? f1_btgt : pc_f1 + 64'd4;
     end
 
     ev4_ram #(.AW(10), .DW(64), .BE(1)) icache_d (.clk(clk), .raddr(npc[12:3]), .rdata(ic_q),
         .we(ic_we), .waddr(ic_wa), .wdata(ic_wd), .wbe(1'b1));
     ev4_ram #(.AW(8), .DW(22), .BE(1)) icache_t (.clk(clk), .raddr(npc[12:5]), .rdata(ict_qv),
         .we(ict_we), .waddr(ict_wa), .wdata({ict_v, ict_wd}), .wbe(1'b1));
+    ev4_ram #(.AW(8), .DW(96), .BE(1)) btb (.clk(clk), .raddr(npc[9:2]), .rdata(bt_q),
+        .we(bt_we), .waddr(bt_wa), .wdata(bt_wd), .wbe(1'b1));
 
     // ================================================================ D stage
     reg         d_v;  reg [63:0] d_pc; reg [31:0] d_ir; reg [3:0] d_exc;
@@ -1090,7 +1114,7 @@ module ev4_core (
             hier <= 6'd0; hier_pc0 <= 1'b0; hier_pc1 <= 1'b0; hier_cre <= 1'b0; hier_sle <= 1'b0;
             sier <= 15'd0; sirr <= 15'd0; aster <= 4'd0; astrr <= 4'd0;
             mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0; cc_hi <= 32'd0; cc_en <= 1'b0;
-            fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b0; v_f2 <= 1'b0;   // fetch starts after the sweep or the SROM load
+            fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b0; v_f2 <= 1'b0; bt_we <= 1'b0;   // fetch starts after the sweep or the SROM load
             ld_active <= !icmode; ld_start <= 1'b0; ld_fin <= 1'b0; ld_bcnt <= 9'd0; ld_blk <= 9'd0;
             ld_byte_ok <= 1'b0; ld_fetch <= 2'd0; ld_baddr <= 14'd0; ld_wph <= 3'd0;
             isweep <= icmode; isw_idx <= 8'd0; dsweep <= 1'b1; dsw_idx <= 8'd0; restart_after <= 64'd0;
@@ -1163,6 +1187,7 @@ module ev4_core (
             if (kill_f2) v_f2 <= 1'b0;
             else if (!f_hold) begin
                 pc_f2 <= pc_f1; v_f2 <= v_f1; q2 <= ic_q; t2 <= ict_q; v2 <= icv_q;
+                f2_bt <= f1_bhit; f2_bdisp <= bt_q[61:41];
                 f2_phys <= f1_phys; f2_itbany <= itb_m != 12'd0;
                 itb_spfn <= itb_spfn1; itb_sre <= itb_sre1; itb_large <= itb_large1;
             end
@@ -1176,6 +1201,11 @@ module ev4_core (
                 d_exc <= f2_tr_ok ? E_NONE : f2_itbm ? E_ITBM : E_ITBACV;
                 d_pred <= p_take; d_ptgt <= rs_top;
             end
+
+            // the BTB: F2's own taken predictions of PC-relative branches
+            bt_we <= f2_go && p_pred && !f2_isjmp && !bconf;
+            bt_wa <= pc_f2[9:2];
+            bt_wd <= {1'b1, pc_f2[42:10], f2_insn[20:0], p_target[42:2]};
 
             // the return stack: pushed and popped as calls and returns leave F2, put back to what
             // the instructions that ran left when X or W redirects
