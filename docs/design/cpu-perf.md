@@ -448,6 +448,22 @@ the tga driver's shifted copy pair 2273 -> **2245**, backwards 1736 -> **1710**,
 1428 -> **1412**, the aligned scroll 487 -> **472**. FreeBSD (disk, network, xdm) and a clean halt
 as before. Fit: 37,915 ALMs (90 %), 46,441 registers, **-2.038 ns**, the HDMI clock -0.021 ns.
 
+**Release check on .143** (2026-11-13, `_20261113c`): SRM `boot dka400` (the OpenVMS 7.3 CD to its
+date prompt and device configuration); OpenVMS 7.3 from disk to the DECwindows login, CDE, a DECterm,
+`SHUTDOWN` to `>>>`; NT 4.0 Workstation through ARC (the NVRAM file's own console choice), logon,
+`fc /b` of two 300 KB floppy files (no differences), tada.wav (WSS DMA) and canyon.mid (OPL3, both
+channels) recorded off HDMI, a clean shutdown. ubench (`ub_13c.txt`):
+
+| | `_20261112f` | `_20261113c` | |
+|---|---|---|---|
+| Dhrystone 2 (lps) | 152,985.0 (index 13.1) | **186,216.8 (16.0)** | +22 % |
+| Whetstone (MWIPS) | 52.4 (9.5) | **54.2 (9.9)** | +3 % |
+| Arithoh | 6,033,213.4 | 9,702,877.5 | +61 % |
+| Arith short / int / long | 10067.1 / 11047.6 / 11042.0 | 11533.9 / 12591.0 / 12527.5 | +14 % |
+| Arith float / double | 21309.8 / 14082.2 | 22075.1 / 14227.2 | +2..4 % |
+| Tower of Hanoi | 1574.9 | 2289.7 | +45 % |
+| Partial index | 11.2 | **12.5** | |
+
 ## 14. Next, by the numbers
 
 0. ~~The taken branch's bubble~~: section 9.
