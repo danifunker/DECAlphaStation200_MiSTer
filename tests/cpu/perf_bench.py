@@ -18,6 +18,9 @@ body at KSEG + 0x6000 and stores 1 to TOHOST (PA 0x800000). Built with tools/alp
   divq        libc's __divqu (FreeBSD 5.2.1, the EV4's division millicode: bit by bit top-bit
               searches, then shift and subtract) dividing 3 by 1, 2000 times: XFree86's tga driver
               divides by the bytes per pixel this way in its copy loops
+  bias        LFSR-driven branches as compiled code has them: a forward branch taken 7 times in 8
+              (an error or special-case path skipped), a backward one rarely taken, besides the
+              random LFSR feedback branch: what a branch history table learns and static rules miss
 """
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'tools'))
@@ -119,6 +122,35 @@ elif name == 'branchy':
     p.label('odd')
     p.subq(S1, 31, S1, 2)
     p.label('join')
+    p.subq(S0, 31, S0, 1)
+    p.bne(S0, 'loop')
+
+elif name == 'bias':
+    count(S0, 100000)
+    p.lda(T0, 31, 0x2A5B)
+    p.label('loop')
+    p.srl(T0, 31, T1, 1)                                   # the 16-bit LFSR of branchy
+    p.and_(T0, 31, T2, 1)
+    p.beq(T2, 'noxor')
+    p.lda(T3, 31, -0x4C00)
+    p.zapnot(T3, 31, T3, 3)
+    p.xor(T1, T3, T1)
+    p.label('noxor')
+    p.bis(T1, 31, T0)
+    p.and_(T0, 31, T2, 7)
+    p.bne(T2, 'skip')                                      # forward, taken 7 in 8
+    p.addq(S1, 31, S1, 1)
+    p.label('skip')
+    p.and_(T0, 31, T2, 0x70)
+    p.bne(T2, 'back')                                      # to a backward branch, taken 7 in 8
+    p.br(31, 'tail')
+    p.label('again')
+    p.addq(S1, 31, S1, 2)
+    p.label('back')
+    p.subq(S1, 31, S1, 1)
+    p.cmpult(S1, 31, T3, 0)                                # always 0: a backward branch never taken
+    p.bne(T3, 'again')
+    p.label('tail')
     p.subq(S0, 31, S0, 1)
     p.bne(S0, 'loop')
 

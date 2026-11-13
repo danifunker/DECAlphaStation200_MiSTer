@@ -289,7 +289,16 @@ module ev4_core (
     reg   [2:0] rs_n,  cs_n;            // entries that hold a return address (0-4)
     wire [40:0] rs_top = rs_sp == 2'd0 ? rs0 : rs_sp == 2'd1 ? rs1 : rs_sp == 2'd2 ? rs2 : rs3;
     wire [63:0] f2_link  = pc_f2 + 64'd4;
-    wire        p_pred   = f2_isbr || (f2_iscbr && f2_insn[20]) || (f2_pop && rs_n != 3'd0);
+    // The branch history table (cpu-perf.md 11): 2048 two-bit counters read with the I-cache at
+    // npc[12:2], like the 21064's. A counter says how often the branch went against the static rule
+    // (backward taken, forward not): 2 or 3 turns the prediction round. A table of zeros (power-up)
+    // is the static rule; X counts each conditional branch it resolves.
+    wire  [1:0] bh_q;
+    reg   [1:0] f2_bh, d_bh, x_bh;
+    reg         bh_we;
+    reg  [10:0] bh_wa;
+    reg   [1:0] bh_wd;
+    wire        p_pred   = f2_isbr || (f2_iscbr && (f2_insn[20] ^ f2_bh[1])) || (f2_pop && rs_n != 3'd0);
     wire [63:0] p_target = f2_isjmp ? {{21{rs_top[40]}}, rs_top, 2'b00}
                                     : pc_f2 + 64'd4 + {{41{f2_insn[20]}}, f2_insn[20:0], 2'b00};
     // the instruction in F2 moves to D this cycle (unless a redirect kills it)
@@ -361,6 +370,8 @@ module ev4_core (
         .we(ic_we), .waddr(ic_wa), .wdata(ic_wd), .wbe(1'b1));
     ev4_ram #(.AW(8), .DW(22), .BE(1)) icache_t (.clk(clk), .raddr(npc[12:5]), .rdata(ict_qv),
         .we(ict_we), .waddr(ict_wa), .wdata({ict_v, ict_wd}), .wbe(1'b1));
+    ev4_ram #(.AW(11), .DW(2), .BE(1)) bht (.clk(clk), .raddr(npc[12:2]), .rdata(bh_q),
+        .we(bh_we), .waddr(bh_wa), .wdata(bh_wd), .wbe(1'b1));
     ev4_ram #(.AW(8), .DW(96), .BE(1)) btb (.clk(clk), .raddr(npc[9:2]), .rdata(bt_q),
         .we(bt_we), .waddr(bt_wa), .wdata(bt_wd), .wbe(1'b1));
 
@@ -1120,7 +1131,7 @@ module ev4_core (
             hier <= 6'd0; hier_pc0 <= 1'b0; hier_pc1 <= 1'b0; hier_cre <= 1'b0; hier_sle <= 1'b0;
             sier <= 15'd0; sirr <= 15'd0; aster <= 4'd0; astrr <= 4'd0;
             mm_lock <= 1'b0; lock_flag <= 1'b0; intr_flag <= 1'b0; cc <= 32'd0; cc_hi <= 32'd0; cc_en <= 1'b0;
-            fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b0; v_f2 <= 1'b0; bt_we <= 1'b0;   // fetch starts after the sweep or the SROM load
+            fstate <= FS_FETCH; ifill_issued <= 1'b0; pc_f1 <= 64'd0; v_f1 <= 1'b0; v_f2 <= 1'b0; bt_we <= 1'b0; bh_we <= 1'b0;   // fetch starts after the sweep or the SROM load
             ld_active <= !icmode; ld_start <= 1'b0; ld_fin <= 1'b0; ld_bcnt <= 9'd0; ld_blk <= 9'd0;
             ld_byte_ok <= 1'b0; ld_fetch <= 2'd0; ld_baddr <= 14'd0; ld_wph <= 3'd0;
             isweep <= icmode; isw_idx <= 8'd0; dsweep <= 1'b1; dsw_idx <= 8'd0; restart_after <= 64'd0;
@@ -1193,7 +1204,7 @@ module ev4_core (
             if (kill_f2) v_f2 <= 1'b0;
             else if (!f_hold) begin
                 pc_f2 <= pc_f1; v_f2 <= v_f1; q2 <= ic_q; t2 <= ict_q; v2 <= icv_q;
-                f2_bt <= f1_bhit; f2_bdisp <= bt_q[61:41];
+                f2_bt <= f1_bhit; f2_bdisp <= bt_q[61:41]; f2_bh <= bh_q;
                 f2_phys <= f1_phys; f2_itbany <= itb_m != 12'd0;
                 itb_spfn <= itb_spfn1; itb_sre <= itb_sre1; itb_large <= itb_large1;
             end
@@ -1205,8 +1216,15 @@ module ev4_core (
                 d_pc  <= pc_f2;
                 d_ir  <= f2_tr_ok ? f2_insn : 32'd0;
                 d_exc <= f2_tr_ok ? E_NONE : f2_itbm ? E_ITBM : E_ITBACV;
-                d_pred <= p_take; d_ptgt <= rs_top;
+                d_pred <= p_take; d_ptgt <= rs_top; d_bh <= f2_bh;
             end
+
+            // the BHT: each conditional branch X resolves moves its counter towards "against the
+            // static rule" (taken forward, not taken backward) or back
+            bh_we <= x_fire && x_exc == E_NONE && x_cls == C_CBR &&
+                     ((x_cond != x_ir[20]) ? x_bh != 2'd3 : x_bh != 2'd0);
+            bh_wa <= x_pc[12:2];
+            bh_wd <= (x_cond != x_ir[20]) ? x_bh + 2'd1 : x_bh - 2'd1;
 
             // the BTB: F2's own taken predictions of PC-relative branches
             bt_we <= f2_go && p_pred && !f2_isjmp && !bconf;
@@ -1255,7 +1273,7 @@ module ev4_core (
                     x_c <= fwd_c;                       // CMOV's Rc: never from the loop (stalls instead)
                     // where a wrong prediction goes: the target, or PC + 4 when it was predicted taken
                     x_btarget <= d_pred ? d_pc + 64'd4 : d_pc + 64'd4 + {{41{d_ir[20]}}, d_ir[20:0], 2'b00};
-                    x_pred <= d_pred; x_pcbr <= d_pred && dc_cls == C_CBR;
+                    x_pred <= d_pred; x_pcbr <= d_pred && dc_cls == C_CBR; x_bh <= d_bh;
                     x_pk   <= d_pred && dc_cls == C_BR;
                     x_pj   <= d_pred && dc_cls == C_JMP; x_ptgt <= d_ptgt;
                     x_link <= d_pc + 64'd4;
