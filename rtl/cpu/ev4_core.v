@@ -707,7 +707,7 @@ module ev4_core (
         // need the zero, BLT BGE BLE BGT the sign, BLBC / BLBS bit 0 only (FP branches never loop)
         haz = sa || sb || sc || loop_c ||        // operand C has no loop path: wait a cycle
               (dc_cls == C_CBR && loop_a && !x_iscmp &&
-               (!d_ir[29] || (d_ir[26] && !x_zok) || (d_ir[27] && !x_sok)));
+               (!d_ir[29] || (d_ir[26] && !x_zok)));    // the sign: from M1 (x_asl)
     end
 
     // serialization
@@ -761,6 +761,11 @@ module ev4_core (
     // the branch condition from flags of operand A computed with it in D (or
     // from the forwarded result): the zero tests are off the X -> next-PC path
     reg x_az, x_az63, x_as, x_al;       // A == 0, A[62:0] == 0, A[63], A[0]
+    // a branch right behind an add, subtract or other producer whose sign the carry-free test does
+    // not give takes the sign from M1, where its producer's result is registered by then (the two
+    // move together: nothing holds X but not M1 for a branch, cpu-perf.md 11)
+    reg x_asl;
+    wire x_asi = x_asl ? m1_rf[63] : x_as;
     reg x_cond;
     always @* begin
         if (!x_ir[29]) begin                                              // FBxx (opcodes 31-37)
@@ -776,12 +781,12 @@ module ev4_core (
         case (x_ir[28:26])
         3'd0: x_cond = !x_al;
         3'd1: x_cond = x_az;
-        3'd2: x_cond = x_as;
-        3'd3: x_cond = x_as || x_az;
+        3'd2: x_cond = x_asi;
+        3'd3: x_cond = x_asi || x_az;
         3'd4: x_cond = x_al;
         3'd5: x_cond = !x_az;
-        3'd6: x_cond = !x_as;
-        default: x_cond = !x_as && !x_az;
+        3'd6: x_cond = !x_asi;
+        default: x_cond = !x_asi && !x_az;
         endcase
     end
     wire x_fire = x_v && !stall_x && !w_redir;
@@ -1265,6 +1270,7 @@ module ev4_core (
                     x_az   <= loop_a ? (x_iscmp ? !fast_res[0] : fz) : fwd_a == 64'd0;
                     x_az63 <= loop_a ? !fast_res[0] : fwd_a[62:0] == 63'd0;
                     x_as   <= loop_a ? !x_iscmp && fsg : fwd_a[63];
+                    x_asl  <= loop_a && !x_iscmp && !x_sok;
                     x_al   <= loop_a ? fast_res[0] : fwd_a[0];
                     x_iscmp <= d_iscmp;
                     x_zk <= dc_zk; x_zl <= dc_zl; x_zi <= dc_zi;
