@@ -313,16 +313,22 @@ module ev4_core (
     // confirm redirects from F2 as before (to the predicted target, or to PC + 4 when F2 predicts
     // nothing), so a wrong or stale entry costs the bubble and nothing more; X is unchanged. F2
     // writes an entry for each taken prediction of its own that was not a confirmed hint.
-    // Entry: {valid, PC[42:10], displacement[20:0], target[42:2]}
-    wire [95:0] bt_q;
+    // A return (RET, JSR_COROUTINE) has an entry too, marked: F1 goes to the top of the return
+    // stack, and F2 confirms it when the instruction pops and the stack did not move in the cycle
+    // F1 read it (the instruction then in F2 neither pushed nor popped; cpu-perf.md 13).
+    // Entry: {return, valid, PC[42:10], displacement[20:0], target[42:2]}
+    wire [96:0] bt_q;
     reg         bt_we;
     reg   [7:0] bt_wa;
-    reg  [95:0] bt_wd;
+    reg  [96:0] bt_wd;
     wire        f1_bhit  = v_f1 && bt_q[95] && bt_q[94:62] == pc_f1[42:10];
-    wire [63:0] f1_btgt  = {{21{bt_q[40]}}, bt_q[40:0], 2'b00};
+    wire [63:0] f1_btgt  = bt_q[96] ? {{21{rs_top[40]}}, rs_top, 2'b00} : {{21{bt_q[40]}}, bt_q[40:0], 2'b00};
     reg         f2_bt;                  // the fetch after the instruction in F2 went to its BTB target
     reg  [20:0] f2_bdisp;               // ... that entry's displacement
-    wire        bconf    = f2_bt && !f2_isjmp && f2_insn[20:0] == f2_bdisp;   // the hint was right
+    reg         f2_bret;                // ... a return's entry (the target was the stack's top)
+    reg         f2_rschg;               // the return stack moved as the instruction left F1
+    wire        bconf    = f2_bt && (f2_isjmp ? f2_bret && f2_pop && !f2_rschg
+                                              : !f2_bret && f2_insn[20:0] == f2_bdisp);   // the hint was right
     // F2 steers the fetch: a taken prediction the hint did not already follow, or a hint F2 does not
     // predict (back to PC + 4)
     wire        p_redir  = f2_go && (p_pred ? !bconf : f2_bt);
@@ -372,7 +378,7 @@ module ev4_core (
         .we(ict_we), .waddr(ict_wa), .wdata({ict_v, ict_wd}), .wbe(1'b1));
     ev4_ram #(.AW(11), .DW(2), .BE(1)) bht (.clk(clk), .raddr(npc[12:2]), .rdata(bh_q),
         .we(bh_we), .waddr(bh_wa), .wdata(bh_wd), .wbe(1'b1));
-    ev4_ram #(.AW(8), .DW(96), .BE(1)) btb (.clk(clk), .raddr(npc[9:2]), .rdata(bt_q),
+    ev4_ram #(.AW(8), .DW(97), .BE(1)) btb (.clk(clk), .raddr(npc[9:2]), .rdata(bt_q),
         .we(bt_we), .waddr(bt_wa), .wdata(bt_wd), .wbe(1'b1));
 
     // ================================================================ D stage
@@ -1209,7 +1215,8 @@ module ev4_core (
             if (kill_f2) v_f2 <= 1'b0;
             else if (!f_hold) begin
                 pc_f2 <= pc_f1; v_f2 <= v_f1; q2 <= ic_q; t2 <= ict_q; v2 <= icv_q;
-                f2_bt <= f1_bhit; f2_bdisp <= bt_q[61:41]; f2_bh <= bh_q;
+                f2_bt <= f1_bhit; f2_bdisp <= bt_q[61:41]; f2_bret <= bt_q[96]; f2_bh <= bh_q;
+                f2_rschg <= f2_go && (f2_push || f2_pop);
                 f2_phys <= f1_phys; f2_itbany <= itb_m != 12'd0;
                 itb_spfn <= itb_spfn1; itb_sre <= itb_sre1; itb_large <= itb_large1;
             end
@@ -1231,12 +1238,12 @@ module ev4_core (
             bh_wa <= x_pc[12:2];
             bh_wd <= (x_cond != x_ir[20]) ? x_bh + 2'd1 : x_bh - 2'd1;
 
-            // the BTB: F2's own taken predictions of PC-relative branches
+            // the BTB: F2's own taken predictions of PC-relative branches and returns
             // and an entry whose hint F2 overrides (the BHT now says not taken) is cleared, or the
             // fetch would go to its target and back every time
-            bt_we <= f2_go && ((p_pred && !f2_isjmp && !bconf) || (f2_bt && !p_pred));
+            bt_we <= f2_go && ((p_pred && !bconf) || (f2_bt && !p_pred));
             bt_wa <= pc_f2[9:2];
-            bt_wd <= {p_pred, pc_f2[42:10], f2_insn[20:0], p_target[42:2]};
+            bt_wd <= {f2_isjmp, p_pred, pc_f2[42:10], f2_insn[20:0], p_target[42:2]};
 
             // the return stack: pushed and popped as calls and returns leave F2, put back to what
             // the instructions that ran left when X or W redirects

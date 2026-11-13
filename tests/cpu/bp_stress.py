@@ -4,8 +4,9 @@ a pseudo-random program of nested counted loops, data-dependent branches of ever
 ALU result, a compare, a load, an old register), calls by BSR, JSR through a table and
 JSR_COROUTINE, returns by RET, JMP, JSR_COROUTINE and through another register, a function that
 returns past two instructions of its caller (they spoil the checksum if they retire), a
-recursion deeper than the return stack, a computed JMP, and BSR used as a plain jump (the
-return stack goes out of step). About 12 KB of code (the I-cache is 8 KB). No reference in this
+recursion deeper than the return stack, a computed JMP, BSR used as a plain jump (the
+return stack goes out of step), a call straight onto a RET and a return straight onto another
+RET (the return stack moves while the next RET is fetched: the BTB's return hints). About 12 KB of code (the I-cache is 8 KB). No reference in this
 script: the image runs on tools/alphaemu (-P) and the core's retire trace must equal alphaemu's
 line for line (tests/cpu/bp_stress.sh); with random interrupts, where the traces differ by the
 handler, the checksums stored at TOHOST + 8 / + 16 must.
@@ -203,9 +204,13 @@ def gen_switch(c):
 
 
 def gen_odd(c):
-    r = rnd.randrange(3)
+    r = rnd.randrange(5)
     l = new()
-    if r == 0:
+    if r == 3:
+        p.bsr(T5, 'fret'); p.addq(S0, T5, S0)               # a call onto a RET
+    elif r == 4:
+        p.bsr(T5, 'tramp'); p.addq(S0, T5, S0)              # ... and a return onto a RET
+    elif r == 0:
         p.bsr(T5, l); p.label(l); p.addq(S0, T5, S0)        # BSR as a jump: pushes, never returns
     elif r == 1:
         p.br(T5, l); p.lda(S0, S0, 0x7005); p.label(l); p.addq(S0, T5, S0)
@@ -275,6 +280,15 @@ p.addq(S0, S0, S0)
 p.label('frec1')
 p.ldq(RA, 0, SP); p.lda(SP, SP, 16)
 p.ret(RA)
+
+# a function that is only its RET, and one that calls it and returns right behind it
+p.label('fret')
+p.ret(T5)
+p.label('tramp')
+p.bsr(T3, 'fret2')
+p.ret(T5)
+p.label('fret2')
+p.ret(T3)
 
 for i in range(NF - 1, -1, -1):
     kind[i] = rnd.choice(('frame', 'frame', 'frame', 'leaf', 'leaf', 'skip')) if i < NF - 4 else rnd.choice(('leaf', 'skip'))
