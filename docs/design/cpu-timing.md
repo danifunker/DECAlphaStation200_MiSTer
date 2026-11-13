@@ -57,6 +57,7 @@ The device is 89 % full (37.2k of 41.9k ALMs). Tools: `quartus_sta -t scratch/cp
 | `_20261112f` (`7002bad`) | -2.127 | -1210 | the board cache (`rtl/apecs/bcache.v`, 256 KB in block RAM): 37,247 ALMs (89 %), 46,051 registers, 505 of 553 M10K; HDMI clock met by 0.214 ns |
 | `_20261112g` (`c18718a`) | -1.560 | -358 | the TGA's continue register outside the line modes: 37,302 ALMs (89 %), 46,018 registers, 505 of 553 M10K; the HDMI clock misses by 0.068 ns (TNS -1.3) |
 | `_20261112h` (`cb294b3`) | -2.484 | -844 | a branch right behind its operand's producer (carry-free zero test in X): 37,449 ALMs (89 %), 45,989 registers; HDMI clock -0.359 ns |
+| `_20261112i` (`0ab78dd`) | -1.535 | -239 | the branch target buffer (256 entries beside the I-cache, a hint at F1): 37,577 ALMs (90 %), 45,953 registers; HDMI clock -0.773 ns (sys only, fit noise) |
 
 Each round removed the groups it aimed at (`stall_d`, the DTB reset paths, apecs `d_addr` left the
 list after round 2) and others took their place. After round 2: `m2_hitq` -2.11 (139 paths from

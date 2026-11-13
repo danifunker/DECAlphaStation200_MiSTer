@@ -298,12 +298,51 @@ Alpha cross compiler, not on the Windows machine.)
 Board (`_20261112h`, .92, FreeBSD 5.2.1, rpcc from the guest): int 3 / 1 642 -> **546** cycles,
 long 1185 -> **998**; the tga driver's copy pair on shifted 100x100 rows 3182 -> **2652**, backwards
 2312 -> 2080, the aligned scroll 633 -> 621. Fit: 37,449 ALMs (89 %), 45,989 registers, -2.484 ns
-(TNS -844). What is left in those loops is the taken loop branch's bubble (section 9, item 1).
+(TNS -844). What is left in those loops is the taken loop branch's bubble (section 9).
 
-## 9. Next, by the numbers
+## 9. Change 5: the branch target buffer (`0ab78dd`, board build `_20261112i`)
 
-0. The taken branch's bubble: a predicted-taken branch redirects from F2, so the instruction
-   fetched behind it (in F1) is thrown away, one cycle every loop iteration.
+A predicted-taken branch redirected the fetch from F2, so the instruction F1 had fetched behind it
+was thrown away: one cycle every loop iteration, the last cost in the division loops of section 8.
+
+The BTB is 256 entries in an M10K (96 bits: valid, PC[42:10] as the tag, the displacement, target
+[42:2]) read at npc[9:2] in the same cycle as the I-cache, so F1 has the entry for the instruction
+it holds. On a hit F1 fetches the stored target next instead of PC + 4 (`f1_bhit`, `f1_btgt`). F2
+then checks the hint against the instruction it decodes: a hit on the same PC (tag plus index = PC
+[42:2]) with the same displacement has the same target, so a predicted-taken PC-relative branch
+whose displacement matches is confirmed (`bconf`) and nothing more happens. Otherwise F2 steers as
+before: a taken prediction the hint did not follow redirects to `p_target`; a hint on an instruction
+F2 does not predict taken (a stale entry, a branch now predicted not taken, a jump) redirects back to
+PC + 4 (`p_redir`, `p_rtgt`). A wrong hint costs the bubble that every taken branch paid before.
+Each F2 taken prediction that was not a confirmed hint writes its entry. X, the return stack and the
+prediction bit D carries are unchanged.
+
+Perf bench (BOARD=1, after section 8 -> now):
+
+| | before | after |
+|---|---|---|
+| `divq` | 1.187 (884 cycles a division) | **1.017 (757)** |
+| `branchy` | 1.455 | **1.319** |
+| `memcpy_in` | 1.510 | **1.346** |
+| `calls` | 1.287 | **1.144** |
+| `fpmix` | 2.537 | **2.466** |
+| `stackmix` | | the same |
+
+Tests: bp_stress / brz_stress (bpstress, 18 runs), wb_stress, fp_stress pass. To exercise F2's
+recovery the same suites ran with the tag compare removed, so every fetch takes whatever entry its
+index holds: with confirmation on the displacement alone they fail, as they must (another branch at
+the same index with the same displacement goes elsewhere); with confirmation on the full target
+they pass, so every wrong hint is undone.
+
+Board (`_20261112i`, .92, FreeBSD 5.2.1, rpcc from the guest; `_20261112h` -> `i`): int 3 / 1
+546 -> **477** cycles, long 998 -> **860**, uns 3 / 1 -> 465; the tga driver's copy pair on shifted
+100x100 rows 2652 -> **2385**, backwards 2080 -> **1850**, the aligned scroll 621 -> **602**.
+FreeBSD boots, logs in and shuts down. Fit: 37,577 ALMs (90 %), 45,953 registers, **-1.535 ns** (TNS
+-239; the fetch path did not get worse).
+
+## 10. Next, by the numbers
+
+0. ~~The taken branch's bubble~~: section 9.
 1. A branch history table for forward branches and loop exits (`branchy` still redirects on
    every data-dependent branch; 2-bit counters in an M10K read with the I-cache).
 2. ~~The 1-cycle wait of a branch on the result of the instruction before it~~: section 8 (the

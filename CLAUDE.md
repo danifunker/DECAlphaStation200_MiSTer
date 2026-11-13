@@ -172,7 +172,9 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   libc's millicode costs 600-1200 cycles, the engine's pair 224): the CPU is the place to work. **A branch right behind its
   operand's producer no longer waits** (carry-free zero test, `cb294b3` = board build **`_20261112h`**, -2.484 ns, 37.4k ALMs;
   `docs/design/cpu-perf.md` 8): division -16 % on the board. **100 MHz timing closure is not a goal** (user): judge changes by the
-  board running them. Next: the taken-branch bubble.
+  board running them. **The taken-branch bubble is gone**: a 256-entry branch target buffer beside the I-cache, confirmed in F2
+  (`0ab78dd` = board build **`_20261112i`**, -1.535 ns, 37.6k ALMs; `cpu-perf.md` 9): division 546 -> 477 cycles, the tga
+  driver's copy pair 2652 -> 2385 on .92.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.

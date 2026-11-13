@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Conditional branches right behind the instruction that writes their register (make -C verilator
 bpstress, after bp_stress): the pipelined core takes the branch's flags from a carry-free zero test
-of the fast result (rtl/cpu/ev4_core.v, fz / fsg; docs/design/cpu-perf.md 9). Every producer kind
+of the fast result (rtl/cpu/ev4_core.v, fz / fsg; docs/design/cpu-perf.md 8). Every producer kind
 (ADDL ADDQ SUBL SUBQ LDA LDAH AND BIC BIS ORNOT XOR EQV, register and literal forms) followed at
 once by each of the eight integer branches, on operands picked to make the 64-bit and the 32-bit
 results zero, all ones, the sign bit and their neighbours, branching forward (predicted not taken)
