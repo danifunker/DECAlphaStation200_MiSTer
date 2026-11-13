@@ -174,7 +174,9 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   `docs/design/cpu-perf.md` 8): division -16 % on the board. **100 MHz timing closure is not a goal** (user): judge changes by the
   board running them. **The taken-branch bubble is gone**: a 256-entry branch target buffer beside the I-cache, confirmed in F2
   (`0ab78dd` = board build **`_20261112i`**, -1.535 ns, 37.6k ALMs; `cpu-perf.md` 9): division 546 -> 477 cycles, the tga
-  driver's copy pair 2652 -> 2385 on .92.
+  driver's copy pair 2652 -> 2385 on .92. **The HDMI clock meets timing** (user asked: placement only, no template features
+  dropped): the SDC over-constrains it by 0.8 ns for the fitter alone (`860ebd0` = board build **`_20261112j`**, HDMI +0.225 ns,
+  system -1.463 ns; FreeBSD, xdm and the benches as on `i`, .92).
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
