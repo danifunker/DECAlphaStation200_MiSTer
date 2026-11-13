@@ -396,15 +396,71 @@ copy pair 2385 -> **2273**, backwards 1850 -> **1736**, 500x500 backwards 1538 -
 aligned scroll 604 -> **487**. FreeBSD and xdm as before. Fit: 37,920 ALMs (90 %), -1.713 ns, the HDMI
 clock +0.484 ns.
 
-## 12. Next, by the numbers
+## 12. Change 8: the board cache writes back (`6dbe0ca`, board build `_20261113c`)
+
+**Why.** `PCPROF=1` (a per-PC profile in `tb_cpu`, CPU_PERF builds: retirements, the cycles of gap
+before each and their causes) split `stackmix`'s ~52 cycles an iteration: 3 x 2 cycles of load to
+use (the 21064's own), about 11 cycles of the stores in the called function waiting for the write
+buffer, 1 after the RET, 0.75 for a mispredicted BEQ. The write buffer waits because every line
+it writes goes to the SDRAM (4 cycles a quadword plus 7 of row overhead): three lines an iteration
+are about 53 cycles of SDRAM.
+
+**What.** `bcache.v` is write-back, as the real Bcache: a write that hits changes the line and
+marks it dirty, a whole-line write (32 byte enables, the write buffer's usual case) that misses
+takes the line dirty, a partial write that misses goes to the memory. Every DRAM access passes
+through the cache (the CPU's and the PCI masters' DMA alike), so its copy is the truth and it is
+coherent by construction. A dirty line that a line read or a whole-line write replaces moves to a
+one-line **victim buffer**, so the read goes first; the buffer goes back as soon as the port is
+idle. A machine reset (power-up, the OSD) drops the cache's contents, dirty lines too, as it starts
+the machine from nothing. Debug side effect: the top's `dbg_trace` taps and `tb_sys --bcstat` look
+at the 21071's DRAM port behind the cache, so with the cache on they see the SDRAM's traffic
+(victims, misses), not the CPU's.
+
+**Checks.** `tb_bcache` now models tags and dirty bits: each request makes exactly the memory reads
+the model predicts, the memory writes add up to the model's at each flush (a sweep of line reads
+of an unused tag), and after a flush the memory equals the reference (255,909 requests, 44,968
+read hits, 82,639 misses, 29,965 write hits, 29,958 dirty victims; mutations that drop the dirty
+bit or the victim's address fail it). System simulation, 1.0 G cycles from reset with the board's
+SDRAM timing, write-through / write-back without the victim buffer: the same 50 LED codes,
+instructions 462.6 M / 471.1 M (+1.8 %), but the stretch 2E -> 00 127.4 M / 130.7 M cycles
+(memory sweeps, whose dirty victims went out ahead of each read): the victim buffer is the answer.
+
+## 13. Change 9: a return hint in the BTB (`257fcd0`, board build `_20261113c`)
+
+The BTB entry of a RET (JMP-format, hint 2) carries a bit saying "the target is the return stack's
+top": F1 fetches from `rs_top` without waiting for F2's decode, and F2 confirms it when the
+instruction is still a RET that pops and the stack did not change between F1 and F2 (a call or
+return in F2 the cycle before, `f2_rschg`). The BTB grows to 97 bits. `bp_stress` gained a call
+straight onto a RET and a return onto a RET (a trampoline), which the mutation without the
+`f2_rschg` check fails.
+
+| perf (BOARD=1) | before | return hint |
+|---|---|---|
+| `calls` | 1.144 | **1.049** |
+| `fpmix` | 2.358 | 2.323 |
+| `missmix` | 7.060 | 7.001 |
+| the others | | the same |
+
+**Board** (.92, FreeBSD 5.2.1; `_20261113b` -> `_20261113c`, both changes; three runs each, after
+the background fsck): `cc -O2 -c` 14.0 -> **13.6 s** user (-3 %), `gzip -9` 156 -> 154.5 / 156.7 s
+(no change: it lives in the D-cache); rpcc: int 3 / 1 471 -> **466** cycles, long 850 -> **843**,
+the tga driver's shifted copy pair 2273 -> **2245**, backwards 1736 -> **1710**, 500x500 backwards
+1428 -> **1412**, the aligned scroll 487 -> **472**. FreeBSD (disk, network, xdm) and a clean halt
+as before. Fit: 37,915 ALMs (90 %), 46,441 registers, **-2.038 ns**, the HDMI clock -0.021 ns.
+
+## 14. Next, by the numbers
 
 0. ~~The taken branch's bubble~~: section 9.
 1. ~~A branch history table~~: section 11. What is left in `branchy` is the misprediction itself
-   (about 3.5 cycles: a branch resolves in X, the fetch restarts at F0).
+   (about 3.5 cycles: a branch resolves in X, the fetch restarts at F0; the 21064's is about 4).
 2. ~~The 1-cycle wait of a branch on the result of the instruction before it~~: sections 8 and
    11 (the zero of shifts, scaled adds and byte ops still waits).
 3. ~~Load to use~~: section 10.
 4. ~~D-fill: a line read is 25 SDRAM cycles~~: the board cache, section 7.
-5. `stackmix` (1.720): stores waiting for the write buffer (12.5 %) and bubbles (27 %, not yet
-   split by cause: the bench counts at W, so a bubble made in D or F shows as "other").
-6. `fpmix` (2.358): X holds an FP operation's consumer (operand hazard 14.5 %) and the FPU (26 %).
+5. ~~`stackmix`'s stores~~: the write-back cache, section 12 (the perf bench runs the CPU alone, so
+   it shows on the board only). The rest is the 21064's own load-to-use latency.
+6. `fpmix` (2.323): X holds an FP operation's consumer (operand hazard) and M2 waits for an FP
+   result even when the next instructions do not need it. The FPU is already pipelined (5 cycles,
+   one a cycle) with the 21064's latencies; what is missing is completing FP operations out of
+   order, which needs a may-trap prediction to keep traps precise. Not started: the risk is high
+   for a gain only FP-heavy code sees.

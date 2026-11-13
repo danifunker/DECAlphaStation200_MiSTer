@@ -181,6 +181,10 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 - **2026-11-13: load-to-use and the branch history table** (`cpu-perf.md` 10, 11): a load that hit forwards from M2, a
   2048-entry BHT (with F2 clearing BTB entries it overrides), BLT/BGT behind an add take the sign from M1 (`abee413` = board
   build **`_20261113b`**, -1.713 ns, 37.9k ALMs): on .92 `cc -O2` -5 %, `gzip -9` -9 %, the tga copies -5..-19 %.
+- **2026-11-13: the board cache writes back** (a one-line victim buffer; coherent with DMA because every DRAM access passes
+  through it) **and the BTB carries a return hint** (`cpu-perf.md` 12, 13; `257fcd0` = board build **`_20261113c`**, -2.038 ns,
+  37.9k ALMs): on .92 `cc -O2` -3 %, the tga copies -1..-3 %, gzip unchanged. `tb_cpu` `PCPROF=1` profiles gaps per PC. Next in
+  `cpu-perf.md` 14: FP out-of-order completion (not started, risky).
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.
