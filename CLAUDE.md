@@ -168,6 +168,11 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   engine's copies are 3 to 4 times slower than software ones (`docs/gaps.md`): the 5.2.1 image on .92 runs XAA with
   `XaaNoScreenToScreenCopy` and `XaaNoOffscreenPixmaps` (`/etc/X11/XF86Config.noaccel`, `.accel`, `.accel2` kept). Its root
   password is empty (the login still asks: Enter).
+- **2026-11-12: the copies are slow because of the driver's divisions** (`TGACopyLineForwards` divides by the bytes per pixel;
+  libc's millicode costs 600-1200 cycles, the engine's pair 224): the CPU is the place to work. **A branch right behind its
+  operand's producer no longer waits** (carry-free zero test, `cb294b3` = board build **`_20261112h`**, -2.484 ns, 37.4k ALMs;
+  `docs/design/cpu-perf.md` 8): division -16 % on the board. **100 MHz timing closure is not a goal** (user): judge changes by the
+  board running them. Next: the taken-branch bubble.
 - **Fits run in this checkout, on the working branch, one at a time; no git worktrees** (user, 2026-11-09;
   the earlier `../DECAlphaStation200_fit` worktree is retired). Commit first, then fit, then edit again; never
   queue or chain fits: look at a fit's result before deciding the next build.

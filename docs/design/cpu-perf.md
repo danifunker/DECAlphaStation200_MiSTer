@@ -255,10 +255,58 @@ free (89 % used), on a design that misses 100 MHz by 2.1 ns. It does not pay on 
 stands; it is worth another look if the serial console display goes behind a feature flag and
 the timing closes.
 
-## 8. Next, by the numbers
+## 8. Change 4: a branch right behind its operand's producer (`cb294b3`, board build `_20261112h`)
 
+Found through XFree86's tga driver on FreeBSD 5.2.1 (`docs/gaps.md`): its copy loops divide by the
+bytes per pixel, and libc's division millicode (`__divl`, `__divqu`) looks for the top bit of the
+divisor and of the dividend one bit an iteration (`and t2 = b & mask; bne t2, ...; addq; srl;
+cmplt; bne`). A conditional branch on the register the instruction before it wrote took the
+X->X loop only from a compare, whose result is 0 or 1 (flags from bit 0); after anything else it
+waited a cycle, because a zero test after the adder would sit on the loop path.
+
+Now the flags come from a zero test that needs no carry chain, computed in X beside the ALU from
+the same operands (`fz`, `fsg`; the producer's kind `x_zk` decoded in D):
+
+- add (ADDL ADDQ, /V, LDA LDAH on Rb and the displacement): A + B is zero exactly when every bit
+  of A ^ B equals the bit below it of A | B (bit -1 = 0);
+- subtract (SUBL SUBQ, /V): A - B is zero when A == B;
+- AND BIC BIS ORNOT XOR EQV: the result itself (an AND / OR / XOR of the operands), and its sign;
+- a longword result is zero when bits 31:0 are.
+
+BEQ / BNE need the zero, BLT / BGE the sign (the logical kinds give it, the adds still wait), BLE /
+BGT both, BLBC / BLBS only bit 0, which every fast result has. Scaled adds, shifts, byte ops and
+CMOV still wait.
+
+Perf bench (BOARD=1), with a new kernel `divq` (`__divqu` as FreeBSD 5.2.1's libc has it, 3 / 1):
+
+| | before | after |
+|---|---|---|
+| `divq` | 1.358 (1011 cycles a division) | **1.187 (884)** |
+| `branchy` | 1.728 | **1.455** |
+| `memcpy_in` | 1.675 | **1.510** |
+| `calls` | 1.335 | **1.287** |
+| `fpmix` | 2.573 | 2.537 |
+| the others | | the same |
+
+Tests: `tests/cpu/brz_stress.py` (in `make -C verilator bpstress`): each producer kind, register
+and literal forms, right in front of each of the eight integer branches, forward and backward, on
+operands that make the 64-bit or the 32-bit result zero, all ones or the sign bit; the retire
+trace against alphaemu, checksums under interrupts. Three mutations are caught (the carry term,
+the longword case, the sign bit). bp_stress, wb_stress, fp_stress pass. (The T0 suites need the
+Alpha cross compiler, not on the Windows machine.)
+
+Board (`_20261112h`, .92, FreeBSD 5.2.1, rpcc from the guest): int 3 / 1 642 -> **546** cycles,
+long 1185 -> **998**; the tga driver's copy pair on shifted 100x100 rows 3182 -> **2652**, backwards
+2312 -> 2080, the aligned scroll 633 -> 621. Fit: 37,449 ALMs (89 %), 45,989 registers, -2.484 ns
+(TNS -844). What is left in those loops is the taken loop branch's bubble (section 9, item 1).
+
+## 9. Next, by the numbers
+
+0. The taken branch's bubble: a predicted-taken branch redirects from F2, so the instruction
+   fetched behind it (in F1) is thrown away, one cycle every loop iteration.
 1. A branch history table for forward branches and loop exits (`branchy` still redirects on
    every data-dependent branch; 2-bit counters in an M10K read with the I-cache).
-2. The 1-cycle wait of a branch on the result of the instruction before it.
+2. ~~The 1-cycle wait of a branch on the result of the instruction before it~~: section 8 (the
+   sign of an add, scaled adds, shifts and byte ops still wait).
 3. Load to use: forwarding a load's result one stage earlier.
 4. ~~D-fill: a line read is 25 SDRAM cycles~~: the board cache, section 7.
