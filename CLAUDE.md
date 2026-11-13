@@ -125,7 +125,7 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   8,704-byte `.nvr` (`rtl/mister/nvsave.v`, marker "CMOS"; an 8 KB file keeps none). CMOS **3Fh** = the console the DROM
   starts (1 ARC, else SRM): OSD Machine > Console = NVRAM file (default) / SRM / ARC. CMOS **17h** = SRM's `console`
   variable (01 graphics, 00 serial; found by watching the CMOS in the system simulator): OSD Machine > SRM console =
-  Graphics (default) / Serial / NVRAM file, status 30:29 (`2516794`, board build **`_20261111a`**, -2.062 ns, 37.5k ALMs).
+  NVRAM file (default since 2026-11-13, user: every console option defaults to the file) / Graphics / Serial, status 32:31 (30:29 retired; `2516794`, board build **`_20261111a`**, -2.062 ns, 37.5k ALMs).
   Overrides change what the guest reads, never the file; SRM writes 17h back at each start, so the file follows a forced
   value after one boot. `tools/nvr_cmos.py` pads/sets both; `tb_cmos` (43 checks).
 - **2026-11-11: baseline survey on `_20261111a` (.143, 128 MB):** OpenVMS 6.2/7.3/8.4 (DECwindows on the TGA on all

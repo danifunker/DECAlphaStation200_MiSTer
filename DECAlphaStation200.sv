@@ -55,8 +55,9 @@ assign BUTTONS = 0;
 //   18:17    Console             (0 NVRAM file: the TOY CMOS 3Fh kept with the NVRAM image, so the
 //                                firmware's own console switch sticks per file; 1 SRM, 2 ARC: overrides)
 //   20       Halt button         (T: an action)
-//   30:29    SRM console         (0 Graphics, 1 Serial: override SRM's console variable, TOY CMOS 17h, at
-//                                reset; 2 NVRAM file: the 17h kept with the NVRAM image, as `set console` left it)
+//   30:29    (retired: the old SRM console, whose default was Graphics; saved .CFGs that set it are ignored)
+//   32:31    SRM console         (0 NVRAM file: the TOY CMOS 17h kept with the NVRAM image, as `set console` left
+//                                it; 1 Graphics, 2 Serial: override SRM's console variable at reset)
 //   28:27    Serial port         (0 COM1, 1 the TGA trace, 2 the CPU trace (PAL entries), 3 the CPU trace without the
 //                                frequent entries; rtl/mister/dbg_trace.v)
 //   26       Video debug         (the overlay; rtl/mister/dbg_overlay.v)
@@ -93,7 +94,7 @@ localparam CONF_STR = {
 	"P1-,DECchip 21064 (EV4);",
 	"P1-;",
 	"P1O[18:17],Console,NVRAM file,SRM,ARC;",
-	"P1O[30:29],SRM console,Graphics,Serial,NVRAM file;",
+	"P1O[32:31],SRM console,NVRAM file,Graphics,Serial;",
 	"P1T[20],Halt button;",
 
 	"P2O[4:3],Display,Graphics,Serial console;",
@@ -288,7 +289,7 @@ always @(posedge clk_sys) m_reset <= rst_cnt != 0;
 reg [127:0] cfg;
 always @(posedge clk_sys) if (reset_req) cfg <= status;
 // Input settings (10) and the Halt button (20) stay out
-assign cfg_pending = {status[9:1], status[19:11], status[30:29]} != {cfg[9:1], cfg[19:11], cfg[30:29]};
+assign cfg_pending = {status[9:1], status[19:11], status[32:31]} != {cfg[9:1], cfg[19:11], cfg[32:31]};
 
 // a saved 128MB with a smaller module falls back to 64MB
 wire [1:0] cfg_mem = (cfg[2:1] == 2'd2 && !sdram_128) ? 2'd0 : cfg[2:1];
@@ -453,7 +454,7 @@ as200_sys machine
 	.year_ovr_en(cfg[15:14] == 2'd1),      // OSD TOY year: 1999
 	.year_ovr(7'd99),
 	.console_mode(cfg[18:17]),
-	.srm_con_mode(cfg[30:29]),
+	.srm_con_mode(cfg[32:31] == 2'd0 ? 2'd2 : cfg[32:31] - 2'd1),   // as200_sys: 0 Graphics, 1 Serial, 2 NVRAM file
 	.cm_addr(cm_addr), .cm_we(cm_we), .cm_wdata(cm_wdata), .cm_rdata(cm_rdata), .cm_dirty(cm_dirty),
 	.speaker(),
 	.aud_l(aud_l), .aud_r(aud_r), .aud_tgl(aud_tgl),
