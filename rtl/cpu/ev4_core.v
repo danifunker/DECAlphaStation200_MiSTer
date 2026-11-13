@@ -1232,9 +1232,11 @@ module ev4_core (
             bh_wd <= (x_cond != x_ir[20]) ? x_bh + 2'd1 : x_bh - 2'd1;
 
             // the BTB: F2's own taken predictions of PC-relative branches
-            bt_we <= f2_go && p_pred && !f2_isjmp && !bconf;
+            // and an entry whose hint F2 overrides (the BHT now says not taken) is cleared, or the
+            // fetch would go to its target and back every time
+            bt_we <= f2_go && ((p_pred && !f2_isjmp && !bconf) || (f2_bt && !p_pred));
             bt_wa <= pc_f2[9:2];
-            bt_wd <= {1'b1, pc_f2[42:10], f2_insn[20:0], p_target[42:2]};
+            bt_wd <= {p_pred, pc_f2[42:10], f2_insn[20:0], p_target[42:2]};
 
             // the return stack: pushed and popped as calls and returns leave F2, put back to what
             // the instructions that ran left when X or W redirects
