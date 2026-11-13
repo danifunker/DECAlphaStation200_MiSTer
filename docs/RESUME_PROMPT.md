@@ -1,11 +1,11 @@
 # Resume prompt (2026-11-01)
 
-> **2026-11-13, later: release `release-20261113b`** = board build `_20261113d` (`releases/DECAlphaStation200_20261113b.rbf`,
+> **2026-11-13, later: release `release-20261113`** = board build `_20261113d` (`releases/DECAlphaStation200_20261113.rbf`,
 > `d3f589a`): load-to-use from M2, the BHT, the sign from M1, the write-back board cache with its victim buffer, the BTB's
 > return hint, and the OSD's console options both defaulting to NVRAM file. Checked on .143 (SRM CD boot, OpenVMS 7.3 DECwindows,
 > NT 4.0 floppy / sound / MIDI, ubench Dhrystone index 16.0) and .92 (FreeBSD 5.2.1, Windows 2000). `cpu-perf` is merged into
 > `master`.
-> **2026-11-13: release `release-20261113`** = board build `_20261112j` (`releases/DECAlphaStation200_20261113.rbf`, RTL `0ab78dd`,
+> **2026-11-13 (replaced the same day by the release above): the first `release-20261113`** = board build `_20261112j` (RTL `0ab78dd`,
 > SDC `860ebd0`): the CPU speed work of `cpu-perf` (write buffer, pipelined FP issue, branch prediction, the branch behind its
 > producer, the BTB), the board cache, the OPL3, the floppy, XFree86's accelerated tga driver, the HDMI clock met.
 > **2026-11-11:** the current state is `CLAUDE.md` (State) and `docs/gaps.md` (the baseline survey row); the board

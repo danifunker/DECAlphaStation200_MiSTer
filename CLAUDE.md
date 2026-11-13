@@ -176,8 +176,8 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   (`0ab78dd` = board build **`_20261112i`**, -1.535 ns, 37.6k ALMs; `cpu-perf.md` 9): division 546 -> 477 cycles, the tga
   driver's copy pair 2652 -> 2385 on .92. **The HDMI clock meets timing** (user asked: placement only, no template features
   dropped): the SDC over-constrains it by 0.8 ns for the fitter alone (`860ebd0` = board build **`_20261112j`**, HDMI +0.225 ns,
-  system -1.463 ns; FreeBSD, xdm and the benches as on `i`, .92). **Released as `release-20261113`**
-  (`releases/DECAlphaStation200_20261113.rbf` = `_20261112j`).
+  system -1.463 ns; FreeBSD, xdm and the benches as on `i`, .92). **Released as `release-20261113`** in the morning
+  (`_20261112j`; the tag and the rbf were replaced that day by `_20261113d`, below).
 - **2026-11-13: load-to-use and the branch history table** (`cpu-perf.md` 10, 11): a load that hit forwards from M2, a
   2048-entry BHT (with F2 clearing BTB entries it overrides), BLT/BGT behind an add take the sign from M1 (`abee413` = board
   build **`_20261113b`**, -1.713 ns, 37.9k ALMs): on .92 `cc -O2` -5 %, `gzip -9` -9 %, the tga copies -5..-19 %.
@@ -185,7 +185,7 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   through it) **and the BTB carries a return hint** (`cpu-perf.md` 12, 13; `257fcd0` = board build **`_20261113c`**, -2.038 ns,
   37.9k ALMs): on .92 `cc -O2` -3 %, the tga copies -1..-3 %, gzip unchanged. `tb_cpu` `PCPROF=1` profiles gaps per PC. Next in
   `cpu-perf.md` 14: FP out-of-order completion (not started, risky).
-- **2026-11-13: released as `release-20261113b`** (`releases/DECAlphaStation200_20261113b.rbf` = board build `_20261113d`,
+- **2026-11-13: released as `release-20261113`** (`releases/DECAlphaStation200_20261113.rbf` = board build `_20261113d`,
   -2.096 ns, 38.2k ALMs): 13c plus the OSD's SRM console defaulting to NVRAM file (both console options now follow the `.nvr`).
   Release check: .143 SRM CD boot, OpenVMS 7.3 DECwindows + shutdown, NT 4.0 (ARC from the NVRAM file, floppy, WSS, OPL3, ubench
   Dhrystone index 16.0); .92 FreeBSD 5.2.1 benches, Windows 2000. On .143 `WinNT4.nvr` is the former `nt4nv.nvr` (boots ARC, NT
