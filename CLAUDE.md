@@ -15,7 +15,7 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 | OSD | The HP 9000/715 OSD standard (`../hp9000-715/docs/osd-standard.md`): media first (Pri. disk ID 0, Disk ID 1, CD-ROM ID 4, Floppy, Load ROM), Memory, pages P1 Machine, P2 Video, P3 Input, P5 Advanced (P4 Audio when audio exists), settings latched at reset (`cfg`), "Changes pending". Status-bit map at the top of `DECAlphaStation200.sv`. |
 | Board | **MiSTer at 192.168.99.143** (a MiSTer Pi; ssh root, key login). Drive and view it with **`~/Downloads/MiSTerKVMS-1.0.27-linux-x86_64/misterkvms-cli --mister 192.168.99.143`** (`status`, `screenshot OUT.png`, `key`, `type`, `wait-for-change`, `load-core RBF`); the capture stream is `mkvm://192.168.99.82/MiSTer-Pi`. MiSTer.ini runs 1080p (`video_mode=8`). |
 | Main_MiSTer | Branch **`dec-alphastation`** off `master` (88d2d10) in `../Main_MiSTer`, for this core's Main needs: SCSI write buffering and CD-ROM handling like the HP/Sun/RS6K families (`support/hp9k`, `support/ibmrs6k` on `origin/ibmrs6k`), CD audio later. Don't check it out in `../Main_MiSTer` (other sessions use that tree on `hp9k-family`): use a worktree. |
-| Simulator | Verilator, headless: `make -C verilator` / `make -C verilator smoke` (`verilator/sim_main.cpp` options in its header). |
+| Simulator | Verilator, headless: `make -C verilator system` (the machine, `verilator/system/tb_sys.cpp` options in its header), `cputest-pipe`, `tb_<device>`. |
 | Memory | SDRAM = system RAM (32/64/128 MB), DDR3 = TGA VRAM, flash/DROM images, BRAM = caches (user's standing preference). |
 | Clocks | **The CPU and the machine at 100 MHz** (the 4/100's own speed; user, 2026-11-01): PLL `outclk_0` 100 MHz system (CPU, machine, SDRAM, hps_io), `outclk_2` 65 MHz pixel (1024x768@60); SDRAM_CLK = the system clock inverted through a DDR output register. |
 | Machine | **AlphaStation 200 4/100** (user, 2026-11-01; was the 4/166). DROM V1.2's speed table stops at 166 MHz, so the SROM hands over PA 0x10 = 10000 ps, 0x68 = 100 and speed code 9 at 0x70 (DROM V1.7's own 100 MHz code), plus the memory size in MB at 0x38 |
@@ -64,7 +64,7 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
   `rtl/mister/sdram_ctl.v` (SDRAM, unit-tested), `rtl/mister/fbrom.v` (boot0.rom flash in DDR3,
   boot1.rom DROM in BRAM) and `rtl/mister/con_mux.v` (the HDMI terminal shows the SROM port, COM1 and
   the LED codes). The board has boot0.rom = SRM 7.0-9 + ARC 4.58 chips, boot1.rom = DROM V1.7.
-  `rtl/as200.v` + `bringup_stub.v` remain only for the bring-up Verilator smoke test.
+  (`rtl/as200.v`, `bringup_stub.v` and the smoke test were removed 2026-11-13.)
 
 - **2026-11-01, later:** the 53C810 and the 82378 SIO + ISA devices are in `as200_sys`; the whole
   DROM V1.7 POST passes in simulation **and on the board** (build 5), and the flash loader starts SRM.
@@ -184,7 +184,7 @@ configuration, and `docs/REUSE.md` for what comes from the user's other cores.
 - **2026-11-13: the board cache writes back** (a one-line victim buffer; coherent with DMA because every DRAM access passes
   through it) **and the BTB carries a return hint** (`cpu-perf.md` 12, 13; `257fcd0` = board build **`_20261113c`**, -2.038 ns,
   37.9k ALMs): on .92 `cc -O2` -3 %, the tga copies -1..-3 %, gzip unchanged. `tb_cpu` `PCPROF=1` profiles gaps per PC. Next in
-  `cpu-perf.md` 14: FP out-of-order completion (not started, risky).
+  `cpu-perf.md` 14: FP out-of-order completion (not started, risky).
 - **2026-11-13: released as `release-20261113`** (`releases/DECAlphaStation200_20261113.rbf` = board build `_20261113d`,
   -2.096 ns, 38.2k ALMs): 13c plus the OSD's SRM console defaulting to NVRAM file (both console options now follow the `.nvr`).
   Release check: .143 SRM CD boot, OpenVMS 7.3 DECwindows + shutdown, NT 4.0 (ARC from the NVRAM file, floppy, WSS, OPL3, ubench

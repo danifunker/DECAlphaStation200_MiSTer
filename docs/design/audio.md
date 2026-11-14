@@ -13,7 +13,7 @@ also mixes the CD-ROM's analogue audio and the motherboard speaker.
 | `as200_audio.v` | the wrapper on the 82378's xio bus (sio.md 1): the card, the FM chip, the mix |
 | `wss_ad1848.v` | the WSS command/ID registers and the AD1848 (from the RS/6000 core's `IBMRS6K7248_cs4232.sv`, reduced) |
 | `opl_isa.v` | the FM chip's ports in front of the OPL3, its bank rule for NEW = 0, the samples into the system clock and to 48 kHz |
-| `opl3_fpga/` | Greg Taylor's opl3_fpga (LGPL-3, SystemVerilog), the YMF262, as in ao486_MiSTer `628ddbc` (`README.md` there); unchanged. `jtopl/` (the OPL2 used until `_20261112c`) is still in the tree, not built |
+| `opl3_fpga/` | Greg Taylor's opl3_fpga (LGPL-3, SystemVerilog), the YMF262, as in ao486_MiSTer `628ddbc` (`README.md` there); unchanged. `jtopl/` (the OPL2 used until `_20261112c`) was removed 2026-11-13 |
 | `audio_mix.v` | WSS + FM + CD + speaker, 48 kHz, saturated |
 | `audio_cdc.v` | the mix into CLK_AUDIO for `sys/` (instantiated in the MiSTer top) |
 | `verilator/tb/tb_audio.cpp`, `tb_audio_top.v` | unit bench with the real SIO, `make -C verilator tb_audio` (64 checks) |
